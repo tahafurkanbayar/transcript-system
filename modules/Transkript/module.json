@@ -1,0 +1,17 @@
+{
+    "baslik": "Transkript",
+    "aciklama": "Transkript modülü",
+    "surum": "1.0.0",
+
+    "yetkiler": {
+        "editor": [],
+        "uye": []
+    },
+
+    "menu": {
+        "route": "panel/transkript",
+        "icon": "server",
+        "label": "Transkript",
+        "can": "transkript.view"
+    }
+}
