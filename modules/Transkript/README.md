@@ -1,0 +1,95 @@
+# Transkript Modülü
+
+YouTube videolarından (sonra yüklenen ses / video dosyalarından da) zaman
+damgalı transcript çıkarır ve AI ile analiz eder: kısa ve detaylı özet, önemli
+noktalar, zaman çizelgesi, teknik bilgiler, iddialar, fikirler. Onaylı plan:
+[docs/TEKNIK_RAPOR.md](../../docs/TEKNIK_RAPOR.md).
+
+Projeye ait kodun tamamı bu klasördedir; çekirdeğe (`app/`, `config/`,
+çekirdek `routes/` ve `views/`) dokunulmaz.
+
+---
+
+## Dosya yapısı
+
+```
+modules/Transkript/
+├─ module.json        künye, menü, rollere dağıtılan yetkiler, kurulumda açık
+├─ routes.php         panel/transkript/… ve api/v1/transkript/… rotaları
+├─ migrations/        11 tablo (aşağıda)
+├─ prompts/           *.v1.txt; sürüm analizle birlikte kaydedilir
+├─ src/
+│  ├─ Controllers/    KaynakController, SohbetController, Api/TranskriptApiController
+│  ├─ Repositories/   SQL'in tek yeri, her sorgu hazırlıklı
+│  ├─ Kaynak/         UrlParser, YoutubeMetadata, DosyaYukleme
+│  ├─ Services/       Cleaner, Chunker, Pipeline, ResultValidator, Chat, Search, CostTracker
+│  ├─ Transcript/     sağlayıcı zinciri (YouTube → Gemini → harici → ASR)
+│  ├─ Ai/             AI sağlayıcıları (ai-integration-system'den)
+│  ├─ Jobs/           KaynakBilgisiAl → TranskriptAl → ParcaAnalizEt × N → AnalizBirlestir → RaporuTamamla
+│  └─ TranskriptPolicy.php   kayıt sahibine bağlı kurallar
+└─ views/             index (yeni analiz + liste), goster (rapor), _parcalar/
+```
+
+Boş klasörler (`.gitkeep`) sonraki MVP adımlarında dolar.
+
+## Roller ve yetkiler
+
+| Yetki | Ne sağlar | Yönetici | Editör | Üye |
+|---|---|:-:|:-:|:-:|
+| `transkript.view` | Raporları görmek | ✓ | ✓ | ✓ |
+| `transkript.analyze` | Analiz başlatmak, dosya yüklemek (maliyet oluşturur) | ✓ | ✓ | |
+| `transkript.chat` | Kayda soru sormak | ✓ | ✓ | ✓ |
+| `transkript.admin` | Yeniden analiz, herkesin kaydı, tüm maliyet | ✓ | | |
+
+Satır düzeyi (`TranskriptPolicy`): YouTube kaynağı ve analizi herkes için
+ortak cache'tir (`sahip_id = 0`). Yüklenen dosya, sohbet ve kişisel özet
+yalnızca sahibine ve `transkript.admin` yetkisi olana açıktır.
+
+## Tablolar
+
+| Tablo | İçerik |
+|---|---|
+| `transkript_kaynaklar` | YouTube videosu ya da yüklenen dosya; UNIQUE(`tur`, `dis_kimlik`, `sahip_id`) cache anahtarı |
+| `transkript_metinler` | Bir kaynağın transcript sürümü (sağlayıcı, dil) |
+| `transkript_segmentler` | Zaman damgalı satırlar, FULLTEXT(`metin`) |
+| `transkript_analizler` | Analiz çalışması + rapor, durum / aşama / ilerleme, token ve maliyet |
+| `transkript_parcalar` | AI'a giden parçalar ve map sonuçları (kaldığı yerden devam) |
+| `transkript_analiz_ogeleri` | Konu, nokta, iddia, fikir, teknik, zaman maddeleri |
+| `transkript_kisisel_ozetler` | "Sana özel" bölümü, kullanıcı başına |
+| `transkript_sohbetler` / `transkript_sohbet_mesajlari` | Kayda sor |
+| `transkript_ilgi_alanlari` | Kişisel filtrenin ilgi alanları |
+| `ai_kullanim_kaydi` | Her AI / ASR çağrısının token ve maliyeti (adı genel, başka modüller de yazabilir) |
+
+Kullanıcı sütunlarına (`sahip_id`, `kullanici_id` …) bilerek yabancı anahtar
+verilmez: kurulum sihirbazı `kullanicilar`'a bağlı tabloları görünce aynı
+veritabanına yeniden kurulumu reddeder. Modül tabloları arası bağlar yabancı
+anahtarlıdır; kaynak silinince ona bağlı her şey silinir.
+
+## Rotalar
+
+Panel: `panel/transkript` (liste), `panel/transkript/{kaynak_id}` (rapor),
+`panel/transkript/analiz` (POST), `panel/transkript/ilerleme/{kaynak_id}`,
+`panel/transkript/{kaynak_id}/sohbet` (POST).
+
+API (`Authorization: Bearer cy_…`): `api/v1/transkript/analiz`, `dosya`,
+`kaynaklar`, `kaynaklar/{kaynak_id}`, `…/ozet`, `…/transkript`, `…/sohbet`,
+`istatistik`. Ayrıntı ve erişim matrisi: `tests/transkript.php`.
+
+## Komutlar
+
+```bash
+php cy module --enable=Transkript    # modülü aç
+php cy migrate                       # tablolarını kur
+php tests/transkript.php             # modül birim testleri (veritabanı gerekmez)
+```
+
+## Kaldırmak
+
+```bash
+php cy migrate:status                     # modül migration'larının parti numarasına bak
+php cy migrate:rollback --step=N --force  # o partiye kadar geri al (her migration'ın down()'u var)
+php cy module --disable=Transkript
+```
+
+`ai_kullanim_kaydi` yalnızca içinde başka modülün satırı yoksa silinir;
+varsa yalnız bu modülün satırları temizlenir.
