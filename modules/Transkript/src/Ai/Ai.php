@@ -181,7 +181,7 @@ final class Ai
      *
      * @throws AiHatasi Bilinmeyen sağlayıcı ya da eksik anahtar/ayar.
      */
-    public static function make(string $saglayici, string $model = ''): Provider
+    public static function make(string $saglayici, string $model = '', ?int $maxTokens = null, ?int $zamanAsimi = null): Provider
     {
         $name = strtolower(trim($saglayici));
 
@@ -205,7 +205,8 @@ final class Ai
         /* Env::get boş satırda ('AI_MAX_TOKENS=') varsayılanı değil ''
          * döndürür; (int) '' = 0 sınırı 256'ya düşürür ve yanıt yarıda
          * kesilirdi. Env::int boş değerde varsayılanı verir. */
-        $maxTokens = max(256, Env::int('AI_MAX_TOKENS', 4096));
+        $maxTokens  = max(256, $maxTokens ?? Env::int('AI_MAX_TOKENS', 4096));
+        $zamanAsimi = max(10, $zamanAsimi ?? 120);
 
         return match ($name) {
             'claude' => new ClaudeProvider(
@@ -213,6 +214,7 @@ final class Ai
                 $model,
                 $maxTokens,
                 trim(Env::get('AI_EFFORT')) !== '' ? trim(Env::get('AI_EFFORT')) : 'medium',
+                $zamanAsimi,
             ),
 
             'groq', 'openai-compatible' => new OpenAiCompatibleProvider(
@@ -220,6 +222,7 @@ final class Ai
                 $model,
                 self::baseUrl($name),
                 $maxTokens,
+                $zamanAsimi,
             ),
 
             default => new GeminiProvider(
@@ -227,6 +230,7 @@ final class Ai
                 $model,
                 $maxTokens,
                 Env::bool('AI_THINKING', false),
+                $zamanAsimi,
             ),
         };
     }
