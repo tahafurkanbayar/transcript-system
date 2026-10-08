@@ -1,0 +1,41 @@
+<?php
+/**
+ * =====================================================================
+ *  HataKodlari – analiz hata kodu → kullanıcıya gösterilecek Türkçe mesaj
+ * ---------------------------------------------------------------------
+ *  transkript_analizler.hata_kodu buradaki anahtarlardan biridir. Panel
+ *  ve API aynı kodu ve aynı mesajı kullanır; teknik ayrıntı yalnızca
+ *  log'dadır. (9. adımda her kod için "kalıcı mı, yeniden denenir mi"
+ *  kararı ve eksik durumlar tamamlanacak.)
+ * =====================================================================
+ */
+
+declare(strict_types=1);
+
+namespace Modules\Transkript;
+
+use Modules\Transkript\Kaynak\KaynakHatasi;
+
+final class HataKodlari
+{
+    private const MESAJLAR = [
+        'canli_yayin'           => 'Canlı ya da planlanmış yayın henüz analiz edilemiyor; yayın bitince yeniden deneyin.',
+        'transkript_bulunamadi' => 'Bu videoda altyazı bulunamadı.',
+        'altyazi_kapali'        => 'Bu videoda altyazı kapalı.',
+        'transkript_api_hatasi' => 'Altyazıya şu an erişilemedi. Biraz sonra yeniden deneyin.',
+        'saglayici_yok'         => 'Bu kaynak türü için transcript sağlayıcısı açık değil.',
+        'rate_limit'            => 'Servis şu an yoğun. Biraz sonra yeniden deneyin.',
+        'ai_api_hatasi'         => 'Yapay zekâ servisine ulaşılamadı. Biraz sonra yeniden deneyin.',
+        'ai_ayar_eksik'         => 'Yapay zekâ ayarı eksik (anahtar ya da model). Yöneticinize bildirin.',
+        'beklenmeyen_hata'      => 'Beklenmeyen bir hata oluştu; ayrıntı kayda geçti.',
+    ];
+
+    public static function mesaj(?string $kod): string
+    {
+        if ($kod === null || $kod === '') {
+            return '';
+        }
+
+        return KaynakHatasi::MESAJLAR[$kod] ?? self::MESAJLAR[$kod] ?? self::MESAJLAR['beklenmeyen_hata'];
+    }
+}
