@@ -144,6 +144,35 @@ final class GeminiProvider extends HttpProvider
     }
 
     /**
+     * Metin dışı parçalarla tek kullanıcı mesajı gönderir (modüle eklendi).
+     *
+     * GeminiVideoProvider YouTube URL'sini böyle verir:
+     *     [['fileData' => ['fileUri' => 'https://www.youtube.com/watch?v=…'],
+     *       'videoMetadata' => ['startOffset' => '1200s', 'endOffset' => '2400s']],
+     *      ['text' => 'Zaman damgalı transcript çıkar …']]
+     *
+     * $ek generationConfig'e eklenir: responseMimeType, responseSchema
+     * (JSON zorlaması), mediaResolution, thinkingConfig.
+     *
+     * @param  array<int,array<string,mixed>> $parts
+     * @param  array<string,mixed>            $ek
+     * @return array<string,mixed> send() ile aynı normalleştirilmiş yanıt
+     */
+    public function sendParts(array $parts, string $system = '', array $ek = []): array
+    {
+        $payload = [
+            'contents'         => [['role' => 'user', 'parts' => $parts]],
+            'generationConfig' => ['maxOutputTokens' => $this->maxTokens] + $ek,
+        ];
+
+        if ($system !== '') {
+            $payload['systemInstruction'] = ['parts' => [['text' => $system]]];
+        }
+
+        return $this->normalize($this->request($payload));
+    }
+
+    /**
      * Uygulamanın mesaj biçimini Gemini'nin biçimine çevirir.
      *
      * @param  array<int,array{role:string,content:string}> $messages
