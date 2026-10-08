@@ -81,6 +81,22 @@ API (`Authorization: Bearer cy_…`): `api/v1/transkript/analiz`, `dosya`,
 `kaynaklar`, `kaynaklar/{kaynak_id}`, `…/ozet`, `…/transkript`, `…/sohbet`,
 `istatistik`. Ayrıntı ve erişim matrisi: `tests/transkript.php`.
 
+## Kaynak bilgisi (YouTube)
+
+- `Kaynak/UrlParser`: watch, youtu.be, shorts, embed, live, mobil, music ve
+  nocookie biçimlerinden 11 karakterlik kimlik; alan adı beyaz listede.
+  Kullanıcının yazdığı adrese hiç istek atılmaz, adres kimlikten yeniden kurulur.
+- `Kaynak/YoutubeMetadata`: `YOUTUBE_API_KEY` varsa Data API v3 (süre, tarih,
+  dil, gizlilik), yoksa ya da hata verirse oEmbed. Anahtar URL'de değil
+  `X-Goog-Api-Key` başlığında gider. Gizli / bulunamadı / silinmiş ayrı
+  `KaynakHatasi` kodlarıdır; ağ ve 5xx hatası `metadata_hatasi` (yeniden denenir).
+  Anahtarsız kurulumda gömmeye kapalı herkese açık video "gizli" görünür.
+- `Repositories/KaynakRepository`: `INSERT … ON DUPLICATE KEY UPDATE` ile
+  yarışsız bul-ya-da-oluştur; `guncelTamamlanmisAnaliz()` (cache) ve
+  `suregelenAnaliz()` (ikinci kez "Analiz Et").
+- `Http/`: `HttpIstemci` arayüzü ve curl uygulaması; testler sahte istemciyle
+  ağa gitmeden çalışır.
+
 ## Yapay zekâ
 
 `src/Ai/` CilginYazilim/ai-integration-system'den (MIT) taşındı: Gemini, Claude
