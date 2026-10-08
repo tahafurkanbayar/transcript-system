@@ -85,4 +85,29 @@ return [
         // token tutar; 3,5 ikisi için de temkinli bir orta değer.
         'karakter_basina_token' => 3.5,
     ],
+
+    /* -----------------------------------------------------------------
+     *  ANALİZ BAŞLATMA (Services\AnalizBaslatici)
+     * -----------------------------------------------------------------
+     *  Yeni AI işi açan istek kullanıcı başına saatte bu kadarla
+     *  sınırlıdır (panel ve API ortak sayaç). Önbellekten dönen ya da
+     *  sürmekte olan analize düşen istek sayılmaz. 0 → sınır yok.
+     * -------------------------------------------------------------- */
+    'analiz' => [
+        'saatlik_sinir' => 20,
+    ],
+
+    /* -----------------------------------------------------------------
+     *  KUYRUK (events.php → "transkript-kuyrugu" zamanlanmış görevi)
+     * -----------------------------------------------------------------
+     *  Görev her dakika tetiklenir ve "transkript" kuyruğunu bu süre
+     *  boyunca işler; süre dolunca elindeki işi bitirip çıkar. Önceki
+     *  çalışma sürerken yenisi başlamaz (görev kilidi). Kalıcı bir
+     *  işçi (php cy queue:work) çalıştırılıyorsa görevi kapatın.
+     * -------------------------------------------------------------- */
+    'kuyruk' => [
+        'zamanlanmis_gorev' => true,
+        'butce_sn'          => 240,
+        'en_cok_is'         => 50,
+    ],
 ];

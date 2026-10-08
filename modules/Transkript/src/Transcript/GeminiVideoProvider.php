@@ -44,6 +44,7 @@ use Modules\Transkript\Ayarlar;
 use Modules\Transkript\Kaynak\Kaynak;
 use Modules\Transkript\Kaynak\KaynakHatasi;
 use Modules\Transkript\Kaynak\UrlParser;
+use Modules\Transkript\Zaman;
 
 final class GeminiVideoProvider implements TranscriptProviderInterface
 {
@@ -206,7 +207,7 @@ final class GeminiVideoProvider implements TranscriptProviderInterface
     {
         $aralik = $bas === null
             ? ''
-            : sprintf(' Only transcribe the part of the video between %s and %s.', self::zaman($bas * 1000), self::zaman((int) $bit * 1000));
+            : sprintf(' Only transcribe the part of the video between %s and %s.', Zaman::yaz($bas * 1000), Zaman::yaz((int) $bit * 1000));
 
         return 'Transcribe the speech in this video verbatim, in the original spoken language. '
             . 'Do not translate, summarize, correct or add anything.' . $aralik
@@ -348,30 +349,7 @@ final class GeminiVideoProvider implements TranscriptProviderInterface
     /** "01:02:03", "02:03", "1:02:03.5", "75" (saniye) → milisaniye; okunamazsa null. */
     public static function zamaniOku(string $zaman): ?int
     {
-        $zaman = trim($zaman);
-
-        if (preg_match('/^(?:(\d{1,2}):)?(\d{1,2}):(\d{2})(?:[.,](\d{1,3}))?$/', $zaman, $m)) {
-            if ((int) $m[3] >= 60 || ($m[1] !== '' && (int) $m[2] >= 60)) {
-                return null;
-            }
-
-            $kesir = isset($m[4]) ? (int) str_pad($m[4], 3, '0') : 0;
-
-            return (((int) ($m[1] ?: 0) * 3600) + ((int) $m[2] * 60) + (int) $m[3]) * 1000 + $kesir;
-        }
-
-        if (preg_match('/^\d+(?:\.\d+)?$/', $zaman)) {
-            return (int) round((float) $zaman * 1000);
-        }
-
-        return null;
-    }
-
-    private static function zaman(int $ms): string
-    {
-        $sn = intdiv($ms, 1000);
-
-        return sprintf('%02d:%02d:%02d', intdiv($sn, 3600), intdiv($sn % 3600, 60), $sn % 60);
+        return Zaman::oku($zaman);
     }
 
     private static function dilKodu(mixed $dil): string

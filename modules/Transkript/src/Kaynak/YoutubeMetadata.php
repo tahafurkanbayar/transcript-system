@@ -145,6 +145,16 @@ final class YoutubeMetadata
     {
         $json = $yanit->json();
 
+        /* details[].reason daha belirgindir: "forbidden" yerine
+         * API_KEY_HTTP_REFERRER_BLOCKED (anahtar web sitesine kısıtlı;
+         * sunucu isteğinde referer yok), API_KEY_SERVICE_BLOCKED,
+         * SERVICE_DISABLED gibi. */
+        foreach ((array) ($json['error']['details'] ?? []) as $ayrinti) {
+            if (is_array($ayrinti) && is_string($ayrinti['reason'] ?? null) && $ayrinti['reason'] !== '') {
+                return $ayrinti['reason'];
+            }
+        }
+
         return (string) ($json['error']['errors'][0]['reason'] ?? $json['error']['status'] ?? '');
     }
 

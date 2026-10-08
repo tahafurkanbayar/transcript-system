@@ -15,14 +15,16 @@ Projeye ait kodun tamamı bu klasördedir; çekirdeğe (`app/`, `config/`,
 ```
 modules/Transkript/
 ├─ module.json        künye, menü, rollere dağıtılan yetkiler, kurulumda açık
+├─ config.php         davranış ayarları (Ayarlar::get); anahtar yok
 ├─ routes.php         panel/transkript/… ve api/v1/transkript/… rotaları
+├─ events.php         "transkript-kuyrugu" zamanlanmış görevi (yalnız CLI)
 ├─ migrations/        11 tablo (aşağıda)
 ├─ prompts/           *.v1.txt; sürüm analizle birlikte kaydedilir
 ├─ src/
 │  ├─ Controllers/    KaynakController, SohbetController, Api/TranskriptApiController
 │  ├─ Repositories/   SQL'in tek yeri, her sorgu hazırlıklı
 │  ├─ Kaynak/         UrlParser, YoutubeMetadata, DosyaYukleme
-│  ├─ Services/       Cleaner, Chunker, Pipeline, ResultValidator, Chat, Search, CostTracker
+│  ├─ Services/       AnalizBaslatici, KaynakDurumu, Cleaner, Chunker, Pipeline, ResultValidator, Chat, Search, CostTracker
 │  ├─ Transcript/     sağlayıcı zinciri (YouTube → Gemini → harici → ASR)
 │  ├─ Ai/             AI sağlayıcıları (ai-integration-system'den)
 │  ├─ Jobs/           KaynakBilgisiAl → TranskriptAl → ParcaAnalizEt × N → AnalizBirlestir → RaporuTamamla
@@ -91,6 +93,10 @@ API (`Authorization: Bearer cy_…`): `api/v1/transkript/analiz`, `dosya`,
   `X-Goog-Api-Key` başlığında gider. Gizli / bulunamadı / silinmiş ayrı
   `KaynakHatasi` kodlarıdır; ağ ve 5xx hatası `metadata_hatasi` (yeniden denenir).
   Anahtarsız kurulumda gömmeye kapalı herkese açık video "gizli" görünür.
+  Anahtarı Google Cloud'da **web sitesine (HTTP yönlendiren) kısıtlamayın**:
+  sunucu isteğinde referer yoktur, Google 403 `API_KEY_HTTP_REFERRER_BLOCKED`
+  döner ve her video oEmbed'e (süresiz) düşer. Uygulama kısıtı "Yok" ya da
+  sunucunun IP adresi, API kısıtı "YouTube Data API v3" olmalı.
 - `Repositories/KaynakRepository`: `INSERT … ON DUPLICATE KEY UPDATE` ile
   yarışsız bul-ya-da-oluştur; `guncelTamamlanmisAnaliz()` (cache) ve
   `suregelenAnaliz()` (ikinci kez "Analiz Et").
@@ -135,11 +141,71 @@ geçici). Anahtarlar yalnızca `.env`'de (`GEMINI_API_KEY`, `CLAUDE_API_KEY`,
 Fiyat tabloları kaynaktaki anlık görüntüdür; kullanmadan önce sağlayıcının
 güncel fiyatıyla karşılaştırın.
 
+## İşler ve kuyruk
+
+"Analiz Et" (panel ve API aynı `Services/AnalizBaslatici`'yı çağırır) HTTP
+isteğinde yalnız kayıt açar ve ilk işi kuyruğa bırakır; istek ~30–50 ms sürer.
+
+| Sonuç | Ne zaman | Panel / API |
+|---|---|---|
+| `onbellekten` | Güncel, tamamlanmış analiz var (AI'a gidilmez) | 200 |
+| `suruyor` | Aynı kaynağın analizi sürüyor (ikinci iş açılmaz) | 200 / 202 |
+| `baslatildi` | Yeni analiz; `yeniden=1` yalnız `transkript.admin` | 200 / 202 |
+
+Yeni iş kullanıcı başına saatte `analiz.saatlik_sinir` (20) ile sınırlıdır
+(429 + `Retry-After`); önbellekten dönen istek sayılmaz. Aynı anda gelen iki
+istek kaynak satırı kilitlenerek sıraya girer.
+
+İş zinciri ("transkript" kuyruğu), yük yalnız kimlik taşır:
+
+```
+KaynakBilgisiAl (0→5) → TranskriptAl (5→20) → ParcaAnalizEt × N (20→80)
+    → AnalizBirlestir (80→95) → RaporuTamamla (95→100)
+```
+
+- **İki kez çalışan iş para harcamaz.** Her iş önce aşamayı "alır"
+  (`asama = kaynak:calisiyor`); alamazsa hiçbir şey yapmaz. Parçada aynısı
+  parça satırında: bitmiş ya da başka işçideki parça yeniden AI'a gitmez.
+  Çöken işçinin kilidi `queue.timeout` sonunda bayatlar ve devralınır.
+- **Kaldığı yerden devam:** yeniden analiz transcript'i yeniden kullanır;
+  yarıda kalan analizde yalnız kalan parçalar işlenir.
+- **Hata:** gizli / silinmiş / bulunamayan video, transcript yok, canlı yayın,
+  AI anahtarı yok → kalıcı, analiz `hata` olur (yeniden denenmez). Ağ, 5xx,
+  hız sınırı → geçici, kuyruk 60 / 120 / 240 sn arayla yeniden dener. Denemesi
+  tükenen parça düşer, rapor o parça olmadan tamamlanır (log'da uyarı).
+  Kullanıcı yalnız Türkçe mesajı görür (`HataKodlari`); ayrıntı
+  `storage/logs/transkript-*.log`'da.
+- **Durum ve sonraki iş aynı işlemde** kaydedilir: "durum ilerledi ama iş
+  kuyruğa girmedi" ara hali oluşmaz.
+
+İlerleme: `panel/transkript/ilerleme/{kaynak_id}` ve `api/v1/transkript/kaynaklar/{id}`
+aynı diziyi döner (`Services/KaynakDurumu`): durum, aşama, yüzde, biten /
+toplam parça, Türkçe etiket, hata mesajı, `rapor_hazir`.
+
+**İşçi.** Sunucuda tek cron satırı yeter (`php cy schedule:run`, her dakika).
+Starter'ın `kuyruk-isle` görevi dakikada en çok 10 iş çalıştırır; uzun video
+15–25 iş açtığı için modül kendi `transkript-kuyrugu` görevini kaydeder
+(`events.php`): yalnız bu kuyruğu `kuyruk.butce_sn` (240 sn) boyunca işler.
+İki görev birlikte en çok iki işi paralel yürütür. Daha fazlası için kalıcı
+işçiler (`php cy queue:work --queue=transkript`, supervisor) çalıştırıp
+`config.php` → `kuyruk.zamanlanmis_gorev = false` yapın.
+
+**Zaman aşımı.** Gemini yedeği uzun videoda tek işte birkaç dakika sürebilir;
+`.env`'de `QUEUE_TIMEOUT=900` önerilir (varsayılan 300 sn; daha kısa süren iş
+"takıldı" sanılıp ikinci kez başlatılabilir).
+
+> 6. adımda AI aşamaları sahtedir (`Services/Pipeline`, model
+> "sahte (AI bağlı değil)"): parçaların ilk cümlelerinden zaman çizelgesi
+> üretir, para harcamaz. Gerçek map / reduce 7. adımda.
+
 ## Komutlar
 
 ```bash
 php cy module --enable=Transkript    # modülü aç
 php cy migrate                       # tablolarını kur
+php cy schedule:run                  # cron'un her dakika çalıştırdığı komut
+php cy schedule:run --list           # görevler (transkript-kuyrugu dahil)
+php cy queue:work --queue=transkript --max=30   # yalnız bu modülün işleri
 php tests/transkript.php             # modül birim testleri (veritabanı gerekmez)
 ```
 

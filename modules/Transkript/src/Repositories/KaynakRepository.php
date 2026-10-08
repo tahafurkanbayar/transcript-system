@@ -68,6 +68,18 @@ final class KaynakRepository
         return is_array($satir) ? $satir : null;
     }
 
+    /**
+     * Satırı işlem sonuna kadar kilitler (SELECT … FOR UPDATE). Aynı
+     * kaynağa aynı anda gelen iki "Analiz Et" sırayla geçer; ikincisi
+     * birincinin açtığı analizi görür. Yalnız açık işlem içinde anlamlı.
+     */
+    public function kilitle(int $id): void
+    {
+        $statement = $this->db->prepare('SELECT id FROM transkript_kaynaklar WHERE id = :id FOR UPDATE');
+        $statement->execute([':id' => $id]);
+        $statement->fetchAll();
+    }
+
     /** @return array<string,mixed>|null */
     public function youtubeBul(string $videoId): ?array
     {

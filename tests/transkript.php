@@ -13,6 +13,8 @@
  *  AI sağlayıcıları (normalize, hata kodları; ağa gidilmez) ve Search.
  *  UrlParser ve YoutubeMetadata (sahte HTTP istemcisiyle).
  *  Transcript zinciri, YouTube / Gemini sağlayıcıları, Cleaner, Chunker.
+ *  İşler (yük, hata sınıflandırması), AnalizBaslatici retleri,
+ *  KaynakDurumu, rapor maddeleri, zamanlanmış görev.
  *  Sonraki adımlarda: ResultValidator.
  *
  *  Çıkış kodu: 0 → hepsi geçti, 1 → en az bir test kaldı.
@@ -36,7 +38,9 @@ use App\Core\Env;
 use App\Core\Log\Logger;
 use App\Core\Modules\Module;
 use App\Core\Modules\Modules;
+use App\Core\Schedule\Schedule;
 use App\Core\Setting;
+use App\Core\Throttle;
 use App\Models\Role;
 use App\Models\User;
 use Modules\Transkript\Ai\Ai;
@@ -47,13 +51,24 @@ use Modules\Transkript\Ai\OpenAiCompatibleProvider;
 use Modules\Transkript\Http\HttpIstemci;
 use Modules\Transkript\Http\HttpYanit;
 use Modules\Transkript\Ayarlar;
+use Modules\Transkript\HataKodlari;
+use Modules\Transkript\Jobs\AnalizBirlestir;
+use Modules\Transkript\Jobs\KaynakBilgisiAl;
+use Modules\Transkript\Jobs\ParcaAnalizEt;
+use Modules\Transkript\Jobs\RaporuTamamla;
+use Modules\Transkript\Jobs\TranskriptAl;
+use Modules\Transkript\Jobs\TranskriptIsi;
 use Modules\Transkript\Kaynak\Kaynak;
 use Modules\Transkript\Kaynak\KaynakHatasi;
 use Modules\Transkript\Kaynak\UrlParser;
 use Modules\Transkript\Kaynak\YoutubeMetadata;
+use Modules\Transkript\Services\AnalizBaslatici;
+use Modules\Transkript\Services\AnalizReddedildi;
 use Modules\Transkript\Services\Chunker;
 use Modules\Transkript\Services\Cleaner;
+use Modules\Transkript\Services\KaynakDurumu;
 use Modules\Transkript\Services\Parca;
+use Modules\Transkript\Services\Pipeline;
 use Modules\Transkript\Services\Search;
 use Modules\Transkript\Transcript\AsrProvider;
 use Modules\Transkript\Transcript\ExternalTranscriptProvider;
@@ -68,6 +83,7 @@ use Modules\Transkript\Transcript\TranscriptResult;
 use Modules\Transkript\Transcript\TranscriptZinciri;
 use Modules\Transkript\Transcript\YouTubeTranscriptProvider;
 use Modules\Transkript\TranskriptPolicy;
+use Modules\Transkript\Zaman;
 
 $gecti = 0;
 $kaldi = 0;
@@ -685,6 +701,12 @@ $http   = new SahteHttp([DATA_API => new HttpYanit(403, '{"error":{"errors":[{"r
 $b      = (new YoutubeMetadata($http, 'k'))->getir($kimlik);
 dogrula('Data API kota hatası → oEmbed yedeği (analiz durmaz)', $b->kaynak === 'oembed' && $b->baslik === 'Me at the zoo' && $b->sureSn === null && count($http->istekler) === 2);
 
+$logDosyasi = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'transkript-test-log' . DIRECTORY_SEPARATOR . 'transkript-' . date('Y-m-d') . '.log';
+$referer    = '{"error":{"code":403,"errors":[{"reason":"forbidden"}],"details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"API_KEY_HTTP_REFERRER_BLOCKED"}]}}';
+$b          = (new YoutubeMetadata(new SahteHttp([DATA_API => new HttpYanit(403, $referer), OEMBED => $oembed]), 'k'))->getir($kimlik);
+dogrula('Web sitesine kısıtlı anahtar: log\'a belirgin neden yazılır, oEmbed\'e düşülür',
+    $b->kaynak === 'oembed' && str_contains((string) @file_get_contents($logDosyasi), '"neden":"API_KEY_HTTP_REFERRER_BLOCKED"'));
+
 $http = new SahteHttp([OEMBED => $oembed]);
 $b    = (new YoutubeMetadata($http, ''))->getir($kimlik);
 dogrula('Anahtarsız: Data API\'ye hiç gidilmez, oEmbed kullanılır', $b->kanalAdi === 'jawed' && count($http->istekler) === 1 && str_starts_with($http->istekler[0]['adres'], OEMBED)
@@ -775,8 +797,12 @@ dogrula('Kaynağı desteklemeyen sağlayıcı atlanır; hiçbiri desteklemezse s
 
 Ayarlar::set('transcript.saglayicilar', ['youtube', 'olmayan', 'gemini', 'asr']);
 dogrula('Zincir sırası config / .env\'den; bilinmeyen ad atlanır', TranscriptZinciri::fromAyarlar()->adlar() === ['youtube', 'gemini', 'asr']);
+// Yerel .env'deki TRANSCRIPT_PROVIDERS testi etkilemesin: değer geçici olarak boşaltılır.
+$envDegerleri->setValue(null, ['TRANSCRIPT_PROVIDERS' => ''] + $oncekiEnv);
 Ayarlar::forget();
 dogrula('Varsayılan sıra: youtube, gemini', TranscriptZinciri::fromAyarlar()->adlar() === ['youtube', 'gemini']);
+$envDegerleri->setValue(null, $oncekiEnv);
+Ayarlar::forget();
 dogrula('AsrProvider yalnız dosyayı, YouTube sağlayıcıları yalnız youtube\'u destekler',
     (new AsrProvider())->supports(new Kaynak(2, 'ses_dosyasi', str_repeat('a', 64))) && !(new AsrProvider())->supports($ytKaynak)
     && !(new ExternalTranscriptProvider())->supports(new Kaynak(2, 'video_dosyasi', str_repeat('a', 64))));
@@ -1017,6 +1043,155 @@ $onBucuk = array_map(static fn (int $t): Segment => new Segment($t, $t + 15000, 
 dogrula('Kısa kuyruk ayrı parça olmaz (10,5 dk → 1 parça); boş girdi → []',
     count((new Chunker())->parcala($onBucuk)) === 1 && (new Chunker())->parcala([]) === []);
 dogrula('Token tahmini: karakter / 3,5', (new Chunker())->tahminiToken(str_repeat('a', 35)) === 10);
+
+/* ---------------------------------------------------------------- */
+echo "\nİşler (yük yalnız kimlik; hata sınıflandırması)\n";
+
+$isler  = [KaynakBilgisiAl::class, TranskriptAl::class, AnalizBirlestir::class, RaporuTamamla::class];
+$yukler = array_map(static fn (string $sinif): string => json_encode($sinif::fromPayload(['analiz_id' => '12'])->toPayload()), $isler);
+dogrula('Zincirdeki işlerin yükü yalnız analiz_id (metinden tam sayıya)', array_values(array_unique($yukler)) === ['{"analiz_id":12}'], implode(' ', $yukler));
+$parcaIsi = ParcaAnalizEt::fromPayload(['analiz_id' => 12, 'parca' => 7]);
+dogrula('ParcaAnalizEt yükü: analiz_id + parca', $parcaIsi->toPayload() === ['analiz_id' => 12, 'parca' => 7]);
+$kuyruklar = array_map(static fn (string $sinif): string => $sinif::fromPayload(['analiz_id' => 1])->queue(), $isler);
+dogrula('Hepsi "transkript" kuyruğunda', $parcaIsi->queue() === 'transkript' && array_values(array_unique($kuyruklar)) === ['transkript']);
+dogrula('Birleştirme 2, diğerleri 3 deneme', (new AnalizBirlestir(1))->tries() === 2 && (new TranskriptAl(1))->tries() === 3 && $parcaIsi->tries() === 3);
+
+$kalici = [
+    'gizli video → gizli_video'          => [new KaynakHatasi('gizli_video'), 'gizli_video'],
+    'meta veri servisi geçici → null'    => [new KaynakHatasi('metadata_hatasi'), null],
+    'altyazı yok → transkript_bulunamadi' => [new TranscriptNotFound('yok'), 'transkript_bulunamadi'],
+    'canlı yayın → canli_yayin'          => [new TranscriptNotFound('canlı', 'canli_yayin'), 'canli_yayin'],
+    'YouTube hız sınırı → null'          => [new RateLimited('429'), null],
+    'sağlayıcı geçici → null'            => [new ProviderUnavailable('transkript_api_hatasi', '503', true), null],
+    'sağlayıcı kalıcı → kendi kodu'      => [new ProviderUnavailable('altyazi_kapali', 'kapalı'), 'altyazi_kapali'],
+    'AI anahtarı yok → ai_ayar_eksik'    => [new AiHatasi('x', 'anahtar_yok'), 'ai_ayar_eksik'],
+    'AI model yok → ai_ayar_eksik'       => [new AiHatasi('x', 'model_bulunamadi'), 'ai_ayar_eksik'],
+    'AI bozuk yanıt → ai_api_hatasi'     => [new AiHatasi('x', 'yanit_cozulemedi'), 'ai_api_hatasi'],
+    'AI hız sınırı → null'               => [new AiHatasi('x', 'rate_limit'), null],
+    'AI 5xx → null'                      => [new AiHatasi('x', 'sunucu'), null],
+    'bilinmeyen istisna (ör. PDO) → null' => [new RuntimeException('bağlantı koptu'), null],
+];
+$yanlis = [];
+foreach ($kalici as $ad => [$hata, $beklenenKod]) {
+    if (TranskriptIsi::kaliciKod($hata) !== $beklenenKod) {
+        $yanlis[] = $ad . ' (gerçek: ' . var_export(TranskriptIsi::kaliciKod($hata), true) . ')';
+    }
+}
+dogrula('Kalıcı / geçici ayrımı (' . count($kalici) . ' durum)', $yanlis === [], implode('; ', $yanlis));
+
+$tukenen = [
+    'rate_limit'       => new RateLimited('429'),
+    'ai_api_hatasi'    => new AiHatasi('x', 'sunucu'),
+    'metadata_hatasi'  => new KaynakHatasi('metadata_hatasi'),
+    'beklenmeyen_hata' => new RuntimeException('?'),
+];
+$yanlis = [];
+foreach ($tukenen as $kod => $hata) {
+    if (TranskriptIsi::hataKodu($hata) !== $kod) {
+        $yanlis[] = $kod . ' ≠ ' . TranskriptIsi::hataKodu($hata);
+    }
+}
+dogrula('Denemeler tükenince yazılan kod', $yanlis === [], implode('; ', $yanlis));
+dogrula('AI hız sınırı tükenince "rate_limit"', TranskriptIsi::hataKodu(new AiHatasi('x', 'rate_limit')) === 'rate_limit');
+
+$genel  = HataKodlari::mesaj('beklenmeyen_hata');
+$kodlar = array_merge(array_filter(array_map(static fn (array $d): ?string => $d[1], $kalici)), array_keys($tukenen));
+$mesajsiz = array_values(array_filter(
+    array_unique($kodlar),
+    static fn (string $k): bool => $k !== 'beklenmeyen_hata' && HataKodlari::mesaj($k) === $genel
+));
+dogrula('İşlerin yazabildiği her kodun kendi Türkçe mesajı var', $mesajsiz === [], implode(', ', $mesajsiz));
+dogrula('Bilinmeyen kod genel mesaja, boş kod boş metne düşer',
+    HataKodlari::mesaj('uydurma_kod') === $genel && HataKodlari::mesaj(null) === ''
+    && HataKodlari::mesaj('gecersiz_url') === KaynakHatasi::MESAJLAR['gecersiz_url']);
+
+dogrula('Zaman::oku hh:mm:ss / mm:ss / kesir / saniye',
+    Zaman::oku('01:02:03') === 3723000 && Zaman::oku('02:03') === 123000 && Zaman::oku('0:00:01.5') === 1500 && Zaman::oku('75') === 75000);
+dogrula('Zaman::oku geçersizi reddeder; Zaman::yaz hh:mm:ss',
+    Zaman::oku('1:75') === null && Zaman::oku('abc') === null && Zaman::yaz(3723999) === '01:02:03' && Zaman::yaz(-5) === '00:00:00');
+
+/* ---------------------------------------------------------------- */
+echo "\nRapor maddeleri (Pipeline::ogeler; sahte map / reduce)\n";
+
+$rapor = [
+    'topics'                => [['title' => 'Giriş', 'start' => '00:00:00', 'end' => '00:05:10', 'summary' => ' özet ']],
+    'important_points'      => [['text' => 'Önemli', 'at' => '00:01:00', 'importance' => 'Critical'], ['text' => '  ', 'at' => '00:02:00'], 'bozuk'],
+    'technical_information' => [['name' => 'PHP 8.3', 'category' => 'dil', 'at' => '00:03:00']],
+    'claims'                => [['text' => 'İddia', 'at' => '00:04:00', 'verification' => 'dogrulanmali']],
+    'ideas'                 => [['text' => 'Fikir', 'type' => 'urun']],
+    'timestamps'            => [['at' => '00:00:30', 'label' => 'Başlık'], ['at' => 'saçma', 'label' => 'Zamansız']],
+];
+$ogeler = Pipeline::ogeler($rapor);
+dogrula('Her türden madde çıkar; boş ve bozuk madde atlanır',
+    array_column($ogeler, 'tur') === ['konu', 'nokta', 'teknik', 'iddia', 'fikir', 'zaman'], implode(',', array_column($ogeler, 'tur')));
+dogrula('Zamanlar milisaniyeye çevrilir; önem eşlenir; metin kırpılır',
+    $ogeler[0]['baslangic_ms'] === 0 && $ogeler[0]['bitis_ms'] === 310000 && $ogeler[0]['aciklama'] === 'özet'
+    && $ogeler[1]['onem'] === 'kritik' && $ogeler[5]['baslangic_ms'] === 30000);
+dogrula('Zamanı okunamayan zaman çizelgesi maddesi atılır', count(array_filter($ogeler, static fn (array $o): bool => $o['tur'] === 'zaman')) === 1);
+dogrula('Bölüm eksik ya da liste değilse madde yok', Pipeline::ogeler([]) === [] && Pipeline::ogeler(['topics' => 'metin']) === []);
+
+$sahte  = new Pipeline();
+$map    = $sahte->parcaAnalizEt(['baslangic_ms' => 540000, 'bitis_ms' => 1080000], [new Segment(541000, 560000, 'İkinci bölümün ilk cümlesi.')]);
+$reduce = $sahte->birlestir([$map['sonuc']]);
+dogrula('Sahte map parça aralığını taşır, AI kullanımı yok',
+    $map['sonuc']['chunk'] === ['start' => '00:09:00', 'end' => '00:18:00'] && $map['kullanim'] === [] && $map['model'] === Pipeline::SAHTE_MODEL);
+$reduceTurleri = array_column(Pipeline::ogeler($reduce['sonuc']), 'tur');
+dogrula('Sahte reduce konu ve zaman maddesi üretir', in_array('konu', $reduceTurleri, true) && in_array('zaman', $reduceTurleri, true), implode(',', $reduceTurleri));
+
+/* ---------------------------------------------------------------- */
+echo "\nAnalizBaslatici (retler; veritabanı sahte)\n";
+
+/** @return array{0:string,1:int,2:int} [kod, http, sorgu sayısı]; ret yoksa kod '' */
+function baslatmaReddi(?User $kullanici, string $url, bool $yeniden = false): array
+{
+    $pdo = new KayitPdo();
+
+    try {
+        (new AnalizBaslatici($pdo, $kullanici))->youtube($url, $yeniden);
+    } catch (AnalizReddedildi $e) {
+        return [$e->kod, $e->http, count($pdo->sorgular)];
+    } catch (Throwable) {
+        // Sahte veritabanında kaynak açılamaz; burada yalnız retler ölçülür.
+    }
+
+    return ['', 0, count($pdo->sorgular)];
+}
+
+$gecerliUrl = 'https://youtu.be/dQw4w9WgXcQ';
+dogrula('Geçersiz URL → gecersiz_url 422, veritabanına gidilmez', baslatmaReddi($editor, 'https://ornek.com/video') === ['gecersiz_url', 422, 0]);
+dogrula('Analiz yetkisi olmayan üye → 403, veritabanına gidilmez', baslatmaReddi($uye, $gecerliUrl) === ['yetkisiz', 403, 0]);
+dogrula('Editör yeniden analiz isteyemez → 403', baslatmaReddi($editor, $gecerliUrl, true) === ['yetkisiz', 403, 0]);
+dogrula('Oturumsuz istek → 403', baslatmaReddi(null, $gecerliUrl) === ['yetkisiz', 403, 0]);
+
+$hizKlasoru = sys_get_temp_dir() . '/transkript-hiz-' . bin2hex(random_bytes(4));
+Throttle::useDirectory($hizKlasoru);
+Ayarlar::set('analiz.saatlik_sinir', 1);
+$ilk    = baslatmaReddi($yonetici, $gecerliUrl);
+$ikinci = baslatmaReddi($yonetici, $gecerliUrl);
+dogrula('Yeni iş saatlik sınıra tabi: ikinci istek → rate_limit 429',
+    $ilk[0] === '' && $ikinci[0] === 'rate_limit' && $ikinci[1] === 429, json_encode([$ilk, $ikinci]));
+Ayarlar::forget();
+Throttle::useDirectory(null);
+array_map('unlink', glob($hizKlasoru . '/*') ?: []);
+@rmdir($hizKlasoru);
+
+/* ---------------------------------------------------------------- */
+echo "\nKaynakDurumu (ilerleme etiketi) ve zamanlanmış görev\n";
+
+$parcaDurumu = ['durum' => 'analiz_ediliyor', 'asama' => 'parca', 'calisiyor' => false, 'parca' => ['toplam' => 14, 'biten' => 3, 'hatali' => 0], 'hata_kodu' => null];
+dogrula('Etiket: analiz yok / sırada / çalışıyor / parça sayacı / bitti',
+    KaynakDurumu::etiket(null) === 'Henüz analiz edilmedi'
+    && KaynakDurumu::etiket(['durum' => 'bekliyor', 'asama' => 'kaynak', 'calisiyor' => false]) === 'Sırada bekliyor'
+    && KaynakDurumu::etiket(['durum' => 'bekliyor', 'asama' => 'kaynak', 'calisiyor' => true]) === 'Video bilgisi alınıyor'
+    && KaynakDurumu::etiket($parcaDurumu) === 'Bölümler analiz ediliyor (3 / 14)'
+    && KaynakDurumu::etiket(['durum' => 'tamamlandi', 'asama' => 'bitti']) === 'Analiz tamamlandı');
+dogrula('Etiket: hatada Türkçe mesaj (teknik ayrıntı yok)',
+    KaynakDurumu::etiket(['durum' => 'hata', 'asama' => 'transkript', 'hata_kodu' => 'transkript_bulunamadi']) === HataKodlari::mesaj('transkript_bulunamadi'));
+
+$gorevler = array_values(array_filter(Schedule::tasks(), static fn ($g): bool => $g->name() === 'transkript-kuyrugu'));
+dogrula('Modül "transkript-kuyrugu" görevini bir kez, her dakika için kaydeder',
+    count($gorevler) === 1 && $gorevler[0]->isDue(time(), time() - 60) && !$gorevler[0]->isDue(time(), time() - 10));
+
 
 Logger::useDirectory(null);
 Setting::flush();
