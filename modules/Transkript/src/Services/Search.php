@@ -109,7 +109,11 @@ final class Search
             ];
         }
 
-        $bool = self::booleanQuery($katli);
+        /* Rapor sayfasındaki arama (zaman sırası) sözcüklerin HEPSİNİ ister.
+         * Sohbet bağlamı (alaka sırası) HERHANGİ birini ister, skor sıralar:
+         * ÖLÇÜLEN — 2 saatlik videoda "transformer attention" VE ile 0
+         * sonuç verdi, iki sözcük aynı 5 sn'lik segmentte geçmiyordu. */
+        $bool = self::booleanQuery($katli, $sira !== self::SIRA_ALAKA);
         $params[':q_sel'] = $bool;
         $params[':q_whr'] = $bool;
 
@@ -168,9 +172,11 @@ final class Search
      * olmadan o sözcüğü DIŞLAR. Harf ve rakam dışındaki her şey boşluğa
      * çevrilir; operatörleri biz ekleriz.
      */
-    public static function booleanQuery(string $raw): string
+    public static function booleanQuery(string $raw, bool $hepsi = true): string
     {
-        return implode(' ', array_map(static fn (string $w): string => '+' . $w . '*', self::queryWords($raw)));
+        $onek = $hepsi ? '+' : '';
+
+        return implode(' ', array_map(static fn (string $w): string => $onek . $w . '*', self::queryWords($raw)));
     }
 
     /**
