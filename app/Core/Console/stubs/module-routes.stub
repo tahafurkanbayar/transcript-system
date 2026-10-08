@@ -1,0 +1,30 @@
+<?php
+/**
+ * =====================================================================
+ *  {{AD}} MODÜLÜ – Rotaları
+ * ---------------------------------------------------------------------
+ *  Bu dosya, modül AÇIKKEN çekirdek rotalarından SONRA yüklenir.
+ *  $router değişkeni hazır gelir.
+ *
+ *  Yönetici her yetkiye sahiptir. Modülü editöre ya da üyeye açmak
+ *  için yetki adını module.json → "yetkiler" bloğuna yazın, ör.
+ *  "editor": ["{{TABLO}}.view"]. Çekirdeğin Role.php'sine dokunmayın.
+ *  Kayıt düzeyi kurallar için bkz. modules/Ornek/src/OrnekPolicy.php.
+ * =====================================================================
+ */
+
+declare(strict_types=1);
+
+use App\Core\Router;
+use Modules\{{AD}}\Controllers\{{AD}}Controller;
+
+/** @var Router $router */
+
+$router->get('panel/{{SLUG}}', {{AD}}Controller::class, 'index',
+    ['installed', 'auth', 'can:{{TABLO}}.view']);
+
+$router->post('panel/{{SLUG}}/kaydet', {{AD}}Controller::class, 'store',
+    ['installed', 'auth', 'csrf', 'can:{{TABLO}}.manage']);
+
+$router->post('panel/{{SLUG}}/sil/{id}', {{AD}}Controller::class, 'destroy',
+    ['installed', 'auth', 'csrf', 'can:{{TABLO}}.manage']);

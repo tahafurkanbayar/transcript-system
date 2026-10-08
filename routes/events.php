@@ -1,0 +1,108 @@
+<?php
+/**
+ * =====================================================================
+ *  OLAY TABLOSU – Hangi olayı kim dinliyor?
+ * ---------------------------------------------------------------------
+ *  routes/web.php nasıl "hangi adres hangi denetleyiciye gider"
+ *  sorusunu yanıtlıyorsa, bu dosya da "ne olduğunda ne yapılır"
+ *  sorusunu yanıtlar. Tek bakışta görülebilmesi için hepsi burada.
+ *
+ *  DİNLEYİCİ BİÇİMLERİ
+ *      Events::listen(Olay::class, DinleyiciSinifi::class);   // handle()
+ *      Events::listen(Olay::class, [Sinif::class, 'metot']);
+ *      Events::listen(Olay::class, function (Olay $e) { ... });
+ *      Events::listen('*', fn ($e) => ...);                   // hepsi
+ *
+ *  Dinleyiciler KAYIT SIRASINA göre çalışır.
+ *
+ *  BİR DİNLEYİCİNİN HATASI OLAYI YAYINLAYAN İŞLEMİ BOZMAZ: hata
+ *  loglanır, diğerleri çalışmaya devam eder. (Geliştirmede
+ *  APP_DEBUG=true iken hata fırlatılır ki gözden kaçmasın —
+ *  config/events.php → strict.)
+ * =====================================================================
+ */
+
+declare(strict_types=1);
+
+use App\Core\Events\Events;
+use App\Core\Log\Logger;
+use App\Events\AccountDeletionScheduled;
+use App\Events\ContactMessageReceived;
+use App\Events\EmailChanged;
+use App\Events\FileUploaded;
+use App\Events\PasswordChanged;
+use App\Events\UserLoggedIn;
+use App\Events\UserLoggedOut;
+use App\Events\UserRegistered;
+use App\Listeners\EpostaDegistiBildir;
+use App\Listeners\HesapSilmeBildir;
+use App\Listeners\HosgeldinMailiGonder;
+use App\Listeners\IletisimMesajiniBildir;
+use App\Listeners\ParolaDegistiBildir;
+use App\Listeners\YeniUyeyiBildir;
+
+/* ---------------------------------------------------------------------
+ *  ÜYELİK
+ * ------------------------------------------------------------------ */
+
+// Karşılama mektubunu kapatmak için bu satırı silmeniz yeterli;
+// çekirdek kodda hiçbir değişiklik gerekmez.
+Events::listen(UserRegistered::class, HosgeldinMailiGonder::class);
+
+// Yöneticiye "yeni üye" bildirimi. Ayarla açılır (Ayarlar → E-posta →
+// Yeni Üye Bildirimi, varsayılan kapalı); saatte en fazla 10 mektup.
+Events::listen(UserRegistered::class, YeniUyeyiBildir::class);
+
+// Parola değişince sahibine bilgilendirme (profil, sıfırlama bağlantısı, yönetici).
+Events::listen(PasswordChanged::class, ParolaDegistiBildir::class);
+
+// E-posta adresi değişince ESKİ adrese bilgilendirme (profil ya da yönetici).
+// Kapatmak için bu satırı silin.
+Events::listen(EmailChanged::class, EpostaDegistiBildir::class);
+
+// Üye hesabını silmeyi isteyince silinme tarihi ve iptal yolu.
+// Kapatmak için bu satırı silin.
+Events::listen(AccountDeletionScheduled::class, HesapSilmeBildir::class);
+
+/* ---------------------------------------------------------------------
+ *  İLETİŞİM FORMU
+ * ------------------------------------------------------------------ */
+
+Events::listen(ContactMessageReceived::class, IletisimMesajiniBildir::class);
+
+/* ---------------------------------------------------------------------
+ *  GELİŞTİRME: bütün olayları günlüğe yaz
+ * ---------------------------------------------------------------------
+ *  '*' joker dinleyicisi HER olayı yakalar. Yalnızca hata ayıklama
+ *  açıkken kaydediyoruz; yayında her olay için bir log satırı
+ *  gereksiz gürültü olurdu.
+ * ------------------------------------------------------------------ */
+if (App\Core\Config::isDebug()) {
+    Events::listen('*', static function (App\Core\Events\Event $event): void {
+        Logger::debug('Olay: ' . $event->shortName(), $event->toArray(), 'app');
+    });
+}
+
+/* ---------------------------------------------------------------------
+ *  ÖRNEKLER — kendi projenizde açabilirsiniz
+ * ---------------------------------------------------------------------
+ *  Aşağıdakiler çalışır durumda DEĞİLDİR; olay sisteminin nasıl
+ *  kullanılacağını göstermek için buradalar.
+ *
+ *  // Yüklenen her görselden küçük resim üret:
+ *  Events::listen(FileUploaded::class, [ThumbnailUret::class, 'handle']);
+ *
+ *  // Giriş yapınca modülünün önbelleğini hazırla:
+ *  Events::listen(UserLoggedIn::class, function (UserLoggedIn $e) {
+ *      // Cache::put('menu:' . $e->user->id, ..., 600);
+ *  });
+ *
+ *  // Çıkışta modül verisini temizle:
+ *  Events::listen(UserLoggedOut::class, function (UserLoggedOut $e) {
+ *      // Cache::forget('menu:' . $e->userId);
+ *  });
+ *
+ *  BİR MODÜL NASIL DİNLER? Modülünüz kendi olay dosyasını yükler
+ *  (Faz 10 – Modül Sistemi). O zamana kadar buraya bir satır
+ *  eklemeniz yeterlidir.
+ * ------------------------------------------------------------------ */

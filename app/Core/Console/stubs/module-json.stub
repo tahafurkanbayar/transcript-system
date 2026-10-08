@@ -1,0 +1,17 @@
+{
+    "baslik": "{{AD}}",
+    "aciklama": "{{AD}} modülü",
+    "surum": "1.0.0",
+
+    "yetkiler": {
+        "editor": [],
+        "uye": []
+    },
+
+    "menu": {
+        "route": "panel/{{SLUG}}",
+        "icon": "server",
+        "label": "{{AD}}",
+        "can": "{{TABLO}}.view"
+    }
+}

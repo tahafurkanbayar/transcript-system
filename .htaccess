@@ -1,0 +1,169 @@
+# =====================================================================
+#  APACHE AYARLARI – Çılgın Yazılım PHP Başlangıç Şablonu
+#  cilginyazilim.com
+# ---------------------------------------------------------------------
+#  Bu dosya olmasa da uygulama çalışır (adresler "index.php?r=..."
+#  biçimindedir). Ancak buradaki kurallar ek güvenlik sağlar.
+#  Nginx kullanıyorsanız bu dosya YOK SAYILIR; aynı korumaları
+#  sunucu bloğunuzda tanımlamanız gerekir (README'ye bakın).
+# =====================================================================
+
+Options -Indexes
+DirectoryIndex index.php
+
+# ---------------------------------------------------------------------
+#  1) HASSAS DOSYALARA ERİŞİM ENGELİ
+# ---------------------------------------------------------------------
+#  .env dosyası veritabanı şifrenizi içerir. Tarayıcıdan okunabilirse
+#  sunucunuz ele geçirilir.
+#  "cy" konsol betiğinin uzantısı yoktur; Apache onu PHP olarak
+#  çalıştırmaz, DÜZ METİN olarak servis ederdi. Erişimi kapatıyoruz.
+<FilesMatch "^\.env|^\.env\..*|^cy$|composer\.(json|lock)$|\.(sql|md|log|ini|sh|bak|swp|dist|stub)$">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Deny from all
+    </IfModule>
+</FilesMatch>
+
+<FilesMatch "^\.">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Deny from all
+    </IfModule>
+</FilesMatch>
+
+#  NOKTA İLE BAŞLAYAN KLASÖRLER (.git, .github, .vscode …)
+#  Yukarıdaki FilesMatch yalnızca DOSYA ADINA bakar: ".git/config"
+#  isteğinde dosya adı "config" olduğu için kural tutmuyor ve depo
+#  geçmişi (kaynak kodun tamamı, eski .env'ler dahil) indirilebiliyordu.
+#  README kurulumu "git clone" ile anlattığı için .git klasörü çoğu
+#  sunucuda gerçekten vardır. Bu kural yol üzerindeki HER parçaya bakar.
+#  ".well-known" (SSL sertifikası doğrulaması) bilerek açık bırakılır.
+<IfModule mod_alias.c>
+    RedirectMatch 404 "/\.(?!well-known(/|$))"
+</IfModule>
+
+# ---------------------------------------------------------------------
+#  2) TEMİZ ADRESLER (SEO uyumlu)
+# ---------------------------------------------------------------------
+#  /panel/ayarlar          ✔  temiz
+#  /index.php?r=panel/... ✘  eski biçim
+#
+#  Kural AÇIKTIR. mod_rewrite yoksa ya da AllowOverride kapalıysa
+#  uygulama kendini otomatik olarak eski biçime düşürür — hiçbir şey
+#  bozulmaz (bkz. app/Support/helpers.php → url()).
+#
+#  Alt klasörde çalışıyorsanız (ör. /cy-php-starter/) RewriteBase'i
+#  açmanız GEREKMEZ: kural göreli çalışır ve uygulama kendi taban
+#  yolunu SCRIPT_NAME üzerinden bulur.
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # İkinci kilit (mod_alias yoksa): nokta ile başlayan klasör ve
+    # dosyalar (.git/, .env …) hiçbir koşulda servis edilmez.
+    RewriteRule (^|/)\.(?!well-known(/|$)) - [F,L]
+
+    # Geliştirme klasörleri web'den açılmaz.
+    RewriteRule ^(tests|docs)(/|$) - [F,L]
+
+    # API: "Authorization: Bearer …" başlığını PHP'ye ilet.
+    # Apache (özellikle PHP-FPM/CGI ile) bu başlığı varsayılan olarak
+    # PHP'ye GEÇİRMEZ; kural olmadan Bearer anahtarı hiç ulaşmıyor ve
+    # her API isteği 401 alıyordu. (bkz. ApiToken::fromRequest)
+    RewriteCond %{HTTP:Authorization} .
+    RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+
+    # Sondaki bölü işaretini temizle: /panel/ayarlar/ → /panel/ayarlar
+    # (aynı içeriğin iki adresi olması SEO'da yinelenen içerik sayılır)
+    #
+    # TAKMA AD (VİTRİN) İSTİSNASI: Uygulama başka bir adresten İÇERİDEN
+    # yeniden yazılarak servis ediliyorsa (örn. üst klasördeki .htaccess
+    # /vitrin/proje/ adresini bu klasöre bağlıyorsa) o üst kural sona
+    # eğik çizgi EKLER, bu kural SİLER; ikisi karşılıklı 301 üretip
+    # döngüye girer. İçeriden yeniden yazılmış isteklerde Apache
+    # REDIRECT_STATUS değişkenini doldurur; kural yalnızca ziyaretçinin
+    # DOĞRUDAN bu klasöre gelen isteğinde çalışır. (Eskiden burada
+    # yalnızca şablon yazarının kendi sitesine özel bir yol yazılıydı.)
+    #
+    # HEDEF, İSTEĞİN KENDİ ADRESİNDEN (REQUEST_URI) üretilir. Eskiden
+    # "$1" gibi GÖRELİ bir hedef kullanılıyordu; .htaccess içinde
+    # RewriteBase olmadan göreli 301, Apache'nin başına KLASÖRÜN DİSK
+    # YOLUNU eklemesine yol açabiliyor: /proje/giris/ isteği
+    # "http://site/C:/xampp/htdocs/proje/giris" (ya da /var/www/...)
+    # adresine yönleniyor, hem sayfa açılmıyor hem de sunucunun dosya
+    # düzeni sızıyordu. REQUEST_URI alt klasörü de içerdiği için kural
+    # kökte ve alt klasörde aynı şekilde çalışır.
+    RewriteCond %{ENV:REDIRECT_STATUS} ^$
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteCond %{REQUEST_URI} ^(/.+)/$
+    RewriteRule ^ %1 [R=301,L]
+
+    # Kurulum sihirbazı kendi başına çalışır.
+    RewriteCond %{REQUEST_URI} !kurulum/
+    # Gerçek dosya ve klasörlere dokunma (assets/, upload/ …).
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+
+    RewriteRule ^(.*)$ index.php [QSA,L]
+</IfModule>
+
+# ---------------------------------------------------------------------
+#  3) GÜVENLİK BAŞLIKLARI (yedek katman)
+# ---------------------------------------------------------------------
+#  PHP zaten bu başlıkları gönderiyor (App\Core\Response). Buradaki
+#  tanımlar, PHP çalışmadan servis edilen statik dosyaları da kapsar.
+<IfModule mod_headers.c>
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-Frame-Options "DENY"
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+    Header always unset X-Powered-By
+    Header unset X-Powered-By
+</IfModule>
+
+# ---------------------------------------------------------------------
+#  4) İSTEMCİ ÖNBELLEĞİ (statik dosyalar)
+# ---------------------------------------------------------------------
+#  Apache 2.4.5x .js dosyalarını "text/javascript" olarak gönderir (RFC
+#  9239). Eskiden yalnızca "application/javascript" yazılıydı; jQuery,
+#  Bootstrap ve app.js ne önbelleğe alınıyor ne sıkıştırılıyordu. İkisi
+#  de yazılır.
+<IfModule mod_expires.c>
+    ExpiresActive On
+    ExpiresByType text/css               "access plus 1 year"
+    ExpiresByType text/javascript        "access plus 1 year"
+    ExpiresByType application/javascript "access plus 1 year"
+    ExpiresByType image/png              "access plus 1 year"
+    ExpiresByType image/jpeg             "access plus 1 year"
+    ExpiresByType image/webp             "access plus 1 year"
+    ExpiresByType image/svg+xml          "access plus 1 year"
+    ExpiresByType image/x-icon           "access plus 1 year"
+</IfModule>
+
+#  Sürümlü (?v=…) dosyalar değişmez: asset() adrese dosyanın tarihini
+#  ekler, içerik değişince adres de değişir. Tarayıcı bir yıl boyunca
+#  yeniden sormaz. mod_expires kapalıyken de çalışır (XAMPP'ta kapalı).
+<IfModule mod_headers.c>
+    <If "%{QUERY_STRING} =~ /(^|&)v=/ && %{REQUEST_URI} =~ m#/(assets|upload)/#">
+        Header set Cache-Control "public, max-age=31536000, immutable"
+    </If>
+</IfModule>
+
+# ---------------------------------------------------------------------
+#  5) SIKIŞTIRMA
+# ---------------------------------------------------------------------
+#  AddOutputFilterByType Apache 2.4'te mod_filter'dandır: yalnızca
+#  mod_deflate açık bir sunucuda (XAMPP'ta tek satırı açan) koşulsuz
+#  yazılsaydı HER istek 500 verirdi.
+<IfModule mod_deflate.c>
+    <IfModule mod_filter.c>
+        AddOutputFilterByType DEFLATE text/html text/css text/plain
+        AddOutputFilterByType DEFLATE text/javascript application/javascript application/json
+        AddOutputFilterByType DEFLATE image/svg+xml application/manifest+json
+    </IfModule>
+</IfModule>

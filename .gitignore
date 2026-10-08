@@ -1,0 +1,103 @@
+# =====================================================================
+#  .gitignore – Git'in TAKİP ETMEYECEĞİ dosyalar
+# =====================================================================
+
+# --- Kullanıcıların yüklediği dosyalar ------------------------------
+#  Örnek görselleri repoda paylaşmak isterseniz aşağıdaki iki satırı
+#  yorum satırı yapın (başına # koyun).
+upload/*
+!upload/.htaccess
+
+# --- Yerel ortam ayarları (şifre içerebilir, ASLA paylaşmayın) ------
+#  ".env.example" dosyası repoda kalır; ".env" ASLA gönderilmez.
+.env
+.env.*
+!.env.example
+
+#  config/config.local.php varsa config/ klasöründen SONRA okunur ve
+#  ayarların üzerine yazar. Kişiseldir, paylaşılmaz.
+config/config.local.php
+
+# --- Editör ve işletim sistemi artıkları ----------------------------
+.vscode/
+.idea/
+# VS Code çalışma alanı dosyası: yalnızca o makinedeki klasör düzenini
+# tarif eder, projeye ait bir bilgi taşımaz.
+*.code-workspace
+*.swp
+*.swo
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# --- Log ve geçici dosyalar -----------------------------------------
+*.log
+*.tmp
+*.bak
+
+# =====================================================================
+#  storage/ – İÇERİK gitmez, KORUMA gider
+# ---------------------------------------------------------------------
+#  Bu klasörlerdeki dosyalar kişiseldir ve paylaşılmaz. Ama her
+#  klasörün ".htaccess" dosyası GİTMEK ZORUNDADIR: depoyu klonlayan
+#  kişide o dosya yoksa günlükler, önbellek ve diske yazılmış
+#  e-postalar tarayıcıdan okunabilir hale gelir.
+#
+#  Bu yüzden her kuralın altında ".htaccess" ve ".gitignore" için
+#  birer istisna vardır. Yeni bir storage alt klasörü eklerseniz aynı
+#  iki istisnayı da eklemeyi unutmayın.
+#
+#  DİKKAT: Her alt klasörün KENDİ ".gitignore" dosyası da vardır ve
+#  içinde "*" yazar. İç içe .gitignore, kök dosyadan ÖNCELİKLİDİR;
+#  yani istisnayı orada da yazmazsanız buradaki satır işe yaramaz.
+#  (storage/mail/.htaccess tam olarak bu yüzden bir süre depoya
+#  gitmedi ve o klasör klonlarda korumasız kaldı.)
+# =====================================================================
+
+# --- Geliştirmede diske yazılan e-postalar --------------------------
+#  mail_surucu = "kayit" seçiliyken mektuplar buraya .eml olarak
+#  düşer. Gerçek adres ve mesaj içerdikleri için paylaşılmazlar.
+storage/mail/*
+!storage/mail/.gitignore
+!storage/mail/.htaccess
+
+# --- Uygulama günlükleri --------------------------------------------
+#  IP adresi, kullanıcı numarası ve hata ayrıntısı içerirler.
+storage/logs/*
+!storage/logs/.gitignore
+!storage/logs/.htaccess
+
+# --- Üretilen önbellek dosyaları ------------------------------------
+#  "data" alt klasörü (dosya sürücüsünün deposu) depoya girmez;
+#  FileStore ilk yazmada kendisi oluşturur.
+storage/cache/*
+!storage/cache/.gitignore
+!storage/cache/.htaccess
+
+# --- Özel (private) diske yüklenen dosyalar -------------------------
+#  Fatura, sözleşme, dışa aktarım… Web'den erişilemezler ve
+#  paylaşılmazlar.
+storage/files/*
+!storage/files/.gitignore
+!storage/files/.htaccess
+
+# --- Oturum dosyaları -----------------------------------------------
+#  Her kurulum oturumlarını KENDİ klasöründe tutar (bkz. Session).
+#  İçlerinde giriş yapmış kullanıcının kimliği durur; asla paylaşılmaz.
+storage/sessions/*
+!storage/sessions/.gitignore
+!storage/sessions/.htaccess
+
+# --- Kurulum kilidi ---------------------------------------------------
+#  Sihirbazın kendini kilitlediği dosya. Sunucuya özeldir; depoya
+#  girerse yeni bir klonda kurulum hiç başlamaz.
+/storage/installed.lock
+
+# --- Yedek imza anahtarı ------------------------------------------
+#  APP_KEY boşken App\Core\Signer'ın ürettiği anahtar. Kuruluma özel ve
+#  GİZLİDİR; depoya girerse imzalı bağlantılar ve çerezler taklit edilebilir.
+/storage/app.key
+
+# --- Bağımlılık klasörleri ------------------------------------------
+/vendor/
+/node_modules/

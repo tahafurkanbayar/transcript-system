@@ -1,0 +1,18 @@
+{
+    "baslik": "Örnek Modül",
+    "aciklama": "Kendi modülünüzü yazarken kopyalayacağınız çalışan örnek: CRUD, onay akışı ve rol tabanlı yetki (RBAC)",
+    "surum": "1.2.0",
+    "kurulumda_acik": true,
+
+    "yetkiler": {
+        "editor": ["ornek.view", "ornek.create", "ornek.update.own", "ornek.publish"],
+        "uye":    ["ornek.view", "ornek.create", "ornek.update.own"]
+    },
+
+    "menu": {
+        "route": "panel/ornek",
+        "icon": "box",
+        "label": "Örnek Modül",
+        "can": "ornek.view"
+    }
+}

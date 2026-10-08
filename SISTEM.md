@@ -1,0 +1,1834 @@
+# CY PHP Starter — Sistem Kılavuzu
+
+**PHP Başlangıç Şablonunun mimarisi, tasarım kararları ve genişletme rehberi** · Sürüm 1.6.2
+
+> Bu dosya sistemin **tamamını** anlatır: mimari kararlar, her katmanın
+> ne işe yaradığı, neden öyle yazıldığı ve nasıl genişletileceği.
+> Hızlı başlangıç için [README](https://github.com/CilginYazilim/cy-php-starter#readme)
+> yeterlidir; sürüm notları [CHANGELOG.md](https://github.com/CilginYazilim/cy-php-starter/blob/main/CHANGELOG.md)
+> içinde, örnek kodlar [Çılgın Yazılım Kod Kütüphanesi](https://cilginyazilim.com/kutuphane)'nde.
+
+---
+
+## İçindekiler
+
+1. [Felsefe: Core ne bilir, ne bilmez?](#1-felsefe)
+2. [Bir isteğin yolculuğu](#2-bir-isteğin-yolculuğu)
+3. [Klasör yapısı](#3-klasör-yapısı)
+4. [Önyükleme (bootstrap)](#4-önyükleme)
+5. [Yapılandırma ve ortam](#5-yapılandırma-ve-ortam)
+6. [Adresler ve yönlendirme](#6-adresler-ve-yönlendirme)
+7. [Kimlik ve yetkilendirme](#7-kimlik-ve-yetkilendirme)
+8. [Hata yönetimi ve günlükler](#8-hata-yönetimi-ve-günlükler)
+9. [Veritabanı, migration, seeder](#9-veritabanı-migration-seeder)
+10. [Depolama ve dosya yükleme](#10-depolama-ve-dosya-yükleme)
+11. [Önbellek](#11-önbellek)
+12. [Olaylar](#12-olaylar)
+13. [Kuyruk ve zamanlanmış görevler](#13-kuyruk-ve-zamanlanmış-görevler)
+14. [E-posta](#14-e-posta)
+15. [REST API](#15-rest-api)
+16. [Modül sistemi](#16-modül-sistemi)
+17. [PWA](#17-pwa)
+18. [Konsol (`php cy`)](#18-konsol-php-cy)
+19. [Arayüz ve tasarım](#19-arayüz-ve-tasarım)
+20. [İçerik sayfaları ve zengin metin](#20-i̇çerik-sayfaları-ve-zengin-metin)
+21. [Güvenlik](#21-güvenlik)
+22. [Yeni projeye başlarken](#22-yeni-projeye-başlarken)
+23. [Canlıya çıkış listesi](#23-canlıya-çıkış-listesi)
+
+---
+
+## 1. Felsefe
+
+Bu proje belirli bir iş uygulaması **değildir**. Amaç, her yeni PHP
+projesinde baştan yazılan teknik altyapıyı hazır sunmaktır.
+
+**Tek cümlelik kural:**
+
+> Core, uygulamanın **NE İŞ YAPTIĞINI** bilmez. Yalnızca **NASIL
+> ÇALIŞTIĞINI** sağlar.
+
+| Core'a ait | Core'a ait değil |
+|---|---|
+| Kimlik, yetki, oturum | Personel, puantaj, maaş |
+| Router, Request, Response | Sipariş, stok, fatura |
+| Veritabanı, migration | Blog yazısı, kategori |
+| E-posta, kuyruk, olay | "Kullanıcı kaydolunca personel kartı aç" |
+
+Son satır ayrımın kalbidir:
+
+```php
+// YANLIŞ — çekirdek ERP'yi biliyor
+UserService::register($data);
+ErpPersonel::olustur($user);          // ← çekirdeğe sızmış iş mantığı
+
+// DOĞRU — çekirdek duyurur, modül dinler
+Events::dispatch(new UserRegistered($user));
+
+// modules/Erp/events.php
+Events::listen(UserRegistered::class, PersonelKartiAc::class);
+```
+
+**Sıfır bağımlılık.** Composer yok, `vendor/` yok. İndir, `kurulum/`
+adresini aç, çalıştır. Bu, starter'ın en güçlü yanıdır ve bilerek
+korunmuştur.
+
+### Tekrarlanan tasarım kararları
+
+Bu kararlar tüm kod tabanında tutarlıdır; yeni kod yazarken de
+uyulmalıdır:
+
+- **Arayüz ancak ikinci uygulama varken açılır.** `Cache` arayüzü var
+  (3 sürücü), `Storage` yok (1 sürücü). Tek uygulaması olan arayüz ölü
+  soyutlamadır.
+- **Altyapı hataları sessizdir, iş hataları gürültülüdür.** Logger disk
+  dolunca istisna atmaz; kullanıcı kaydı başarısız olunca atar.
+- **Geliştirmede gürültülü, yayında dayanıklı.** Aynı hata `APP_DEBUG`
+  açıkken ekrana düşer, kapalıyken loglanıp yutulur.
+- **Kullanıcı girdisi asla dosya adına/SQL'e/HTML'e doğrudan girmez.**
+
+---
+
+## 2. Bir isteğin yolculuğu
+
+```
+Tarayıcı
+   │
+   ▼
+.htaccess ──► mod_rewrite: /panel/ayarlar → index.php
+   │
+   ▼
+index.php ──► app/bootstrap.php
+   │              ├── Autoloader (PSR-4, Composer'sız)
+   │              ├── Env::load(.env)
+   │              ├── Config::load(config/)
+   │              ├── ErrorHandler::register()   ← buradan sonrası güvenli
+   │              ├── helpers.php
+   │              └── routes/events.php
+   │
+   ├── Session::start()          oturum sertleştirme
+   ├── Response::securityHeaders()  CSP, HSTS, nosniff…
+   ├── Setting::load($db)        panelden yönetilen ayarlar
+   ├── Modules::boot()           açık modüllerin sınıf + olayları
+   │
+   ▼
+routes/web.php ──► Router
+   │                 └── Modules::loadRoutes()   modül rotaları
+   ▼
+Middleware  installed → auth → csrf → can:…
+   │
+   ▼
+Controller ──► Repository ──► PDO
+   │
+   ▼
+View (+ layout)  ya da  Response::json()
+   │
+   ▼
+Tarayıcı
+```
+
+**Hata olursa** akış nerede olursa olsun `ErrorHandler`'a düşer:
+loglanır, ortama göre HTML sayfası / JSON / terminal metni üretilir.
+
+---
+
+## 3. Klasör yapısı
+
+```
+cy-php-starter/
+├── index.php               Web giriş noktası (ön denetleyici)
+├── cy                      Konsol giriş noktası (php cy …)
+├── sw.js                   Servis çalışanı (PWA) — kökte olmak ZORUNDA
+├── .htaccess               Temiz adres + güvenlik + önbellek + sıkıştırma
+├── .env                    Gizli ayarlar (asla depoya gitmez)
+│
+├── app/
+│   ├── bootstrap.php       Web + CLI ortak önyükleme
+│   ├── Core/               ÇEKİRDEK — iş mantığı içermez
+│   │   ├── Api/            ApiResponse · ApiToken · ApiGuard
+│   │   ├── Cache/          Cache · CacheStore + File/Database/Null
+│   │   ├── Console/        Kernel · Command · Input · Output · Commands · stubs
+│   │   ├── Database/       Migrator · Migration · Seeder
+│   │   ├── Events/         Events · Dispatcher · Event
+│   │   ├── Exceptions/     HttpException
+│   │   ├── Log/            Logger
+│   │   ├── Mail/           Mailer · Mailable · Mime · MailUi · Notifier · Transport'lar
+│   │   ├── Modules/        Modules · Module
+│   │   ├── Queue/          Queue · Job
+│   │   ├── Schedule/       Schedule · Task
+│   │   ├── Storage/        Storage · Disk · StoredFile
+│   │   └── (Auth, Config, Csrf, Database, Env, ErrorHandler, Flash,
+│   │        Html, Middleware, RateLimiter, Request, Response, Router,
+│   │        Session, Setting, Theme, Uploader, Url, Validator, View)
+│   │
+│   ├── Events/             Uygulamanın kendi olayları (UserRegistered…)
+│   ├── Listeners/          Olay dinleyicileri
+│   ├── Jobs/               Kuyruk işleri
+│   ├── Models/             Entity'ler (ORM DEĞİL) + Role
+│   ├── Repositories/       SQL yalnızca burada
+│   ├── Http/Controllers/   Panel · Api · Site
+│   └── Support/helpers.php e() url() asset() can() icon() config() …
+│
+├── config/                 Her dosya bir üst anahtar
+│   └── app db session log cache queue api storage upload security
+│       validation events
+│
+├── routes/
+│   ├── web.php             Adres → denetleyici
+│   ├── events.php          Olay → dinleyici
+│   └── schedule.php        Zamanlanmış görevler
+│
+├── database/
+│   ├── migrations/         Şema değişiklikleri (kurulum bunları da çalıştırır)
+│   └── seeders/            Örnek veri (php cy db:seed)
+│
+├── modules/                Eklenebilir modüller
+│   └── Ornek/              Çalışan örnek (silinebilir)
+│
+├── views/                  layouts · partials · emails · errors · sayfalar
+├── assets/                 css · js · images (CDN YOK)
+├── storage/                logs · cache · files · mail   (web'e kapalı)
+├── upload/                 Yüklenen görseller (PHP çalıştırma kapalı)
+└── kurulum/                Kurulum sihirbazı (kurulum sonrası SİLİN)
+    ├── index.php           Sihirbaz
+    ├── kurulum.css · .js   Sihirbazın arayüzü
+    └── database.sql        Temel şema — HER kurulumda çalışır
+                            (örnek veri App\Core\DemoData içinde)
+```
+
+---
+
+## 4. Önyükleme
+
+`app/bootstrap.php` web ve CLI için **ortaktır**. Sırasıyla:
+
+1. **Autoloader** — `App\Core\Database` → `app/Core/Database.php`.
+   `realpath()` ile dosyanın gerçekten kendi klasöründe olduğu
+   doğrulanır (path traversal koruması).
+2. **Env** — `.env` okunur.
+3. **Config** — `config/` klasörü (ya da önbellek) yüklenir.
+4. **Saat dilimi**.
+5. **ErrorHandler** — bu satırdan sonra hiçbir hata sessizce kaybolmaz.
+6. **helpers.php**.
+7. **routes/events.php** — dinleyiciler kaydedilir.
+8. CLI ise **routes/schedule.php**.
+
+`index.php` bunun üstüne web katmanını ekler: oturum, güvenlik
+başlıkları, ayarlar, modüller, yönlendirme.
+
+---
+
+## 5. Yapılandırma ve ortam
+
+### Ayarlar ekranı bölüm bölümdür
+
+```
+panel/ayarlar            gruplara genel bakış (durum özetleriyle)
+panel/ayarlar/genel      yalnızca "genel" grubu
+panel/ayarlar/eposta     yalnızca "eposta" grubu
+```
+
+Her sayfa **yalnızca kendi grubunu kaydeder**. E-posta sayfasını
+kaydetmek SEO ayarlarına dokunmaz.
+
+> **"dahili" grubu ekranda görünmez.** Sistemin kendi tuttuğu
+> değerler (açık modül listesi gibi) oraya yazılır ve
+> `duzenlenebilir=0` işaretlenir. Bu kural bir hatadan doğdu:
+> `aktif_moduller` bir zamanlar "genel" grubunda düzenlenebilir bir
+> metin alanıydı ve Genel ayarlarını kaydetmek **tüm modülleri
+> kapatıyordu**. `Setting::grouped()` artık yalnızca
+> `groupLabels()` içinde etiketi olan grupları döndürür.
+
+### İki ayar kaynağı vardır — karıştırmayın
+
+| | `config()` | `setting()` |
+|---|---|---|
+| Nerede | `config/*.php` dosyaları | `ayarlar` veritabanı tablosu |
+| Kim değiştirir | Geliştirici (dağıtımla) | Yönetici (panelden) |
+| Örnek | `config('db.host')` | `setting('site_adi')` |
+
+### `.env` ayrıştırıcısı
+
+```bash
+KEY=deger
+export KEY=deger              # kabuktan kopyala-yapıştır çalışır
+KEY="tırnaklı  deger"         # \n ve \" kaçışları çözülür
+KEY='ham ${DEGER}'            # tek tırnakta hiçbir şey çözülmez
+KEY=deger   # satır sonu notu  (yalnızca TIRNAKSIZ değerlerde)
+SIFRE=Parola#123              # boşluk yoksa "#" yorum SAYILMAZ
+URL=${HOST}/yol               # önceki değişkene atıf
+```
+
+Arama sırası: `.env` → `$_ENV` → `$_SERVER` → `getenv()` → varsayılan.
+Docker/Heroku gibi ortamlarda `.env` olmadan da çalışır.
+
+> `putenv()` **kullanılmaz**: putenv ile yazılan değerler alt süreçlere
+> miras kalır ve veritabanı parolanız çağırdığınız her komuta sızar.
+
+### Ortam ayrımı
+
+```bash
+APP_ENV=production
+APP_DEBUG=false
+```
+
+İkisi çelişirse (production + debug) her istekte **güvenlik kanalına
+uyarı** düşer. Sessizce düzeltilmez — geliştirici bilerek açmış
+olabilir — ama iz bırakmadan da geçilmez.
+
+### Yapılandırma önbelleği
+
+```bash
+php cy config:cache    # config/ → storage/cache/config.php
+php cy config:clear
+```
+
+İki koruma: **`APP_DEBUG=true` iken asla kullanılmaz** (dosyayı
+değiştirip "neden olmuyor" diye aramayasınız) ve **proje kökü parmak
+izi** gömülür (klasör taşınırsa bayat mutlak yollar kullanılmaz).
+
+### `config/config.local.php`
+
+Varsa `config/`'ten sonra okunur ve **derin birleştirilir**. `.gitignore`
+içindedir: kendi makinenizde bir ayarı değiştirmek için takım
+arkadaşlarınızın dosyalarına dokunmazsınız.
+
+---
+
+## 6. Adresler ve yönlendirme
+
+### Temiz adresler
+
+Varsayılan **açıktır**:
+
+```
+/cy-php-starter/panel/ayarlar          ✔
+/cy-php-starter/index.php?r=panel/…    (APP_PRETTY_URLS=false)
+```
+
+`mod_rewrite` yoksa `.env` içinde `APP_PRETTY_URLS=false` yapmak
+yeterlidir; kodda hiçbir şey değişmez.
+
+**Tüm adresler köke görelidir** (`/cy-php-starter/...`). Bu şart:
+`/panel/ayarlar` sayfasındayken göreli `assets/css/site.css` adresi
+tarayıcı tarafından `/panel/assets/css/site.css` olarak çözülür ve
+sayfa stilsiz kalır. `App\Core\Url` taban yolunu `SCRIPT_NAME`'den
+bulur; uygulama sunucu kökünde de alt klasörde de çalışır.
+
+### Rota tanımlama
+
+```php
+$router->get('panel/urunler', UrunController::class, 'index',
+    ['installed', 'auth', 'can:urun.view']);
+
+// Parametreli — değer metoda argüman olarak geçer
+$router->get('api/v1/urunler/{id}', UrunApi::class, 'show', ['api']);
+// public function show(Request $request, string $id): void
+
+// Grup: ortak önek + ortak ara katman
+$router->group('api/v1', ['api'], function (Router $r) {
+    $r->get('urunler', UrunApi::class, 'index');
+    $r->post('urunler', UrunApi::class, 'store');
+});
+```
+
+Yöntemler: `get` `post` `put` `patch` `delete` `any`.
+HTML formları yalnızca GET/POST gönderebildiği için `_method` alanıyla
+**yöntem sahteleme** desteklenir.
+
+**Performans:** parametresiz rotalar dizi anahtarında O(1) bulunur;
+yalnızca parametreli olanlar düzenli ifadeyle denenir.
+
+**İlk kayıt kazanır:** modül rotaları çekirdekten sonra yüklenir, bu
+yüzden bir modül `giris` gibi temel bir adresi ele geçiremez.
+
+### Ara katmanlar
+
+| Kural | İşi |
+|---|---|
+| `installed` | `.env` yoksa kurulum sihirbazına yönlendir |
+| `guest` | Yalnızca giriş yapmamış ziyaretçi |
+| `auth` | Giriş zorunlu (AJAX'ta 401 döner) |
+| `csrf` | Sahte istek koruması — veri değiştiren her POST |
+| `can:users.delete` | Yetki zorunlu (`\|` ile VEYA) |
+| `role:admin` | Rol zorunlu |
+| `api` | Bearer anahtarı + hız sınırı |
+| `api.can:urun.view` | API yetkisi |
+| `api.guest` | Anahtarsız ama hız sınırlı |
+
+---
+
+## 7. Kimlik ve yetkilendirme
+
+**Oturumda yalnızca kullanıcı numarası tutulur.** Rol ve durum her
+istekte veritabanından taze okunur; aksi halde pasife alınan bir
+kullanıcı oturumu açık kaldığı sürece yetkilerini kullanmaya devam
+ederdi.
+
+### Giriş güvenliği
+
+- **Kaba kuvvet koruması** (`App\Core\RateLimiter`, `login_attempts` tablosu):
+  - *Kimlik kilidi* — aynı kimliğe aynı kapsamdan 5 hatalı denemede
+    15 dakika kilit. Kapsam IP kovasıdır (IPv4 adresin kendisi, IPv6 /64
+    bloğu) ya da güvenilen cihazdır.
+  - *IP geneli yavaşlatma* — tek kovadan 30 FARKLI kimlik denenince
+    giderek artan bekleme (1, 2, 4… saniye, en fazla kilit süresi). Sert
+    kilit değildir: aynı IP'yi paylaşan yöneticiyi dışarıda bırakmaz.
+  - *Güvenilen cihaz* — başarılı girişte `APP_KEY` ile imzalı
+    `cy_cihaz_<kurulum>` çerezi yazılır (kullanıcı + cihaz + oturum
+    sürümü + bitiş). O tarayıcı IP yavaşlatmasına takılmaz, kimlik kilidi
+    ona ayrı sayılır; parola değişince geçersizdir. Parolayı ASLA atlatmaz.
+  - *Eşzamanlılık* — deneme parola doğrulanmadan ÖNCE yazılır ve yalnızca
+    kendinden önceki satırlar sayılır; başarılı girişte silinir. Aynı anda
+    gönderilen istekler sınırı birlikte aşamaz.
+  - *Vekil arkasında* — `TRUSTED_PROXIES` ile gerçek adres vekilin
+    başlığından okunur (`App\Core\Ip`); yazılmazsa bütün ziyaretçiler
+    vekilin IP'sinden geliyor görünür.
+  - Süreler SQL'in kendi saatiyle hesaplanır; MySQL ile PHP'nin saat
+    dilimi farklı olsa da kilit çalışır (`Database::syncTimezone()`).
+- **Zamanlama saldırısı önlemi** — kullanıcı bulunamasa bile PHP'nin
+  varsayılan maliyetinde GEÇERLİ bir sahte özet doğrulanır; var olan ve
+  olmayan hesap aynı sürede, aynı mesajla ("kalan deneme hakkı" dahil)
+  yanıtlanır.
+- **Oturum sabitleme önlemi** — girişte `session_regenerate_id(true)`.
+- **Oturum sürümü** — `kullanicilar.oturum_surumu` parola değişince (ya
+  da Hesabım → "Diğer cihazlardan çıkış yap" ile) artar; oturumdaki
+  sürüm tutmazsa oturum geçersizdir. Parolayı değiştiren cihaz açık
+  kalır, diğerleri bir sonraki istekte düşer.
+- **Kuruluma özel oturum** — çerez adı (`SESSION_NAME`), çerez yolu
+  (uygulama klasörü), oturum klasörü (`storage/sessions`) ve parmak izi
+  (`APP_KEY`) kuruluma bağlıdır; aynı alan adındaki iki kurulum
+  birbirinin oturumunu kabul etmez. `APP_KEY` doluyken kurulum kimliği
+  yalnızca ondan türetilir (sürüm klasörlü dağıtımlarda oturum düşmez).
+  Çerez yolu tarayıcının gönderdiği KODLANMIŞ biçimde yazılır
+  (`Url::cookiePath`; `/my app/` → `/my%20app/`). Oturum klasörü yalnızca
+  `session.save_handler=files` iken değiştirilir (Redis/Memcached'e
+  dokunulmaz).
+- **Parola değişince** diğer cihazlardaki oturumlar, "beni hatırla"
+  jetonu ve kullanıcının **bütün API anahtarları** geçersiz olur. Bu
+  cihaz `Auth::refreshCurrentDevice()` ile açık kalır ("beni hatırla"
+  açıksa bu cihaz için yeni jeton yazılır) — yönetici kendi parolasını
+  Kullanıcılar ekranından değiştirdiğinde de.
+- **Girişten sonra dönüş** — yalnızca GET isteklerinde, isteğin kendi
+  yolundan saklanır ve `Middleware::safeIntended()` ile doğrulanır;
+  site dışına yönlendirme yapılamaz.
+- **Otomatik rehash** — `password_needs_rehash()` ile parola özeti
+  güncel algoritmaya taşınır.
+- Oturum: `httponly` + `samesite=Lax` + HTTPS'te `secure`, tarayıcı
+  parmak izi kontrolü, 30 dk hareketsizlik zaman aşımı, 15 dk'da bir
+  kimlik yenileme.
+
+### "Beni hatırla"
+
+Oturum çerezi tarayıcı kapanınca ölür. Giriş ekranındaki kutu
+işaretlenirse — **yalnızca o zaman** — 30 günlük ayrı bir çerez bırakılır:
+
+```
+çerez  cy_remember_<kurulum> = <64 karakterlik rastgele jeton>   (HttpOnly)
+tablo  kullanicilar.hatirla_token = sha256(jeton)
+       kullanicilar.hatirla_bitis  = NOW() + 30 gün
+```
+
+Parola ya da e-posta **çereze hiç yazılmaz**. Veritabanında yalnızca
+özet durur; sızsa bile kimse geçerli bir çerez üretemez — parola
+özetleriyle aynı mantık.
+
+Üç ayrıntı bilinçlidir:
+
+* **Jeton her kullanımda KOŞULLU yenilenir.** `UPDATE … WHERE
+  hatirla_token = eski AND oturum_surumu = v`; satır güncellenmezse
+  (jeton bu arada değişti ya da parola değişti) oturum açılmaz. Çalınan
+  bir çerezin ömrü, gerçek kullanıcının bir sonraki ziyaretiyle sona
+  erer; parola değişimiyle yarışıp jetonu yeniden yazamaz.
+* **Çıkış jetonu iptal eder.** Etmeseydi çıkış yapan kullanıcı bir
+  sonraki istekte çerez sayesinde yeniden içeri alınırdı — ortak
+  bilgisayarda tam bir açık.
+* **İşaretlenmemiş giriş de eski jetonu siler.** "Bu sefer hatırlama"
+  tercihi, önceki oturumdan kalan çerezi de geçersiz kılmalıdır.
+* **Parola değişince jeton silinir.** `UserRepository::update()` parolayı
+  değiştiren AYNI sorguda jetonu siler ve oturum sürümünü artırır;
+  çalınmış bir çerez parola değişikliğinden sonra işe yaramaz.
+
+Çerezle açılan oturum da `session_regenerate_id()` ve CSRF jetonu
+yenilemesinden geçer; yani sabitleme saldırısına karşı normal girişle
+aynı korumaya sahiptir.
+
+### Kayıt ve e-posta doğrulaması
+
+`sistem_kayit_dogrulama` açıkken (varsayılan) kayıt formundan açılan hesap
+`onay_bekliyor` durumunda başlar ve giriş yapamaz. Adrese **imzalı,
+tablosuz** bir bağlantı gider (`App\Core\Registration`):
+
+```
+kayit/dogrula?k=<kullanıcı>&s=<son kullanma>&i=HMAC(APP_KEY, kullanıcı|e-posta|son)
+```
+
+E-posta imzanın içinde olduğu için adres değişirse eski bağlantı çalışmaz.
+Bağlantı oturum AÇMAZ (mektubu ele geçiren parolayı bilmeden giremez);
+hesap etkinleşince `UserRegistered` yayınlanır, hoş geldin mektubu o
+zaman gider. Doğrulanmamış hesapla doğru parolayla giriş denenirse
+bağlantı yeniden gönderilir (aynı adrese 10 dakikada bir).
+
+- **Hesap varlığı sızmaz:** adres zaten kayıtlıysa ekran yeni kayıtla
+  AYNI yanıtı verir; adresin sahibine "bu adresle zaten hesabınız var"
+  mektubu gider (günde bir). Kullanıcı adının alınmış olduğu ise
+  söylenir (herkese görünen bir addır).
+- **Mektuplara formdan gelen metin basılmaz** (ad, kullanıcı adı) — form
+  sitenin adıyla başkalarına metin gönderen bir röle olmasın.
+- **Bot koruması:** bal küpü + İMZALI ve ZORUNLU zaman damgası
+  (`Signer::stamp`; iletişim formunda da) + her gönderimin sayıldığı
+  saatlik sınır (20) + başarılı kayıt sınırı (5). Sayaçlar
+  `Throttle::attempt` ile kilitli dosyada tutulur; paralel istekler
+  sınırı aşamaz.
+- E-posta ayarları yapılmamışsa kayıt formu kendiliğinden kapanır
+  (`Registration::isOpen`); yönetici panelde uyarı görür.
+
+### Parola sıfırlama
+
+`/parolami-unuttum` → e-postaya tek kullanımlık bağlantı → `/parola-sifirla`.
+Kurallar `App\Core\PasswordReset` içindedir:
+
+| Konu | Davranış |
+|---|---|
+| Jeton | 256 bit rastgele; veritabanında (`parola_sifirlama`) yalnızca SHA-256 özeti |
+| Ömür | 60 dakika (`PasswordReset::DAKIKA`), tek kullanım — "kullanıldı" işareti koşullu `UPDATE` ile konur, aynı anda gelen iki istekten biri kazanır |
+| Yanıt | Adres kayıtlı olsun olmasın **aynı cümle**; hesap tespiti yapılamaz |
+| Hız sınırı | IP başına saatte 10 istek, adres başına saatte 3 bağlantı, aynı adrese 2 dakikada bir mektup |
+| Başarıda | `UserRepository::update(['sifre' => …])`: oturum sürümü artar, "beni hatırla" silinir, **API anahtarları ve mobil oturumlar iptal** edilir; o kullanıcıya giden öteki bağlantılar da geçersizleşir |
+| Bilgilendirme | `PasswordChanged` olayı (`kaynak: sifirlama`) → `ParolaDegistiBildir` → "Parolanız değiştirildi" mektubu |
+| Kapalı olduğu durum | Ayarlar → Sistem → "Parola sıfırlama" kapalıysa ya da site e-posta gönderemiyorsa (`Mailer::canDeliver()`); giriş ekranındaki bağlantı da gizlenir |
+| Demo | Demo modunda örnek hesaplara bağlantı gitmez |
+
+Sıfırlama sayfası `Referrer-Policy: no-referrer` ile gönderilir: adres
+çubuğundaki jeton başka bir siteye "Referer" olarak sızmaz. Mektubun
+gövdesi panelin e-posta geçmişinde gizlidir (`MailLog::GUVENLIK_SABLONLARI`).
+Bir günden eski kayıtları `parola-sifirlama-temizle` görevi siler.
+
+**"Parolanız değiştirildi"** mektubu her parola değişikliğinde gider —
+profilden, sıfırlama bağlantısıyla ya da bir yönetici tarafından. Hesabı
+ele geçirilen kişinin bunu fark etmesinin çoğu zaman tek yolu budur.
+Kapatmak için `routes/events.php` içindeki tek satırı silin.
+
+### KVKK araçları ve hesap silme
+
+| Araç | Nerede | Ayar |
+|---|---|---|
+| Aydınlatma onayı | Kayıt ve iletişim formlarında zorunlu kutu; bağlantı seçilen sayfaya gider | `sistem_kvkk_onay`, `sistem_kvkk_sayfa` (varsayılan `gizlilik-ve-kvkk`; sayfa yayında değilse kutu çıkmaz) |
+| IP/tarayıcı saklama | İletişim mesajlarında bu iki alan süre dolunca boşaltılır (`mesaj-anonimlestir` görevi, her gece) | `sistem_ip_saklama` gün (varsayılan 180; 0 → kapalı) |
+| Hesabımı sil | Hesabım ekranının altında; parola ile onaylanır | `sistem_hesap_silme` |
+
+Hesap silme `App\Core\AccountDeletion` içindedir: `kullanicilar.silinme_at`
+**7 gün** sonrasına yazılır, bütün oturumlar ve API anahtarları kapanır,
+kişi çıkış yapar. Bu sürede **giriş yapmak silmeyi iptal eder** (tarayıcı
+ve mobil giriş). Süre dolunca `hesap-sil` görevi (saatte bir) hesabı ve
+profil görselini siler; mesajlar, sayfalar ve e-posta kayıtları kalır,
+kullanıcıyla bağları kopar (`ON DELETE SET NULL`). Sistemdeki **son
+yönetici** kendini silemez, görev de silmez.
+
+### Yetkiler
+
+Kodda **rol adı değil yetki adı** kullanılır:
+
+```php
+Auth::can('users.delete')      // ✔ doğru
+Auth::user()->rol === 'admin'  // ✘ kırılgan
+```
+
+Roller ve yetkileri `app/Models/Role.php` içindedir.
+
+> **Yönetici her şeyi yapabilir** — liste kontrol edilmez. Sebebi
+> modüllerdir: `modules/Stok` kendi `stok.view` yetkisini tanımlar ama
+> çekirdeğin listesini değiştiremez. Yönetici için beyaz liste şart
+> koşsaydık, kurulan her modül için `Role.php`'yi elle düzenlemek
+> gerekirdi. Diğer roller için liste bağlayıcıdır; bir modül kendi
+> yetkisini editöre ya da üyeye `module.json` → `"yetkiler"` ile verir
+> (bkz. 16. Modül sistemi).
+
+**Rol matrisi testi.** `tests/rol-matrisi.php` her rota için kimin
+erişebildiğini yazar (`M` misafir, `U` üye, `E` editör, `Y` yönetici).
+Birim testi bunu `routes/web.php` ve açık modüllerin rotalarıyla
+karşılaştırır: yeni bir rota eklenip tabloya yazılmazsa ya da bir `can:`
+kuralı yanlışlıkla silinip rota üyeye açılırsa test kırılır. Ayrıca bütün
+`panel/*` rotalarının giriş istediğini ve oturumla çalışan her POST'un
+CSRF korumalı olduğunu denetler. Yeni rota eklediğinizde satırını o
+tabloya siz yazarsınız — bilinçli bir değişiklik olduğunu kanıtlar.
+
+### Demo modu
+
+Herkese açık bir deneme sitesi kuruyorsanız (ör. canlı demo) `.env`
+içinde `APP_DEMO=true` yapın ya da sihirbazın ikinci ekranında
+**Demo modu** kutusunu işaretleyin. Örnek veri şart: kutu onu da yükler
+(bkz. 9. Örnek veri).
+
+| Davranış | Ayrıntı |
+|---|---|
+| Giriş ekranı | Yönetici (`ali.yonetici`), Editör (`elif.editor`), Üye (`mehmet.uye`) parolalarıyla (`Demo1234!`) listelenir; satıra tıklamak formu doldurup gönderir (`login.js`) — giriş normal yoldan, CSRF ve kaba kuvvet korumasıyla yapılır |
+| Demo kilidi | Örnek hesaplar için kapalı yazma uçları: `panel/hesabim/*` (bilgi, parola, görsel, API anahtarı, diğer cihazlardan çıkış), `panel/ayarlar/*`, `panel/sistem/*`, kullanıcı ekleme/düzenleme/silme/durum, e-posta gönderme/sınama/silme |
+| Açık kalanlar | Okuma her yerde; sayfa yazma, mesajlar, modül kayıtları — demonun amacı bunları denetmektir |
+| Kurulumdaki yönetici | Kilide takılmaz; demoyu o hesapla yönetirsiniz |
+| Panel uyarıları | Demo hesabına "kilitli işlemler" bilgisi; asıl yöneticiye "demo modu açık" uyarısı |
+
+Kilit, rotanın bütün ara katmanları geçtikten SONRA çalışır
+(`Router` → `Middleware::afterAll` → `App\Core\Demo::guard`): önce
+yetki sorulur, sonra demo kilidi. Böylece editör, zaten yetkisi olmayan
+bir işlemde "yetkiniz yok" görür; "demo modunda kapalı" mesajı yalnızca
+işi gerçekten yapabilecek kişiye çıkar (1.6.0'dan önce sıra tersti ve
+mesaj yanıltıcıydı). Form isteği bölüm sayfasına mesajla döner, AJAX
+isteği açıklamalı 403 alır. Hesap listesi ve kilitli uçlar
+`app/Core/Demo.php` içindedir.
+
+**Kendini sıfırlayan demo.** Demo modunda `demo-sifirla` görevi 3 saatte
+bir (`Demo::SIFIRLAMA_DAKIKA`) ziyaretçilerin değişikliklerini siler ve
+örnek veriyi baştan kurar; kurulumdaki gerçek yönetici hesabına dokunmaz.
+Elle: `php cy demo:reset` (demo kapalıyken `--zorla`). Örnek veriyi
+tamamen kaldırmak: `php cy demo:temizle` ya da Panel → Sistem → "Örnek
+veriyi kaldır".
+
+**Anahtar neden panelde değil?** Demo yöneticisi her yetkiye sahiptir;
+anahtar panelde olsaydı ilk ziyaretçi demo modunu kapatıp kilitleri
+kaldırabilirdi.
+
+**Ne korumaz?** Ziyaretçilerin eklediği içerik (sayfa, modül kaydı)
+birikir ve sayfalar ön yüzde yayınlanabilir. Herkese açık bir demoyu
+belirli aralıklarla sıfırdan kurun. Demo kapalıyken yerel olmayan bir
+sitede örnek hesaplar duruyorsa panel kırmızı uyarı verir — örnek
+veride bir **yönetici** hesabı da vardır.
+
+Geliştirme ortamında (`APP_DEBUG=true`, `APP_ENV` yayın değil) giriş
+ekranı aynı listeyi pasif ve askıdaki hesaplarla birlikte gösterir;
+kilit yalnızca demo modunda çalışır.
+
+---
+
+## 8. Hata yönetimi ve günlükler
+
+### Üç hata kaynağı da yakalanır
+
+| Kaynak | Nasıl |
+|---|---|
+| Yakalanmamış istisna | `set_exception_handler` |
+| PHP uyarısı / notice | `set_error_handler` |
+| **Ölümcül hata** | `register_shutdown_function` |
+
+Üçüncüsü kritiktir: "Allowed memory size exhausted" ya da bir yazım
+hatası istisna **fırlatmaz**; onsuz kullanıcı beyaz sayfa görür ve
+log'da hiçbir iz kalmaz.
+
+### Ortama göre davranış
+
+|  | Geliştirme | Yayın |
+|---|---|---|
+| Uyarı/notice | İstisnaya çevrilir (fark edilsin) | Loglanır, sayfa çalışmaya devam eder |
+| 500 ekranı | Kaynak kodu + yığın izi | Nötr mesaj |
+| JSON yanıt | `debug` bloğu eklenir | Yalnızca mesaj |
+| CLI | Yığın izi basılır | Tek satır |
+
+### HttpException
+
+```php
+throw HttpException::notFound($path);
+throw HttpException::forbidden(ability: 'users.delete');
+throw HttpException::pageExpired();      // 419 CSRF
+throw HttpException::tooManyRequests(60);
+```
+
+Karar tek yerde toplanır: JSON mu HTML mi, hangi görünüm, hangi log
+kanalı — hepsini `ErrorHandler` verir.
+
+### Günlük kanalları
+
+```
+storage/logs/app-2026-08-10.log        genel + 404'ler (INFO)
+storage/logs/error-2026-08-10.log      istisnalar, ölümcül hatalar
+storage/logs/security-2026-08-10.log   401/403/419/429, başarısız giriş, CSRF
+storage/logs/auth-2026-08-10.log       giriş / çıkış
+storage/logs/mail-2026-08-10.log       gönderilemeyen mektuplar
+storage/logs/queue-2026-08-10.log      kuyruk işleri
+```
+
+Satır biçimi tek başına anlamlıdır:
+
+```
+[2026-08-10 05:58:47] WARNING  419: Güvenlik doğrulaması başarısız… | {"yontem":"POST"} | ip=127.0.0.1 yol=giris uid=5
+```
+
+**Parola maskeleme:** `sifre`, `parola`, `token`, `secret`, `api_key`
+gibi anahtarlar `***` olarak yazılır — iç içe dizilerde de.
+
+**Logger asla istisna fırlatmaz.** Disk dolduğu için site çökmemelidir.
+
+```bash
+php cy log:purge --list
+php cy log:purge --days=7
+```
+
+---
+
+## 9. Veritabanı, migration, seeder
+
+### İlk kurulum vs. migration
+
+- **İlk kurulum** `kurulum/database.sql` ile yapılır — tek adım, hızlı.
+  Temel tablolar buradadır: `ayarlar`, `kullanicilar`, `mesajlar`,
+  `mail_kayitlari`, `login_attempts`.
+- **Migration'lar ondan sonraki** değişiklikler içindir. Şablonla
+  birlikte gelen üç tanesi `onbellek`, `isler` ve `api_anahtarlari`
+  tablolarını kurar.
+
+İkisi çakışmaz: `migrasyonlar` tablosu yalnızca migrator'ın
+çalıştırdıklarını bilir.
+
+**Sihirbaz migration'ları da çalıştırır.** Kurulumun son adımı `.env`
+dosyasını yazdıktan sonra uygulamanın kendi `Migrator`'ını çağırır
+(bkz. `kurulum/index.php` → `run_migrations`). Yani tarayıcıdan yapılan
+bir kurulum **eksiksizdir**; komut satırı olmayan bir paylaşımlı
+hostingde de önbelleğin veritabanı sürücüsü, iş kuyruğu ve API
+anahtarları hazır gelir.
+
+> **Neden bu tabloların SQL'i `database.sql` içine kopyalanmadı?**
+> Bir tablo tek bir yerde tanımlanmalıdır. İki kopya tutulsaydı biri
+> güncellenip diğeri unutulduğunda, taze kurulumla mevcut kurulum
+> sessizce farklı şemalara sahip olurdu. Sihirbaz kopya tutmak yerine
+> migrator'ı çağırır; kayıt tablosu da doğru dolar, sonradan
+> çalıştırılan `php cy migrate` bunları tekrar denemez.
+
+### Örnek veri
+
+Örnek verinin **tek kaynağı** `App\Core\DemoData`'dır; `kurulum/database.sql`
+nötrdür ("Yeni Proje"). Aynı veri dört yoldan kurulur ve kaldırılır:
+
+| Yol | Ne yapar |
+|---|---|
+| Sihirbaz → **Örnek veriyle kur** | Kurulumun sonunda `DemoData::seed()` + açık modüllerin tohumlayıcıları |
+| `php cy db:seed` | `database/seeders/DemoSeeder.php` aynı sınıfı çağırır |
+| `php cy demo:reset` | Ziyaretçi değişikliklerini siler, veriyi baştan kurar (demo modunda 3 saatte bir kendiliğinden) |
+| `php cy demo:temizle` · Panel → Sistem → **Örnek veriyi kaldır** | Yalnızca örnek kayıtları siler (`*.demo@ornek.com` hesaplar, örnek sayfalar, mesajlar); gerçek veriye dokunmaz. Geriye etkin bir yönetici kalmayacaksa reddeder (`DemoData::leavesAdmin`) |
+| `database/ornek-veritabani.sql` | Sihirbazsız kurulum: şema + örnek veri tek dosyada, phpMyAdmin'den içe aktarılır |
+
+İçerik: 6 hesap (yönetici, editör, üye, pasif, askıda, onay bekleyen;
+parola `Demo1234!`), 3 içerik sayfası, 9 mesaj, 7 e-posta kaydı, ÇILGIN
+Yazılım markalı ana sayfa vitrini ve paylaşım görseli, mobil API için
+`storage/files/ornek/` altında 3 örnek dosya; Örnek Modül her rol ve
+durumdan kayıt. Sihirbazda **localhost'ta açık, canlı sunucuda kapalı**
+gelir: gerçek bir projeye temiz veritabanıyla başlarsınız.
+
+`tests/unit.php` demo hesap listesinin (`Demo::HESAPLAR`) ve `DemoData`'nın
+birbiriyle tutarlı kaldığını denetler.
+
+**SQL dosyası ikinci bir kaynak değildir, çıktıdır.** `tests/ornek-sql.php`
+onu sihirbazla örnek veriyle kurulmuş bir veritabanından üretir; elle
+düzenlenmez. Üretirken sihirbazın açtığı yönetici, formdan gelen ayarlar
+(site adı, iletişim adresi) ve kişiye ait tablolar (giriş denemeleri,
+API anahtarları…) ayıklanır; dosyada yalnızca örnek hesaplar kalır. Bu
+yüzden SQL ile kurulan sitede tek yönetici `ali.yonetici`'dir ve
+"Örnek veriyi kaldır", kendinize bir yönetici açana kadar çalışmaz.
+
+```bash
+php cy serve --port=8470                                  # temiz bir kopyada (.env yok)
+php tests/kurulum.php http://127.0.0.1:8470 --db-adi=cy_ornek --ornek-veri
+php tests/ornek-sql.php --db-adi=cy_ornek                 # → database/ornek-veritabani.sql
+```
+
+**Her sürümde yeniden üretin.** `tests/unit.php` dosyanın başlığındaki
+sürümün `config/app.php` ile aynı olduğunu ve her migration'ın dosyada
+uygulanmış sayıldığını denetler; CI dosyayı MySQL 8'e aktarıp duman
+testinden geçirir.
+
+### Migration yazmak
+
+```bash
+php cy make:migration "urunlere aciklama ekle"
+```
+
+```php
+return new class extends App\Core\Database\Migration
+{
+    public function up(): void
+    {
+        $this->execute("ALTER TABLE `urunler` ADD `aciklama` TEXT NULL");
+    }
+
+    public function down(): void
+    {
+        $this->execute("ALTER TABLE `urunler` DROP COLUMN `aciklama`");
+    }
+};
+```
+
+Yardımcılar: `execute()`, `tableExists()`, `columnExists()`,
+`useTransaction()`.
+
+> **Şema kurucu (schema builder) bilerek yoktur.** Zincirleme bir API
+> güzel görünür ama arkasında binlerce satırlık SQL üreteci vardır ve
+> yine de her MySQL özelliğini karşılamaz. Ham SQL hem daha küçük hem
+> daha dürüsttür: yazdığınız şey aynen çalışır.
+
+> `useTransaction()` varsayılan `false`: MySQL'de DDL örtük commit
+> yapar, işlem başlatmak yanıltıcı güven verir. Yalnızca veri taşıyan
+> migration'larda `true` döndürün.
+
+### Parti (batch) mantığı
+
+Tek `php cy migrate` çağrısındaki tüm dosyalar aynı parti numarasını
+alır; `migrate:rollback` üç dosyalık bir dağıtımı tek komutla geri sarar.
+
+**Parti 0 — temel parti.** Şablonla gelen her şey bu partidedir:
+sihirbazın çalıştırdığı migration'lar, `kurulum/database.sql`'in şemada
+zaten bulunduğunu işaretlediği migration'lar ve güncellemelerle gelen
+**çekirdek** migration'lar. `migrate:rollback` ve `migrate:fresh` parti
+0'a **asla** dokunmaz; `migrate:status` onları `0 (kurulum)` diye
+gösterir.
+
+Çekirdek bir migration bunu kendisi söyler:
+
+```php
+public function baseline(): bool { return true; }   // yalnızca şablonun kendi migration'larında
+```
+
+Migrator bu migration'ı hangi komutla çalıştırılırsa çalıştırılsın
+temel partiye yazar. Kendi migration'larınızda bunu **eklemeyin** —
+geri alınabilmeleri gerekir. 1.4.0'dan önce sıradan partilere yazılmış
+çekirdek kayıtları `2026_10_06_090000_cekirdek_temel_parti` taşır.
+
+`database.sql`'e yeni bir tablo/sütun eklediğinizde, onu getiren
+migration'ın adını dosyanın sonundaki `migrasyonlar` listesine de ekleyin.
+
+**SSH yoksa:** bekleyen migration'lar Panel → Sistem Bilgisi sayfasından
+çalıştırılır (`SystemController::migrate`, komut satırıyla aynı Migrator).
+Kod güncellenip migration unutulursa giriş yine çalışır
+(`UserRepository` eksik `oturum_surumu` sütununda eski sütun listesine
+düşer) ve panel her sayfada "migration bekliyor" uyarısı gösterir
+(`App\Core\PanelNotices`).
+
+Kapalı bir modülün migration'ları da geri alınabilir: Migrator dosyayı
+açık olmayan modüllerin klasöründe de arar (`Modules::migrator()`).
+
+```bash
+php cy migrate                 php cy migrate --pretend
+php cy migrate:status          php cy migrate:rollback --step=3
+php cy migrate:fresh --seed
+```
+
+### Seeder — iki tür tohumlama
+
+| | Nereye |
+|---|---|
+| **Zorunlu veri** (roller, varsayılan ayarlar) | **Migration** — her ortamda kesinlikle bulunmalı |
+| **Örnek veri** (demo kullanıcı, sahte kayıt) | **Seeder** |
+
+Bu yüzden `db:seed` yayında `--force` ister.
+
+### Repository deseni
+
+SQL **yalnızca** `app/Repositories/` içinde yazılır. Her sorgu
+hazırlıklıdır (prepared); sıralama sütunu **beyaz listeden** seçilir.
+
+```php
+private const SORTABLE = [0 => 'alici_eposta', 1 => 'konu', …];
+```
+
+Modeller ORM değildir: veritabanına gitmeyen, `readonly` entity'lerdir.
+
+### Sorgu ve indeks kuralları
+
+- **Sütunu fonksiyona sarmayın.** `WHERE DATE(created_at) = CURDATE()`
+  indeksi devre dışı bırakır ve tabloyu baştan sona tarar. Aralık yazın:
+  `created_at >= CURDATE() AND created_at < CURDATE() + INTERVAL 1 DAY`.
+  `tests/unit.php` bu kalıbı `app/` ve `modules/` içinde arar.
+- **Sık çalışan her WHERE'in bir indeksi olsun**; bileşik indekste eşitlik
+  sütunu önce, aralık sütunu sonra: `(durum, gonderildi_at)`,
+  `(alici_eposta, created_at)`.
+- **Toplu DELETE'in koşulu indeksli olsun.** İndekssiz DELETE taradığı
+  bütün satırları kilitler; giriş denemeleri temizliği bu yüzden
+  çalışırken yeni girişleri bekletiyordu (1.5.1'de düzeltildi).
+- Aynı tablodan birden fazla sayaç gerekiyorsa tek `GROUP BY` (bkz.
+  `MailRepository::stats`).
+- Yeni indeksi hem `kurulum/database.sql`'e hem bir migration'a yazın;
+  migration `indexExists()` ile birden fazla kez çalışabilir olsun.
+
+`LIKE '%…%'` aramaları (kullanıcı, mesaj, e-posta listeleri) indeks
+kullanamaz; birkaç yüz bin satıra kadar sorun olmaz. Daha büyük
+tablolarda `FULLTEXT` indeks düşünün.
+
+---
+
+## 10. Depolama ve dosya yükleme
+
+### İki disk
+
+| Disk | Kök | Web erişimi | Ne için |
+|---|---|---|---|
+| `public` | `upload/` | ✔ `url()` verir | Avatar, logo, ürün görseli |
+| `private` | `storage/files/` | ✘ kapalı | Fatura, sözleşme, dışa aktarım |
+
+> Şüphedeyseniz `private` seçin. Bir dosyayı sonradan herkese açmak
+> kolaydır; yanlışlıkla açılmış bir belgeyi geri almak imkânsızdır.
+
+```php
+Storage::disk('private')->put('fatura/2026-03.pdf', $icerik);
+Storage::disk('public')->url($yol);
+Storage::disk('private')->move($eski, $yeni);
+```
+
+### Yol güvenliği
+
+`Disk::relative()` yolu **parçalarına ayırıp her parçayı tek tek**
+denetler. Tek bir `str_replace('..','')` yetmez — `....//` onu atlatır.
+Reddedilenler:
+
+```
+../../../etc/passwd    ..\..\windows\win.ini    /etc/passwd
+C:/Windows/win.ini     alt/../../ust.txt        a/./b.txt
+dosya\0.txt            a//b.txt                 ....//gizli.txt
+```
+
+Var olan dosyalarda ayrıca `realpath()` ile kökün içinde kalındığı
+doğrulanır (sembolik bağlantı hilelerine karşı).
+
+### Yükleme
+
+```php
+// Görsel — GD ile yeniden üretilir
+$yol = Uploader::avatar($request->file('avatar'));   // kare kırpar
+$yol = Uploader::logo($request->file('logo'));       // oranı korur
+
+// Genel dosya
+$dosya = Uploader::store($request->file('belge'), [
+    'disk' => 'private', 'dir' => 'fatura/2026', 'group' => 'belge',
+]);
+$dosya->yol;   // diskteki rastgele ad
+$dosya->ad;    // kullanıcının gördüğü ad
+```
+
+**Dokuz savunma katmanı:**
+
+1. PHP yükleme hata kodu
+2. `is_uploaded_file()` — dosya gerçekten bu isteğe mi ait?
+3. Boyut sınırı
+4. **Gerçek MIME** (`finfo`/`getimagesize`) — uzantıya asla güvenilmez
+5. MIME beyaz listesi **+** uzantı kara listesi (`php`, `phar`, `htaccess`…)
+6. Rastgele dosya adı — kullanıcının verdiği ad diske yazılmaz
+7. Görseller GD ile yeniden üretilir (EXIF ve gömülü kod elenir)
+8. `upload/.htaccess` PHP çalıştırmayı kapatır
+9. Gizli dosyalar web kökünün dışına yazılır
+
+> **SVG dikkat:** `gorsel` grubunda SVG vardır ve içine `<script>`
+> gömülebilir; GD onu yeniden üretemez. SVG kabul edecekseniz
+> `private` diske yazın.
+
+### Private dosya indirtmek
+
+```php
+$router->get('fatura/indir/{id}', FaturaController::class, 'indir',
+    ['installed', 'auth', 'can:fatura.view']);
+
+// Kaydın sahibi doğrulandıktan SONRA:
+Response::download(Storage::disk('private'), $kayit->yol, $kayit->ad);
+```
+
+---
+
+## 11. Önbellek
+
+```php
+$rapor = Cache::remember('rapor:satis:2026-03', 900, fn () => $this->agirHesaplama());
+
+Cache::put('doviz', $kurlar, 3600);
+Cache::forever('ulke-listesi', $ulkeler);
+Cache::pull('tek-kullanimlik');
+```
+
+| Sürücü | Nerede | Ne zaman |
+|---|---|---|
+| `dosya` | `storage/cache/data/` | **Varsayılan**, tek sunucuda en hızlısı |
+| `veritabani` | `onbellek` tablosu | Birden fazla web sunucusu varsa |
+| `kapali` | hiçbir yerde | Hatanın önbellekten mi geldiğini test etmek için |
+
+**Sözleşmenin kuralları** (üç sürücü de aynı testi geçer):
+
+1. `get()` bulamazsa `null`. "null saklamak" ile "yok" ayrımı yapılmaz.
+2. Süresi geçmiş kayıt yok sayılır ve okunurken silinir (tembel temizlik).
+3. `$seconds = 0` → süresiz.
+4. **Hiçbir metot istisna fırlatmaz.**
+
+> `remember()` geri çağırımı `null` döndürürse sonuç saklanmaz ve her
+> istekte yeniden çalışır. Pahalı bir işlem `null` dönebiliyorsa
+> `false` veya `[]` döndürün.
+
+**Anahtar seçimi:** kullanıcıya özel veriyi önbelleğe alıyorsanız
+anahtara kullanıcı numarasını koyun (`sepet:kullanici-7`), yoksa ilk
+kullanıcının verisi herkese gider.
+
+---
+
+## 12. Olaylar
+
+```php
+// Yayın (çekirdek)
+Events::dispatch(new UserRegistered($user));
+
+// Dinleme (routes/events.php)
+Events::listen(UserRegistered::class, HosgeldinMailiGonder::class);
+Events::listen(UserRegistered::class, fn ($e) => /* … */);
+Events::listen('*', fn ($e) => Logger::debug($e->shortName()));
+```
+
+**Hazır olaylar:** `UserRegistered`, `UserLoggedIn`, `UserLoggedOut`,
+`PasswordChanged`, `FileUploaded`, `ContactMessageReceived`.
+
+### En önemli tasarım kararı
+
+> **Bir dinleyicinin hatası, olayı yayınlayan işlemi bozmaz.**
+
+ERP modülünün dinleyicisi patlarsa kullanıcının kaydı geri alınmaz —
+o iş zaten bitti. Hata loglanır, diğer dinleyiciler çalışmaya devam
+eder. Bu olmasaydı yüklediğiniz her modül, çekirdeğin en temel
+akışlarını çökertme gücüne sahip olurdu.
+
+Geliştirmede farklıdır: `config/events.php` → `strict` (varsayılan
+`APP_DEBUG`) açıkken hata **fırlatılır**, kendi dinleyicinizdeki yazım
+hatasını ekranda görürsünüz.
+
+### Kurallar
+
+- Olay adı **geçmiş zamandır**: `UserRegistered`, `SendWelcomeMail` değil.
+- Olaylar **değişmezdir** (`readonly`).
+- Olay **iptal edilemez** — yayınlandığında iş bitmiştir. Bu bilinçli
+  bir sınırdır: aksi halde bir modül çekirdeğin davranışını sessizce
+  bozabilirdi.
+- Hassas veri (parola, token) olaya **konmaz**.
+
+### Test desteği
+
+```php
+Events::fake();
+// … denetleyiciyi çalıştır …
+Events::dispatched(UserRegistered::class);   // true
+Events::recorded(UserRegistered::class);     // [$event]
+```
+
+---
+
+## 13. Kuyruk ve zamanlanmış görevler
+
+### Kuyruk
+
+```php
+Queue::push(new RaporUret(3));
+Queue::later(new RaporUret(3), 600);   // 10 dakika sonra
+```
+
+```php
+final class RaporUret extends Job
+{
+    public function __construct(private int $ay) {}
+
+    public function handle(): void { /* … */ }
+    public function toPayload(): array { return ['ay' => $this->ay]; }
+    public static function fromPayload(array $v): static { return new static((int) $v['ay']); }
+    public function failed(Throwable $e): void { /* … */ }
+}
+```
+
+> **Neden `serialize()` değil `toPayload()`?** PHP nesnesini serialize
+> etmek cazip görünür ama sınıfı sonradan değiştirdiğinizde kuyruktaki
+> eski kayıtlar açılamaz hale gelir. Açık bir dizi sözleşmesi hem
+> okunabilir hem sürüm dostudur.
+
+> **İşler tekrar çalışabilir olmalıdır.** Yarıda kalan iş yeniden
+> denenir; iki kez çalıştığında iki fatura kesmemelidir.
+
+**Atomik ayırma:** iki işçi aynı işi almasın diye önce `UPDATE` ile
+kilitlenir; `rowCount()` 1 dönen işçi işi kapmıştır (kaybeden sıradaki
+adaya geçer). Çöken bir işçinin elinde kalan işler `queue.timeout`
+sonunda serbest bırakılır; hakkı bitmişse başarısız sayılır.
+
+**Kilitlenmeye (deadlock) dayanıklı:** takılı işlerin temizliği süreç
+içinde en fazla dakikada bir çalışır ve önce numaraları okuyup sonra
+birincil anahtarla günceller; ayırma ve silme, InnoDB'nin "yeniden dene"
+dediği 1213/1205 hatalarında `Database::retry()` ile yeniden denenir.
+Tamamlanan bir işin kaydı silinirken hata olsa bile iş yeniden
+çalıştırılmaz.
+
+**Yeniden deneme:** katlanarak artan bekleme (60, 120, 240…),
+`tries()` kadar. Tükenince `durum='basarisiz'` ve `failed()` çağrılır.
+
+```bash
+php cy queue:work --max=30
+php cy queue:status --retry
+```
+
+### Zamanlayıcı
+
+Sunucuya **tek bir cron satırı** yazılır:
+
+```cron
+* * * * * cd /yol/site && php cy schedule:run >> /dev/null 2>&1
+```
+
+Gerisi `routes/schedule.php` içinde PHP olarak tanımlanır:
+
+```php
+Schedule::call('gunluk-rapor', fn () => Queue::push(new GunlukRapor()))
+        ->daily('08:00')->describe('Yöneticilere günlük özet');
+```
+
+Sıklık: `everyMinute()` `everyMinutes(5)` `hourly()` `daily('04:00')`
+`weekly(1,'03:30')` `monthly(1,'02:00')`.
+
+- Son çalışma `storage/cache/schedule.json` içinde tutulur — bilerek
+  uygulama önbelleğinde değil: `cache:clear` günlük görevleri aynı gün
+  ikinci kez çalıştırmamalı.
+- **Görevler üst üste binmez** (kilit dosyası; 1 saatten eski kilit
+  çökmüş süreçten kalmıştır, yok sayılır).
+- Bir görevin hatası diğerlerini engellemez.
+
+---
+
+## 14. E-posta
+
+```php
+Mailer::send(
+    Mailable::make()
+        ->to($user->eposta, $user->fullName())
+        ->subject('Hoş geldiniz')
+        ->view('emails/hosgeldin', ['ad' => $user->ad])
+);
+```
+
+**Sürücüler** (Panel → Site Ayarları → E-posta):
+
+| | |
+|---|---|
+| `kayit` | Mektuplar `storage/mail/*.eml` olarak diske yazılır — **geliştirme için** |
+| `smtp` | Gerçek SMTP (TLS/SSL) |
+| `php` | `mail()` — XAMPP'ta genelde çalışmaz |
+
+**Gönderim asla sayfayı çökertmez:** `send()` istisna fırlatmaz, `false`
+döner ve sonucu `mail_kayitlari` tablosuna yazar. Ziyaretçi, posta
+sunucusu kapalı olsa bile hata görmez.
+
+**Toplu gönderim iki adımdır:** mektuplar önce kuyruğa yazılır (hızlı),
+sonra parti parti gönderilir. 500 kişiye tek istekte göndermek PHP'nin
+zaman aşımına takılır.
+
+**Kuyruk işçileri aynı anda çalışabilir** (panel, cron, `mail:work`):
+
+- Her mektup gönderimden HEMEN ÖNCE, tek tek ayrılır
+  (`MailRepository::claimNext`, `kuyrukta` → `gonderiliyor`). İşçi
+  çökerse yalnızca o an elindeki mektup takılır.
+- 15 dakika `gonderiliyor`da kalan mektup deneme+1 ile kuyruğa döner;
+  3. takılmada başarısız sayılır (ulaşıp ulaşmadığı bilinmediği için).
+- Gönderim başarılıysa durum yazılırken veritabanı hatası olsa bile
+  mektup asla "başarısız" sayılmaz — yeniden kuyruğa alınıp ikinci kopya
+  gitmesin.
+
+**Bildirimler** `Notifier` içinde toplanır; denetleyiciler mektup
+kurmaz, olay yayınlar.
+
+```bash
+php cy mail:test ali@ornek.com
+php cy mail:test --baglanti
+php cy mail:work --limit=20
+```
+
+---
+
+## 15. REST API
+
+### Yanıt biçimi
+
+```json
+{ "success": true,  "data": { … }, "meta": { … } }
+{ "success": false, "error": { "code": "gecersiz_veri",
+                               "message": "…",
+                               "fields": { "eposta": "…" } } }
+```
+
+> Panelin AJAX zarfı (`{success, type, description}`) **insan** içindir
+> — ekranda bildirim gösterir. API başka bir **program** tarafından
+> tüketilir: makine okunur hata kodu ve alan bazlı hata listesi ister.
+> İkisini tek biçime zorlamak ikisini de bozardı.
+
+```php
+ApiResponse::success($veri);
+ApiResponse::created($veri);
+ApiResponse::paginated($items, $total, $page, $perPage);
+ApiResponse::validationFailed(['eposta' => 'Geçersiz.']);
+ApiResponse::notFound();
+```
+
+### Kimlik
+
+```
+Authorization: Bearer cy_3f9a…
+```
+
+Anahtar **düz metin saklanmaz** — SHA-256 özeti tutulur. Açık hali
+yalnızca üretildiği anda bir kez gösterilir. Hızlı arama için kısa bir
+ön ek ayrıca saklanır (hash'lenmiş sütunda `WHERE` yapılamaz).
+
+Anahtar, sahibi olan kullanıcıdan **fazla yetkiye asla sahip olamaz**;
+kullanıcı pasife alınırsa anahtar da geçersizdir.
+
+**Bearer istekleri durumsuzdur:** oturum açılmaz, çerez dönmez
+(`Auth::actingAs()`); anahtar iptal edildiği an erişim biter. Anahtar
+yerine açık bir panel oturumuyla gelen API isteklerinde veri değiştiren
+yöntemler (POST/PUT/PATCH/DELETE) CSRF jetonu ister. Apache'de
+`Authorization` başlığı kök `.htaccess` ile PHP'ye iletilir.
+
+Anahtar üretmenin üç yolu:
+
+```php
+$sonuc = ApiToken::create($userId, 'Mobil uygulama', daysValid: 90);
+echo $sonuc['token'];   // yalnızca burada!
+```
+
+```bash
+php cy api:token admin "Mobil uygulama" --gun=90    # süre yoksa 90 gün; süresiz: --suresiz
+```
+
+ve **Panel → Hesabım → API Anahtarları** (üret / listele / iptal et;
+üretmek mevcut parolayı ister, süre 30/90/180/365 gün).
+Çalışan örnek uçlar: `app/Http/Controllers/Api/V1Controller.php`
+(`api/v1/ben`, `api/v1/kullanicilar`, `api/v1/sayfalar`). Tarihler
+ISO 8601 biçimindedir.
+
+**Anahtarlar ne zaman düşer?** İptal edilince, süresi dolunca, sahibi
+pasife alınınca, sahibinin **parolası değişince** (bütün anahtarları) ve
+"Diğer cihazlardan çıkış"ta "API anahtarlarımı da iptal et" kutusu
+işaretliyse. **Bakım modunda** API `503` döner; bakımı aşma yetkisi olan
+kullanıcının anahtarı çalışmaya devam eder.
+
+### Kapsam: yalnız okuma / okuma + yazma
+
+Her anahtarın bir kapsamı vardır (`api_anahtarlari.kapsam`). **Yalnız
+okuma** anahtarı `GET`/`HEAD` dışındaki her istekte
+`403 kapsam_yetersiz` alır (tek istisna kendi oturumunu kapatan
+`DELETE api/v1/oturum`). Kapsam yetkiyi **daraltır**, genişletmez:
+okuma+yazma anahtarı da sahibinin rolünün izin verdiğinden fazlasını
+yapamaz. Panelden üretilen anahtarın varsayılanı yalnız okumadır;
+1.6.0'dan önce üretilmiş anahtarlar okuma+yazma sayılır.
+
+### Mobil oturumlar
+
+Mobil uygulama anahtarı elle almaz; kullanıcı adı ve parolayla giriş yapar:
+
+| Uç | Ne yapar |
+|---|---|
+| `POST api/v1/oturum` | `kullanici`, `parola`, `cihaz` → `token` (tür `oturum`, okuma+yazma, `API_SESSION_DAYS` gün — varsayılan 30) |
+| `DELETE api/v1/oturum` | Bu cihazın token'ını iptal eder |
+| `GET api/v1/oturumlar` | Açık mobil oturumlar; bu cihaz `bu_cihaz: true` |
+| `DELETE api/v1/oturumlar/{id}` | Başka bir cihazı kapatır |
+| `GET api/v1/dosyalar` · `/{ad}` | `storage/files/ornek/` içindeki örnek dosyalar (web'den doğrudan erişilemez) |
+
+Giriş, tarayıcı girişiyle **aynı kapıdan** geçer: `Auth::verifyCredentials()`
+kaba kuvvet sayacını, kilidi, zamanlama eşitlemesini ve hesap durumunu
+denetler; `Auth::attempt()` da önce onu çağırıp sonra oturum açar. Böylece
+"daha gevşek ikinci bir giriş yolu" oluşmaz. Mobil oturumlar aynı
+`api_anahtarlari` tablosundadır (`tur = 'oturum'`, `cihaz` sütunu);
+kullanıcı başına en fazla 20, fazlasında en eskisi kapanır. Kullanıcı
+onları **Hesabım → Bağlı cihazlar**'da görür ve tek tek kapatır.
+
+İstek gövdesi form ya da JSON olabilir: `Request`, `$_POST` boşsa ve
+`Content-Type: application/json` ise gövdeyi JSON olarak okur.
+Ayrıntılı akış, örnek yanıtlar, JavaScript ve Flutter örnekleri:
+[docs/MOBIL-API.md](https://github.com/CilginYazilim/cy-php-starter/blob/main/docs/MOBIL-API.md).
+
+### Hız sınırı
+
+Anahtar (ya da anonim istekte IP) başına, pencere başına istek sayısı.
+Sayaç veritabanında DEĞİL, `Throttle`'ın kilitli dosyasında
+(`storage/cache/hiz`) tutulur: veritabanına yazmak korumaya çalıştığınız
+yükün ta kendisini üretirdi; kilit sayesinde aynı anda gelen istekler
+sınırı birlikte aşamaz ve önbellek sürücüsü kapalıyken de çalışır.
+
+Yanıt başlıkları: `X-RateLimit-Limit`, `X-RateLimit-Remaining`,
+aşımda `Retry-After`.
+
+Geçersiz anahtar denemeleri de sayılır; aksi halde anahtar deneme
+saldırısı bedava olurdu.
+
+---
+
+## 16. Modül sistemi
+
+```
+modules/Stok/
+├── module.json          künye + menü + rollere dağıtılan yetkiler
+├── routes.php           kendi rotaları
+├── events.php           kendi dinleyicileri (opsiyonel)
+├── migrations/          kendi tabloları
+├── seeders/             örnek veri (opsiyonel; php cy db:seed)
+├── src/                 Modules\Stok\… sınıfları
+└── views/               kendi ekranları
+```
+
+```bash
+php cy make:module Stok        # çalışır durumda CRUD iskeleti
+php cy module --enable=Stok
+php cy migrate                 # modülün tablolarını kurar
+php cy module                  # listele
+php cy module --disable=Stok
+```
+
+**Panelden aç/kapa:** Sistem Bilgisi → **Modüller** bölümünde her modülün
+yanında bir düğme vardır (`POST panel/sistem/modul/{ad}`, `system.manage`).
+Açarken yalnızca o modülün migration'ları çalışır
+(`Modules::moduleMigrator`) — bekleyen çekirdek migration'ları yedek
+uyarısıyla ayrıca sorulur. Migration patlarsa modül yeniden kapatılır.
+Kapatmak tablo ve kayıt silmez. Demo hesabında kilitlidir.
+
+**Kapalı modül hiç yüklenmez:** rotaları tanımlanmaz, sınıfları
+yüklenmez, olayları dinlenmez, migration'ları çalışmaz. "Kapalı ama
+hâlâ çalışıyor" diye bir ara durum yoktur.
+
+Açık modül listesi `ayarlar` tablosunda `aktif_moduller` anahtarında
+JSON dizi olarak tutulur — ayrı tablo açılmadı çünkü liste küçüktür,
+zaten her istekte belleğe alınır ve çok sunuculu kurulumlarda ortaktır.
+
+**Hata yalıtımı:** bir modülün `routes.php` dosyası patlarsa tüm site
+çökmez; o modül atlanır ve hata loglanır.
+
+**Görünümler:** `$this->view('Stok::index', …)` → `modules/Stok/views/index.php`.
+Modül, çekirdeğin `views/` klasörünü kirletmez.
+
+**Menü:** `module.json` içindeki `menu` bloğu sol menüde otomatik
+görünür; `"menu": false` derseniz görünmez.
+
+**Kurulumda açık gelen modül:** `module.json` içinde
+`"kurulumda_acik": true` olan modül, sihirbazın Site Ayarları adımında
+işaretli gelir; kurulum onu açar ve tablolarını kurar. Şablondaki `Ornek` modülü
+böyledir: kurulumdan sonra **Panel → Örnek Modül** (`/panel/ornek`)
+hazırdır. Modül migration'ları temel partiye değil 1. partiye yazılır;
+çekirdekten farklı olarak geri alınabilirler.
+
+**Modül yetkileri (RBAC):** modül kendi yetkilerini rollere
+`module.json` içinde dağıtır; çekirdeğin `Role.php`'sine dokunmaz:
+
+```json
+"yetkiler": {
+    "editor": ["stok.view", "stok.create", "stok.update.own"],
+    "uye":    ["stok.view"]
+}
+```
+
+Yönetici her yetkiye zaten sahiptir (listede yazmaz). `Role::can()`
+önce çekirdeğin listesine, sonra **açık** modüllerin dağıttıklarına
+bakar; kapalı modülün yetkisi kimseye geçmez, modül silinince yetkisi
+de gider. Yetki adı `modul.islem` biçiminde olmalıdır; bozuk girdi
+sessizce atlanır.
+
+Rol yetkisi kabadır ("editör kayıt silebilir mi?"). Kaydın SAHİBİNE
+bağlı kurallar ("editör BU kaydı silebilir mi?") bir Policy sınıfında
+durur ve hem görünüm hem denetleyici ona sorar — bkz. `OrnekPolicy`.
+
+**Örnek veri:** `seeders/` klasöründeki dosyalar (`return new class
+extends App\Core\Database\Seeder {…};`) `php cy db:seed` ile ve
+sihirbazda "Örnek verileri de yükle" seçildiğinde çalışır — yalnızca
+açık modüllerinkiler.
+
+**Örnek modül — kopyalanacak şablon:** `modules/Ornek` bu yapının hepsini
+çalışır hâlde gösterir: liste, ekleme, düzenleme, silme ve **onay akışı**
+(taslak → onay bekliyor → yayında). Kurulum 12 rastgele kayıt üretir;
+sahipleri yönetici, editör ve üyeler arasında dağılır. Adım adım
+rehber: [modules/Ornek/README.md](https://github.com/CilginYazilim/cy-php-starter/blob/main/modules/Ornek/README.md).
+
+| Rol | Görür | Yapabilir |
+|---|---|---|
+| Yönetici (`ornek.manage`) | her kaydı | her kaydı düzenler, siler, yayınlar; "Rastgele 5 kayıt ekle" |
+| Editör (`+ ornek.publish`) | yayındakiler, onay bekleyenler, kendi kayıtları | onaylar ve yayınlar; **yalnızca kendi** kaydını düzenler/siler |
+| Üye (`ornek.create`, `ornek.update.own`) | yayındakiler ve kendi kayıtları | yazar, düzenler, siler, onaya gönderir; **yayınlayamaz** |
+
+Üye yayındaki kaydını değiştirirse kayıt yeniden onaya düşer. Editörün
+yayından kaldırdığı kayıt taslağa değil onay sırasına döner (başkasının
+taslağını göremeyen editör onu kaybetmesin).
+
+Her işlem iki kapıdan geçer: rotadaki `can:…` (rol) ve denetleyicideki
+`OrnekPolicy` (kayıt). Kilitli bir kayda elle gönderilen istek `403`,
+göremediği bir kayda (başkasının taslağı) gönderilen istek `404` alır —
+kaydın varlığı da ele verilmez. Ekrandaki yetki matrisi elle yazılmış
+bir tablo değil, `Role::can()`'in o anki cevabıdır. Kendi projenizde
+istemiyorsanız Sistem Bilgisi → Modüller'den kapatın (ya da
+`php cy module --disable=Ornek`) ve klasörü silin.
+
+**Migration adlandırma:** modül migration'ları `Stok/2026_…` biçiminde
+kaydedilir; iki modül aynı dosya adını kullansa bile çakışmaz.
+Sıralama modül önekine değil **zaman damgasına** göre yapılır.
+
+---
+
+## 17. PWA
+
+Panel → Site Ayarları → **Uygulama (PWA)** bölümünden yönetilir
+(`pwa` ayar grubu).
+
+**Taze kurulumda AÇIK gelir.** Kurulum sihirbazının "Site Ayarları"
+adımında işaretli bir anahtar vardır; kaldırılırsa `pwa_aktif` sıfır
+yazılır. Açık gelmesi ziyaretçiye yalnızca "ana ekrana ekle" seçeneği
+sunar, hiçbir şeyi zorlamaz — kapalı geldiğinde ise özelliğin var
+olduğu, ayarlar ekranı taranmadan fark edilmiyordu. Mevcut kurulumlar
+etkilenmez: migration yalnızca ayarı yeni gruba **taşır**, değerine
+dokunmaz.
+
+Kapalıyken tek bir etiket bile basılmaz: manifest istenmez, servis
+çalışanı kaydedilmez. Özelliği kullanmayan bir proje varlığını hiç
+hissetmez. Künye etiketleri iki düzende de aynıydı; tek yerde
+toplandılar: `views/partials/pwa-head.php`.
+
+| Ayar | Ne yapar | Boşsa |
+|---|---|---|
+| `pwa_aktif` | Uygulama modunu açar | — (kurulumda açık) |
+| `pwa_ad` | Künyedeki tam ad | `site_adi` |
+| `pwa_kisa_ad` | Ana ekranda simge altındaki ad | adın ilk 12 harfi |
+| `pwa_aciklama` | Kurulum penceresindeki açıklama | `site_aciklama` |
+| `pwa_baslangic` | Açılışta gidilecek sayfa | ana sayfa |
+| `pwa_gorunum` | `standalone` · `fullscreen` · `minimal-ui` · `browser` | `standalone` |
+| `pwa_yon` | `any` · `portrait` · `landscape` | `any` |
+| `pwa_arka_renk` | Açılış ekranının arka planı | `#ffffff` |
+| `pwa_cevrimdisi` | Servis çalışanı kaydedilsin mi | açık |
+| `pwa_simge` | Ana ekran simgesi (`dahili`, yükleme kartından) | site logosu |
+
+> **Tema rengi PWA'ya ait bir alan değildir:** künye
+> `sistem_tema_rengi` ne ise onu kullanır. İki ayrı yerde tutulsaydı
+> panelin rengiyle uygulamanın rengi sessizce ayrışırdı.
+
+- `manifest.webmanifest` **dinamiktir** (PHP üretir): ayarlar panelden
+  değişince künye de değişir. `display`, `orientation` ve renk değerleri
+  künye basılmadan önce doğrulanır — tabloya elle yazılmış geçersiz bir
+  değer künyenin tamamını geçersiz kılar ve kurulum düğmesi hiç
+  görünmezdi.
+- `sw.js` **kökte statik** bir dosyadır: bir servis çalışanı yalnızca
+  bulunduğu klasörü ve altını kontrol edebilir.
+
+**`pwa.js` PWA kapalıyken de yüklenir — bilerek.** Betik
+`<meta name="cy-sw">` etiketine bakar: etiket varsa servis çalışanını
+kaydeder, **yoksa kayıtlı olanı siler ve `cy-` önekli önbellekleri
+boşaltır**. Koşula bağlansaydı ayarı kapatmak siteyi daha önce ziyaret
+etmiş tarayıcılarda hiçbir şeyi değiştirmezdi: servis çalışanı bir kez
+kaydedildiğinde kalıcıdır ve sayfaları eski önbellekten sunmaya devam
+ederdi.
+
+**Önbellek stratejisi:**
+
+| İçerik | Strateji |
+|---|---|
+| CSS/JS/görsel | Önce önbellek, yoksa ağ |
+| HTML sayfalar | Önce ağ, olmazsa önbellek |
+| POST / API / kurulum | **Hiç dokunulmaz** |
+
+> HTML'de neden önce ağ? Panelde bayat veri göstermek, biraz yavaş
+> açılmaktan çok daha kötüdür. Kullanıcı silinmiş bir kaydı ya da eski
+> bir bakiyeyi görmemelidir.
+
+Yeni sürüm hazır olduğunda kullanıcıya "Sayfayı yenileyin" bildirimi
+gösterilir.
+
+---
+
+## 18. Konsol (`php cy`)
+
+```bash
+php cy                      # tüm komutlar
+php cy yardim migrate       # ayrıntılı yardım
+```
+
+| Grup | Komutlar |
+|---|---|
+| migrate | `migrate` · `migrate:rollback` · `migrate:status` · `migrate:fresh` |
+| db | `db:seed` |
+| make | `make:migration` · `make:seeder` · `make:controller` · `make:model` · `make:module` |
+| module | `module` (`--enable=` / `--disable=`) |
+| cache | `cache:clear` (`--expired`) |
+| config | `config:cache` · `config:clear` |
+| log | `log:purge` (`--list`, `--days=`) |
+| queue | `queue:work` · `queue:status` |
+| schedule | `schedule:run` (`--list`, `--force`) |
+| mail | `mail:work` · `mail:test` |
+| api | `api:token` (`--gun=`, `--suresiz`, `--liste`, `--iptal=`) |
+| demo | `demo:reset` (`--zorla`) · `demo:temizle` |
+| serve | `serve` (`--port=`, `--host=`) — XAMPP'siz geliştirme sunucusu |
+
+**`php cy serve`** PHP'nin yerleşik sunucusunu
+`app/Support/gelistirme-sunucusu.php` yönlendiricisiyle başlatır. Yerleşik
+sunucu `.htaccess` okumadığı için yönlendirici gizli dosyaları, uygulama
+klasörlerini ve `upload/` içindeki betikleri kendisi kapatır; geri kalan
+istekleri `index.php`'ye verir. Yalnızca geliştirme ve CI içindir.
+
+**Çıkış kodları anlamlıdır:** 0 başarı, ≠0 hata. Cron ve CI buna bakar.
+
+**Yıkıcı komutlar** (`migrate:fresh`, `migrate:rollback`, `db:seed`)
+`APP_ENV=production` iken onay sormaz — `--force` ister ve aksi halde
+sıfırdan farklı kod döner. Bir sunucuda yanlışlıkla "e" tuşuna basmak
+veritabanını silmeye yetmemelidir.
+
+`cy` dosyası tarayıcıdan erişilemez: `.htaccess` engeller **ve** betik
+`PHP_SAPI` kontrolü yapar.
+
+### Yeni komut yazmak
+
+```php
+final class TemizleCommand extends Command
+{
+    public function name(): string        { return 'ornek:temizle'; }
+    public function description(): string { return 'Örnekleri temizler.'; }
+
+    public function handle(): int
+    {
+        $this->out->success('Tamam.');
+        return self::BASARILI;
+    }
+}
+```
+
+Sonra `Kernel::COMMANDS` listesine ekleyin.
+
+---
+
+## 19. Arayüz ve tasarım
+
+- **Ön yüz tamamen ayarlardan beslenir.** Ana sayfadaki hiçbir metin
+  koda gömülü değildir; bir ayar boşsa o bölüm hiç basılmaz (yarım
+  görünen bir sayfa, olmayan bir bölümden kötüdür).
+- **SEO:** her sayfada `canonical`, Open Graph ve Twitter Card
+  etiketleri; `sitemap.xml` ve `robots.txt` dinamiktir — "SEO →
+  İndeksleme" kapatıldığında ikisi de arama motorlarına "taramayın"
+  der.
+- **CDN yok.** Bootstrap, jQuery, DataTables ve tüm ikonlar yereldir;
+  internetsiz ya da CDN engelli bir sunucuda panel eksiksiz açılır.
+- **İkonlar satır içi SVG** (`icon('users')`), `currentColor` kullanır.
+- **Tema** açık/koyu; tercih çereze **ve** giriş yapmışsa hesaba
+  yazılır, böylece başka cihazda da aynı tema gelir. Sunucu sayfayı
+  doğrudan doğru temayla üretir — "yanlış temada bir an görünme"
+  sorunu yoktur.
+- **Satır içi JavaScript yoktur** (CSP `script-src 'self'`).
+  Onay gerektiren formlar `data-confirm="…"` kullanır.
+
+### Marka rengi — tek ayar, tüm arayüz
+
+Ayarlar → Sistem → **Tema Rengi** seçicisi panelin ve sitenin ana
+rengini belirler. Tasarım kalıbı tek bir marka renginden türetilmiş
+token'lar üzerine kurulu olduğu için, `App\Core\Theme` seçilen renkten
+tonların tamamını üretir ve sayfaya ~400 baytlık bir `<style>` bloğu
+olarak basar:
+
+```php
+Theme::brand();      // '#7c3aed'  (doğrulanmış, güvenli)
+Theme::palette();    // [800 => '#381a6b', … 50 => '#faf7fe']
+Theme::styleTag();   // <style>:root{--cy-brand-600:#7c3aed; …}</style>
+```
+
+Butonlar, bağlantılar, aktif menü, odak halkası ve gradyan aynı anda
+değişir. **Varsayılan renk seçiliyse tek bayt bile basılmaz** —
+CSS dosyasındaki değerler zaten geçerlidir.
+
+`Theme::normalize()` aynı zamanda bir güvenlik sınırıdır: paneldeki
+metin kutusuna ne yazılırsa yazılsın, CSS'e giden değer her zaman tam
+yedi karakterlik bir `#rrggbb` dizisidir.
+
+### Panel tabloları tek yerden kurulur
+
+Kullanıcılar, Mesajlar ve E-posta ekranları aynı sunucu taraflı
+DataTables kurulumunu paylaşır. Ortak kısım iki yerde toplanmıştır:
+
+| Katman | Nerede | Ne yapar |
+|---|---|---|
+| JavaScript | `CY.table()` (app.js) | CSRF, Türkçe metinler, sayfa boyutu, kayıt sayacı |
+| PHP | `Controller::tableQuery()` / `tableJson()` | Arama, sıralama, sayfalama, yanıt zarfı |
+
+Bir ekran yalnızca kendine özgü olanı yazar:
+
+```php
+$result = $this->users()->paginate($this->tableQuery($request) + [
+    'role' => $request->input('filter_role'),
+]);
+
+$this->tableJson($request, $result, $rows);
+```
+
+Sayfa başına kayıt sayısı **Ayarlar → Sistem → Sayfa Başına Kayıt**
+değerinden gelir; sunucu bunu `<meta name="cy-page-length">` ile
+bildirir, `CY.table()` okur.
+
+### Mobil kuralları
+
+- **Sayfa asla yatay kaymaz.** Taşan içerik (tablo, kod, uzun adres)
+  kendi kutusunda kayar (`.cy-table-wrap`).
+- Sekme çubukları dar ekranda yatay kaydırılır, alt satıra kırılmaz.
+- Dokunmatik hedefler en az 38px.
+- Form alanları `575.98px` altında **16px** yazı boyutu kullanır —
+  daha küçüğünde iOS odaklanınca sayfayı yakınlaştırır.
+- Sol menü `<992px` altında çekmece, üstünde daraltılabilir sütun;
+  tercih çereze yazılır.
+- Ayarlar sayfasında kaydet çubuğu **yapışkandır**.
+
+### Yeni sayfa eklemek
+
+```php
+// 1. Denetleyici
+final class UrunController extends Controller {
+    public function index(Request $request): void {
+        $this->view('urunler/index', ['title' => 'Ürünler']);
+    }
+}
+
+// 2. Rota
+$router->get('panel/urunler', UrunController::class, 'index',
+    ['installed', 'auth', 'can:urun.view']);
+
+// 3. views/urunler/index.php
+// 4. views/partials/sidebar.php → $menu dizisine bir satır
+```
+
+---
+
+## 20. İçerik sayfaları ve zengin metin
+
+"Hakkımızda" metni bir zamanlar tek bir ayar satırıydı (`site_hakkinda`).
+İkinci bir durağan sayfa — Gizlilik, KVKK, SSS — isteyen herkes kod
+yazmak zorundaydı. Artık sayfalar veritabanındadır ve panelden yazılır.
+
+### Tablo ve akış
+
+```
+sayfalar
+  slug        adresin son parçası: /hakkimizda, /gizlilik
+  icerik      SÜZÜLMÜŞ HTML (aşağıya bakın)
+  durum       taslak | yayin
+  menude      üst menüde görünsün mü?
+  korumali    1 → silinemez, adresi değiştirilemez
+  seo_baslik  / seo_aciklama   sayfa bazlı meta etiketleri
+```
+
+Tek bir rota hepsini karşılar ve **dosyanın en sonunda** durur:
+
+```php
+$router->get('{slug}', SitePageController::class, 'show', ['installed']);
+```
+
+Çakışma olmaz: Router önce **sabit** rotalara bakar, parametreli olanları
+yalnızca hiçbiri eşleşmezse dener. Yani `panel` ya da `giris` buraya hiç
+düşmez. Yine de yanlışlıkla erişilemez bir sayfa üretilmesin diye
+`PageRepository::AYRILMIS` listesindeki adresler slug olarak kabul
+edilmez ve kaydederken uyarı verilir.
+
+`iletisim` slug'ı özeldir: içeriği yine panelden yazılır ama çevresine
+form ve iletişim kartları eklenerek `ContactController` tarafından
+basılır.
+
+### Zengin metin editörü — ve neden güvenlik önlemi değildir
+
+`assets/js/editor.js` contenteditable bir alan + araç çubuğudur; hazır
+bir editör (TinyMCE, CKEditor) **yüklenmez**, çünkü en küçüğü bile
+birkaç yüz kilobayttır ve çoğu örnekte CDN'den gelir — projenin "sıfır
+bağımlılık, internetsiz de çalışır" sözünü bozardı.
+
+Editör tarayıcıda HTML üretir. **Tarayıcıda üretilen HTML'e asla
+güvenilmez**: araya girip `<script>` eklemek, istek gövdesini
+değiştirmek kadar kolaydır. Asıl savunma sunucudadır:
+
+```php
+App\Core\Html::sanitize($html);   // izin verilenler listesi (allowlist)
+```
+
+* Tanımadığı **her** etiketi ve **her** özniteliği atar.
+* `<script> <style> <iframe> <form> <object>` içerikleriyle birlikte silinir.
+* `href` / `src` yalnızca `http https mailto tel` ve göreli adresler kabul eder — `javascript:` ve `data:` elenir.
+* `target="_blank"` bağlantılara `rel="noopener noreferrer"` **zorla** eklenir (tabnabbing).
+
+Süzme, denetleyicide değil `PageRepository::bind()` içinde çağrılır:
+kaydetmenin tek yolu depodan geçtiği için "bir yerde `sanitize` çağırmayı
+unutmak" yapısal olarak imkânsızdır. İçerik ekrana **kaçışlanmadan**
+basılır — kaçışlansaydı ziyaretçi HTML etiketlerini metin olarak görürdü.
+
+### Önizleme, kapak görseli ve editörden görsel
+
+- **Önizle** (`panel/sayfalar/{id}/onizle`) her tıklamada 30 dakika geçerli,
+  `APP_KEY` ile imzalı bir adres üretir (`onizleme/{id}?son=…&imza=…`).
+  Taslak sayfa da görülür; bağlantıyı bilen giriş yapmadan açabilir, süre
+  dolunca 403. Sayfa `noindex` ve `Referrer-Policy: no-referrer` ile gelir.
+- **Kapak görseli** `upload/img/kapak/` altına yeniden üretilerek yazılır;
+  sayfanın üstünde görünür ve paylaşım görseli (`og:image`) olur.
+- **Görsel yükle** düğmesi editöre `upload/img/sayfa/` altından görsel
+  ekler. Adresle görsel eklemek yalnızca **kendi alan adınızdan**
+  mümkündür: `Html::localImage()` başka sitedeki `<img>`'yi kaydederken
+  siler (CSP onu zaten engelleyip kırık gösterirdi, üstelik her ziyaretçinin
+  IP'sini o siteye sızdırırdı). İzin vermek istediğiniz CDN'i `.env` →
+  `CSP_IMG_SRC` ile ekleyin.
+- İçerik sayfaları **WebPage + BreadcrumbList** yapısal verisi taşır.
+
+### Ana sayfa panelden
+
+Ana sayfanın bütün metinleri **Panel → Ayarlar → Ana Sayfa** grubundadır;
+koda gömülü metin yoktur. `anasayfa_bolumler` hangi bölümlerin görüneceğini
+seçer (karşılama, teknoloji şeridi, 3 adım, özellikler, rolleri deneyin,
+kod örneği, SSS, hakkımızda, iletişim, son bant); içeriği boş bölüm hiç
+basılmaz. Özellikler, adımlar, SSS ve son bant düğmeleri `liste` tipindeki
+ayarlardır: panelde satır ekle/sil/sırala arayüzüyle düzenlenir, JSON
+olarak saklanır. Metinlerde `{surum}` `{php}` `{komut}` `{migration}`
+`{test}` yer tutucuları koddan sayılır. Ayar tanımları
+`App\Support\Surum16`'dadır (1.6 migration'ı ve sihirbaz aynı listeyi
+kullanır).
+
+### Menü, alt bilgi ve site haritası
+
+Üst menü ve alt bilgi bağlantıları `menude = 1` olan yayındaki
+sayfalardan üretilir; `sitemap.xml` de yayındaki tüm sayfaları
+`lastmod` tarihiyle listeler. Yeni bir sayfayı yayınladığınızda üçü de
+kendiliğinden güncellenir — dosya düzenlemek gerekmez.
+
+---
+
+## 21. Güvenlik
+
+| Tehdit | Önlem |
+|---|---|
+| SQL Injection | Hazırlıklı sorgular; sıralama sütunu beyaz listeden |
+| XSS | `e()` ile kaçışlama; CSP `script-src 'self'` |
+| CSRF | Her POST'ta token (form alanı **veya** `X-CSRF-Token` başlığı) |
+| Oturum çalma | `httponly` + `samesite` + `secure`, parmak izi, periyodik yenileme |
+| Oturum sabitleme | Girişte `session_regenerate_id(true)` |
+| "Beni hatırla" çalınması | Çerezde ham jeton, veritabanında yalnızca SHA-256 özeti; `HttpOnly`; her kullanımda jeton KOŞULLU yenilenir (eski jeton ve parola değişiminden sonraki jeton çalışmaz); çıkışta iptal |
+| Zengin metinle XSS | `Html::sanitize()` izin verilenler listesi — etiket, öznitelik ve adres şeması denetimi |
+| Kaba kuvvet | Deneme doğrulamadan önce yazılır; kimlik kilidi + IP başına farklı kimlik sayan, giderek artan bekleme; IPv6 /64; güvenilen cihaz çerezi; `TRUSTED_PROXIES`; süreler SQL saatiyle |
+| Kullanıcı sayımı | Aynı maliyette sahte özet, aynı mesaj ve aynı "kalan hak" kuralı; kayıt formu kayıtlı adreste de aynı yanıtı verir |
+| Açık yönlendirme | Dönüş adresi yalnızca uygulama içi yol (`Middleware::safeIntended`) |
+| Kurulum ele geçirme | `.env` / `storage/installed.lock` varken sihirbaz hiçbir adımı çalıştırmaz |
+| Yarım kalan kurulum | Dolu veritabanında yabancı anahtar ön kontrolü; silinecek tablolar adıyla listelenir |
+| Parola sonrası oturum | Oturum sürümü + "beni hatırla" jetonu silme + API anahtarlarının iptali; bu cihaz açık kalır |
+| Oturum karışması | Kuruluma özel çerez adı/yolu (kodlanmış), `storage/sessions` (yalnızca dosya sürücüsünde), `APP_KEY` parmak izi |
+| Yöntem sahteleme | `_method` yalnızca POST gövdesinden; POST yalnızca PUT/PATCH/DELETE olabilir |
+| Satır sonu kaçırma | Doğrulama düzenli ifadeleri `\z` ile biter (`$` sondaki `\n`'i kabul ederdi) |
+| Debug açık yayın | Panel her sayfada uyarır (yerel olmayan alan adında) |
+| Path traversal | Segment bazlı doğrulama + `realpath()`; görünüm adları beyaz listeden |
+| Kötücül yükleme | 9 katmanlı savunma (bkz. §10) + piksel/bellek sınırı |
+| Dosya ifşası | `app/`, `config/`, `storage/`, `views/`, `.env`, `.git/`, `cy`, `tests/` web'e kapalı |
+| Yanlış rota tanımı | Bilinmeyen ara katman adı hata fırlatır |
+| Clickjacking | `X-Frame-Options: DENY` |
+| MIME sniffing | `X-Content-Type-Options: nosniff` |
+| Bilgi sızması | Yayında yığın izi/dosya yolu gösterilmez |
+| Spam | Bal küpü + İMZALI ve zorunlu zaman damgası + kilitli sayaçlı hız sınırı (iletişim ve kayıt formu; hatalı gönderimler de sayılır); kayıtta e-posta doğrulaması; mektuplar formdan gelen metni içermez |
+| API kötüye kullanımı | Bearer + hash'lenmiş anahtar + kilitli sayaçlı hız sınırı; üretmek parola ister; yalnız okuma kapsamı; bakımda 503 |
+| Parola sıfırlama | Tek kullanımlık, 60 dk, yalnızca özet saklanır; aynı yanıt; IP ve adres sınırı; başarıda bütün oturum/anahtarlar iptal |
+| Yönetici hesapları | Yalnızca yönetici değiştirir/siler; yönetici rolünü yalnız yönetici verir; e-posta/parola değişirken işlemi yapanın parolası; son yönetici kuralı `SELECT … FOR UPDATE` |
+| Güvenlik mektupları | Doğrulama ve sıfırlama mektuplarının gövdesi panelde gizli, alıcı maskeli |
+| Dış görsel | İçerikte yalnızca kendi alan adı (`Html::localImage`) |
+| Yetki gerilemesi | Rol matrisi birim testi + CI'da MySQL 8 ile demo açık/kapalı duman testi |
+
+### İçerik Güvenliği Politikası ve dış servisler
+
+Varsayılan politika katıdır: `script-src 'self'` — satır içi betik
+çalışmaz, dış sunucudan betik yüklenmez. Bir harita, ödeme çerçevesi
+ya da sohbet penceresi engellendiğinde **politikayı kapatmayın**;
+`config/security.php` üzerinden yalnızca o servise izin verin:
+
+```dotenv
+CSP_SCRIPT_SRC="https://js.stripe.com"
+CSP_FRAME_SRC="https://js.stripe.com"
+```
+
+**Analytics kodu için bir şey yapmanız gerekmez.** Ayarlar → SEO →
+Analytics Kodu alanına yapıştırdığınız HTML'i `Response::csp()`
+inceler ve tam olarak gerekeni açar:
+
+- `<script src="https://…">` → o adresin **kaynağı** (origin) eklenir
+- `<script>…</script>` → o metnin **sha256 özeti** eklenir
+
+```
+script-src 'self' https://www.googletagmanager.com 'sha256-o3XbuMEM…'
+```
+
+Bir boşluk bile değişse özet tutmaz; bu bilinçlidir — `'unsafe-inline'`
+açmaktan kıyaslanamayacak kadar dardır. Bu otomatik davranış olmasaydı
+yönetici kodu yapıştırır, hiçbir hata görmez ve kodun sessizce
+engellendiğini haftalarca fark etmezdi.
+
+### Bal küpü hakkında bir ders
+
+İletişim formunun gizli alanı bir zamanlar `website` adını taşıyordu.
+Tarayıcıların **otomatik doldurma** özelliği bu alanı doldurdu ve
+gerçek ziyaretçilerin mesajları bot sanılıp sessizce çöpe atıldı —
+üstelik hiçbir yerde iz kalmadığı için uzun süre fark edilmedi.
+
+İki ders, ikisi de koda işlendi:
+
+1. Bal küpü alanının adı **hiçbir otomatik doldurma sezgisine
+   uymamalıdır** (`cy_kontrol`).
+2. **Sessiz ≠ izsiz.** Her eleme artık `security` kanalına yazılır.
+
+---
+
+## 22. Yeni projeye başlarken
+
+```bash
+# 1. Kopyala
+git clone https://github.com/CilginYazilim/cy-php-starter yeni-proje
+cd yeni-proje && rm -rf .git
+
+# 2. Tarayıcıda kurulum/ adresini aç, sihirbazı tamamla
+#    .env üretilir · tablolar kurulur · migration'lar çalışır ·
+#    yönetici hesabı açılır. "Örnek verileri de yükle" kutusunu
+#    GERÇEK bir projede işaretlemeyin.
+#    Son adımdaki düğme kurulum/ klasörünü siler.
+
+# 3. Örnek modülü kaldırın (isteğe bağlı)
+rm -rf modules/Ornek
+rm app/Jobs/OrnekIs.php
+
+# 4. Kendi modülünü üret
+php cy make:module Stok
+php cy module --enable=Stok
+php cy migrate
+```
+
+Sonra:
+
+- `app/Models/Role.php` → yeni yetkileri ilgili rollere ekleyin
+- `views/partials/sidebar.php` → menüyü düzenleyin
+- Panel → Site Ayarları → site adı, logo, **tema rengi**, SMTP
+- `config/*.php` → gerekirse varsayılanları değiştirin
+
+> **Komut satırınız yoksa** 4. adımı atlayın: sihirbaz tabloların
+> tamamını zaten kurdu, panel eksiksiz çalışır.
+
+---
+
+## 23. Canlıya çıkış listesi
+
+```bash
+# .env
+APP_ENV=production
+APP_DEBUG=false
+LOG_LEVEL=info
+
+php cy config:cache
+php cy migrate
+```
+
+- [ ] `kurulum/` klasörünü **silin** (sihirbazın son adımındaki düğme
+      bunu tek tıkla yapar)
+- [ ] Örnek veri yüklediyseniz temizleyin:
+      `DELETE FROM kullanicilar WHERE eposta LIKE '%.demo@ornek.com';`
+      ve `.env`'de `APP_DEMO=false` olduğundan emin olun
+- [ ] SSL sertifikası (HTTPS) aktif
+- [ ] `storage/` ve `upload/` yazılabilir, web'e kapalı
+- [ ] SMTP bilgileri girildi, `php cy mail:test` başarılı
+- [ ] Cron kuruldu:
+  ```cron
+  * * * * * cd /yol/site && php cy schedule:run >> /dev/null 2>&1
+  ```
+- [ ] Yedekleme planı var
+- [ ] **Panel → Sistem Bilgisi** sayfasındaki tüm denetimler yeşil
+
+Sistem Bilgisi sayfası bu listenin canlı hâlidir: her denetim, sorunun
+nasıl çözüleceğini de yazar.
+
+---
+
+<div align="center">
+
+[PHP Başlangıç Şablonu](https://cilginyazilim.com/kutuphane/php-baslangic-sablonu) · [Canlı demo](https://cilginyazilim.com/kutuphane/uygulama/cy-php-starter/) · [GitHub](https://github.com/CilginYazilim/cy-php-starter)
+
+**Çılgın Yazılım** · [cilginyazilim.com](https://cilginyazilim.com)
+
+</div>

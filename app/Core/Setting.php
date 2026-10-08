@@ -1,0 +1,311 @@
+<?php
+/**
+ * =====================================================================
+ *  Setting – "ayarlar" tablosuna tipli erişim
+ * ---------------------------------------------------------------------
+ *  KULLANIMI:
+ *      echo Setting::get('site_adi');
+ *      if (Setting::bool('sistem_bakim_modu')) { ... }
+ *
+ *  PERFORMANS: Ayarlar sayfa başına SADECE BİR KEZ okunur ve bellekte
+ *  tutulur. Setting::get() yüz kere çağrılsa da veritabanına bir kez
+ *  gidilir.
+ * =====================================================================
+ */
+
+declare(strict_types=1);
+
+namespace App\Core;
+
+use PDO;
+use PDOException;
+
+final class Setting
+{
+    /** @var array<string,string>|null */
+    private static ?array $cache = null;
+
+    /** Ayarları veritabanından okur ve önbelleğe alır. */
+    public static function load(PDO $db): void
+    {
+        try {
+            $rows = $db->query('SELECT anahtar, deger FROM ayarlar')->fetchAll();
+        } catch (PDOException) {
+            // Tablo henüz yoksa (kurulum yapılmamış) uygulamayı çökertme.
+            self::$cache = [];
+            return;
+        }
+
+        $values = [];
+
+        foreach ($rows as $row) {
+            $values[(string) $row['anahtar']] = (string) $row['deger'];
+        }
+
+        self::$cache = $values;
+
+        self::applyTimezone();
+    }
+
+    /**
+     * Panelden seçilen saat dilimini PHP'ye VE veritabanı bağlantısına
+     * uygular.
+     *
+     * Eskiden yalnızca index.php uyguluyordu: komut satırı (kuyruk,
+     * zamanlanmış görevler) .env'deki dilimde, web paneldeki dilimde
+     * çalışıyordu. Ayarlar her yüklendiğinde burada uygulanır; böylece
+     * iki giriş noktası da aynı saati görür. Geçersiz bir değer PHP'de
+     * uyarı üretir; bu yüzden önce doğruluyoruz.
+     */
+    private static function applyTimezone(): void
+    {
+        $zaman = self::$cache['sistem_zaman_dilimi'] ?? '';
+
+        if ($zaman !== '' && in_array($zaman, timezone_identifiers_list(), true)) {
+            date_default_timezone_set($zaman);
+        }
+
+        Database::syncTimezone();
+    }
+
+    public static function flush(): void
+    {
+        self::$cache = null;
+    }
+
+    /** @return array<string,string> */
+    public static function all(): array
+    {
+        return self::$cache ?? [];
+    }
+
+    public static function get(string $key, string $default = ''): string
+    {
+        $all = self::all();
+
+        if (!array_key_exists($key, $all) || $all[$key] === '') {
+            return $default;
+        }
+
+        return $all[$key];
+    }
+
+    public static function bool(string $key, bool $default = false): bool
+    {
+        $all = self::all();
+
+        if (!array_key_exists($key, $all) || $all[$key] === '') {
+            return $default;
+        }
+
+        return $all[$key] === '1';
+    }
+
+    /**
+     * Tek bir ayarı yazar (yoksa oluşturur).
+     *
+     * @param string $group     Yeni oluşturulacaksa hangi gruba girsin?
+     *                          "dahili" grubu ayarlar ekranında GÖRÜNMEZ.
+     * @param bool   $editable  false → ayarlar formu bu satıra dokunamaz
+     *
+     * DİKKAT: $editable=false verilen ayarlar Setting::saveMany() ile
+     * yazılamaz (o metot yalnızca duzenlenebilir=1 satırları günceller)
+     * ama bu metotla yazılabilir. Sistemin kendi tuttuğu değerler
+     * (açık modül listesi gibi) tam olarak böyle olmalıdır: kod
+     * değiştirebilsin, form ekranı yanlışlıkla SİLEMESİN.
+     */
+    public static function set(
+        PDO $db,
+        string $key,
+        ?string $value,
+        string $group = 'genel',
+        bool $editable = true,
+    ): void {
+        $stmt = $db->prepare(
+            'INSERT INTO ayarlar (anahtar, deger, grup, etiket, duzenlenebilir)
+             VALUES (:anahtar, :deger, :grup, :etiket, :duzenlenebilir)
+             ON DUPLICATE KEY UPDATE deger = VALUES(deger)'
+        );
+
+        $stmt->execute([
+            ':anahtar'        => $key,
+            ':deger'          => $value,
+            ':grup'           => $group,
+            ':etiket'         => $key,
+            ':duzenlenebilir' => $editable ? 1 : 0,
+        ]);
+
+        self::flush();
+        self::load($db);
+    }
+
+    /**
+     * Birden fazla ayarı tek işlemde (transaction) yazar.
+     * duzenlenebilir = 0 olan ayarlar bilerek atlanır.
+     *
+     * @param array<string,?string> $values
+     */
+    public static function saveMany(PDO $db, array $values): void
+    {
+        $db->beginTransaction();
+
+        try {
+            $stmt = $db->prepare(
+                'UPDATE ayarlar SET deger = :deger WHERE anahtar = :anahtar AND duzenlenebilir = 1'
+            );
+
+            foreach ($values as $key => $value) {
+                $stmt->execute([':deger' => $value, ':anahtar' => $key]);
+            }
+
+            $db->commit();
+        } catch (\Throwable $e) {
+            $db->rollBack();
+            throw $e;
+        }
+
+        self::flush();
+        self::load($db);
+    }
+
+    /**
+     * Ayarları yönetim panelinde göstermek için gruplara ayırarak,
+     * tüm sütunlarıyla döndürür. Ayarlar formu bu veriden OTOMATİK üretilir.
+     *
+     * @return array<string,array<int,array<string,mixed>>> grup => satırlar
+     */
+    /**
+     * Ayarları gruplayarak döndürür (ayarlar ekranı bundan üretilir).
+     *
+     * YALNIZCA ETİKETİ OLAN GRUPLAR döner. Sistemin kendi tuttuğu
+     * değerler ("aktif_moduller" gibi) "dahili" grubundadır ve
+     * groupLabels() içinde yer almadığı için ekranda hiç görünmez.
+     *
+     * Bu filtre bir hatadan doğdu: açık modül listesi "genel" grubunda
+     * düzenlenebilir bir metin alanı olarak görünüyordu ve Genel
+     * ayarları kaydetmek listeyi siliyordu.
+     *
+     * @return array<string,array<int,array<string,mixed>>> grup => satırlar
+     */
+    public static function grouped(PDO $db): array
+    {
+        $rows   = $db->query('SELECT * FROM ayarlar ORDER BY grup ASC, sira ASC, id ASC')->fetchAll();
+        $labels = self::groupLabels();
+
+        $grouped = [];
+
+        foreach ($rows as $row) {
+            $grup = (string) $row['grup'];
+
+            if (!array_key_exists($grup, $labels)) {
+                continue;
+            }
+
+            $grouped[$grup][] = $row;
+        }
+
+        return $grouped;
+    }
+
+    /** @return array<string,string> */
+    public static function groupLabels(): array
+    {
+        return [
+            'genel'    => 'Genel',
+            'anasayfa' => 'Ana Sayfa',
+            'iletisim' => 'İletişim',
+            'eposta'   => 'E-posta',
+            'sosyal'   => 'Sosyal Medya',
+            'seo'      => 'SEO',
+            'sistem'   => 'Sistem',
+            'pwa'      => 'Uygulama (PWA)',
+        ];
+    }
+
+    /** Site logosunun tarayıcı adresi; tanımlı değilse varsayılan logo. */
+    public static function logoUrl(): string
+    {
+        $url = Uploader::url(self::get('site_logo'));
+
+        return $url !== '' ? $url : Url::asset('images/logo.png');
+    }
+
+    /** Yönetici kendi logosunu yüklemiş mi? */
+    public static function hasCustomLogo(): bool
+    {
+        return Uploader::url(self::get('site_logo')) !== '';
+    }
+
+    /**
+     * Küçük gösterimler (menü, kenar çubuğu, giriş ekranları, e-posta:
+     * 32–160 px) için logo. Kurulumla gelen logo 1000×1000 ve 70 KB'tır;
+     * her sayfada indirilmesin diye 256 ya da 512 piksellik PNG/WebP
+     * kopyası verilir. Yüklenen logoyu Uploader zaten küçültür, o olduğu
+     * gibi döner. OG görseli, yapısal veri ve PWA simgesi büyük logoyu
+     * (logoUrl) kullanır. Görünümlerde logo_img() yardımcısını kullanın.
+     */
+    public static function logoSmallUrl(int $boyut = 256, string $tur = 'png'): string
+    {
+        if (self::hasCustomLogo()) {
+            return self::logoUrl();
+        }
+
+        return Url::asset('images/logo-' . ($boyut > 256 ? 512 : 256) . ($tur === 'webp' ? '.webp' : '.png'));
+    }
+
+    /**
+     * Sekme simgesinin (favicon) adresi.
+     *
+     * Yönetici ayrı bir favicon yüklemediyse KURULUMLA GELEN
+     * varsayılan kullanılır: assets/images/favicon.png, logonun
+     * 32 piksele indirilmiş hâli. Logoyu doğrudan favicon olarak
+     * vermek cazip görünür ama 1000×1000'lik bir PNG'yi her sayfada
+     * indirtir; sekmede 16 piksel olarak görünecek bir görsel için
+     * bu tam bir israftır.
+     */
+    public static function faviconUrl(): string
+    {
+        $url = Uploader::url(self::get('site_favicon'));
+
+        return $url !== '' ? $url : Url::asset('images/favicon.png');
+    }
+
+    /**
+     * "Ana ekrana ekle" simgesinin adresi (manifest icons).
+     *
+     * Faviconla AYNI dosya DEĞİLDİR ve olmamalıdır: favicon 16–32
+     * piksellik bir sekme simgesidir, telefonun ana ekranındaki simge
+     * ise 192–512 pikselde basılır ve kenarlarından kırpılabilir
+     * ("maskable"). Ayrı bir simge yüklenmediyse site logosuna
+     * düşeriz — kurulumla gelen logo karedir ve iş görür.
+     */
+    public static function pwaIconUrl(): string
+    {
+        $url = Uploader::url(self::get('pwa_simge'));
+
+        return $url !== '' ? $url : self::logoUrl();
+    }
+
+    /**
+     * Paylaşım görseli (Open Graph). Sırayla: SEO ayarı → logo.
+     *
+     * Ayara tam bir adres de yazılabilir (başka bir alan adındaki
+     * görsel), upload/ altındaki dosya adı da.
+     */
+    public static function shareImage(): string
+    {
+        $deger = trim(self::get('seo_og_gorsel'));
+
+        if ($deger === '') {
+            return self::logoUrl();
+        }
+
+        if (str_starts_with($deger, 'http://') || str_starts_with($deger, 'https://')) {
+            return $deger;
+        }
+
+        $url = Uploader::url($deger);
+
+        return $url !== '' ? $url : self::logoUrl();
+    }
+}

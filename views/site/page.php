@@ -1,0 +1,126 @@
+<?php
+/**
+ * =====================================================================
+ *  GÖRÜNÜM: İçerik sayfası (ön yüz)
+ * ---------------------------------------------------------------------
+ *  Panelden yazılan her sayfa bu görünümle basılır. İçerik
+ *  KAYDEDİLİRKEN süzüldüğü için burada kaçışlanmaz — kaçışlansaydı
+ *  ziyaretçi HTML etiketlerini metin olarak görürdü.
+ *
+ *  @var App\Models\Page $sayfa
+ *  @var array<int,array<string,string>> $iletisim
+ * =====================================================================
+ */
+
+use App\Core\Setting;
+use App\Http\Controllers\Site\HomeController;
+use App\Models\Page;
+
+$iletisim = $iletisim ?? [];
+$whatsapp = HomeController::whatsappLink();
+$kapak    = $kapak ?? '';
+$onizlemeBitis = $onizlemeBitis ?? null;
+?>
+
+<?php if ($onizlemeBitis !== null): ?>
+    <div class="cy-preview-bar" role="status">
+        <div class="container">
+            <?= icon('eye', 'cy-icon cy-icon--sm') ?>
+            <strong>Önizleme</strong>
+            <span>
+                <?= $sayfa->yayinda() ? 'Bu sayfa yayında.' : 'Bu sayfa taslak; ziyaretçiler göremez.' ?>
+                Bağlantı <?= e(date('H:i', $onizlemeBitis)) ?>'de geçersiz olur.
+            </span>
+        </div>
+    </div>
+<?php endif; ?>
+
+<section class="cy-section cy-section--ilk">
+    <div class="container">
+        <div class="row g-4">
+            <div class="col-12 col-lg-8">
+                <article class="cy-card">
+                    <?php if ($kapak !== ''): ?>
+                        <img src="<?= e($kapak) ?>" class="cy-page-cover" alt="" fetchpriority="high">
+                    <?php endif; ?>
+                    <div class="cy-card__body cy-card__body--roomy">
+                        <?php /* Ayrı bir başlık bandı YOK: başlık içeriğin parçası. Özet
+                                 ekranda değil, meta açıklamada ve paylaşım kartında durur;
+                                 "Ana Sayfa › …" izi arama motorları için JSON-LD'de
+                                 (bkz. Site\PageController::structuredData). */ ?>
+                        <h1 class="cy-page-title"><?= e($sayfa->baslik) ?></h1>
+                        <div class="cy-prose"><?= $sayfa->icerik ?></div>
+                    </div>
+                </article>
+
+                <p class="cy-muted small mt-3 mb-0">
+                    <?= icon('clock', 'cy-icon cy-icon--sm') ?>
+                    Son güncelleme: <?= e(Page::formatDate($sayfa->updatedAt)) ?>
+                </p>
+            </div>
+
+            <aside class="col-12 col-lg-4">
+                <?php if ($iletisim !== []): ?>
+                    <div class="cy-card mb-3">
+                        <div class="cy-card__header">
+                            <h2 class="cy-section-title mb-0"><?= icon('phone', 'cy-icon cy-icon--sm') ?> İletişim</h2>
+                        </div>
+                        <div class="cy-card__body">
+                            <?php foreach ($iletisim as $kart): ?>
+                                <div class="cy-contact-row">
+                                    <span class="cy-contact-row__icon"><?= icon($kart['ikon'], 'cy-icon cy-icon--sm') ?></span>
+                                    <div>
+                                        <span class="cy-contact-row__label"><?= e($kart['etiket']) ?></span>
+                                        <?php if ($kart['link'] !== ''): ?>
+                                            <a class="cy-link" href="<?= e($kart['link']) ?>"><?= nl2br(e($kart['deger'])) ?></a>
+                                        <?php else: ?>
+                                            <span><?= nl2br(e($kart['deger'])) ?></span>
+                                        <?php endif; ?>
+                                    </div>
+                                </div>
+                            <?php endforeach; ?>
+
+                            <div class="d-grid gap-2 mt-3">
+                                <a class="btn cy-btn cy-btn--primary cy-btn--sm" href="<?= e(url('iletisim')) ?>">
+                                    <?= icon('mail', 'cy-icon cy-icon--sm') ?> Mesaj Gönder
+                                </a>
+
+                                <?php if ($whatsapp !== ''): ?>
+                                    <a class="btn cy-btn cy-btn--whatsapp cy-btn--sm" href="<?= e($whatsapp) ?>"
+                                       target="_blank" rel="noopener">
+                                        <?= icon('whatsapp', 'cy-icon cy-icon--sm') ?> WhatsApp'tan Yazın
+                                    </a>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+                    </div>
+                <?php endif; ?>
+
+                <div class="cy-card">
+                    <div class="cy-card__header">
+                        <h2 class="cy-section-title mb-0">Künye</h2>
+                    </div>
+                    <div class="cy-card__body">
+                        <dl class="cy-detail cy-detail--compact mb-0">
+                            <dt>Site</dt>
+                            <dd><?= e(Setting::get('site_adi', $appName ?? '')) ?></dd>
+                            <?php if (Setting::get('site_slogan') !== ''): ?>
+                                <dt>Slogan</dt>
+                                <dd><?= e(Setting::get('site_slogan')) ?></dd>
+                            <?php endif; ?>
+                            <?php if (site_brand() !== Setting::get('site_adi', $appName ?? '')): ?>
+                                <dt>Kurum</dt>
+                                <dd><?= e(site_brand()) ?></dd>
+                            <?php endif; ?>
+                            <?php /* Şablon imzası Ayarlar → Genel'den kapatılabilir. */ ?>
+                            <?php if (Setting::bool('site_imza_goster', true)): ?>
+                                <dt>Altyapı</dt>
+                                <dd><a class="cy-link" href="https://cilginyazilim.com/kutuphane/php-baslangic-sablonu" target="_blank" rel="noopener">CY PHP Starter</a></dd>
+                            <?php endif; ?>
+                        </dl>
+                    </div>
+                </div>
+            </aside>
+        </div>
+    </div>
+</section>

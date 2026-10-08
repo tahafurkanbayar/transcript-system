@@ -1,0 +1,410 @@
+/* ==================================================================
+ *  KULLANICI YÖNETİMİ – DataTables + AJAX CRUD
+ *  cilginyazilim.com
+ * ================================================================== */
+
+/* global bootstrap, jQuery, CY */
+jQuery(function ($) {
+    'use strict';
+
+    if (!document.getElementById('user_table')) { return; }
+
+    var API = {
+        list:   CY.url('api/kullanicilar/list'),
+        fetch:  CY.url('api/kullanicilar/fetch'),
+        save:   CY.url('api/kullanicilar/save'),
+        remove: CY.url('api/kullanicilar/delete'),
+        status: CY.url('api/kullanicilar/status')
+    };
+
+    // Sınır sunucudan gelir (config/upload.php → max_bytes; bkz. modals.php).
+    var MAX_MB    = parseInt($('#avatar').attr('data-max-mb'), 10) || 2;
+    var MAX_BYTES = MAX_MB * 1024 * 1024;
+
+    // E-posta gönderilemiyorsa sunucu kutuyu pasif basar (bkz. modals.php).
+    var BILGI_GIDEBILIR = $('#hesap_bilgisi').length > 0 && !$('#hesap_bilgisi').prop('disabled');
+
+    var userModal   = new bootstrap.Modal(document.getElementById('userModal'));
+    var detailModal = new bootstrap.Modal(document.getElementById('detailModal'));
+    var deleteModal = new bootstrap.Modal(document.getElementById('deleteModal'));
+
+    var pendingDeleteId = null;
+    var currentDetailId = null;
+    var searchTimer     = null;
+
+    /* Kontrol panelindeki "onay bekliyor" kartı buraya ?durum=onay_bekliyor
+     * ile gelir. Süzgeç tablo İLK veriyi istemeden önce seçilir; panel
+     * açık gösterilir ki kullanıcı neden az kayıt gördüğünü anlasın. */
+    var ilkDurum = new URLSearchParams(window.location.search).get('durum') || '';
+    if (ilkDurum && $('#filter_status option[value="' + ilkDurum + '"]').length) {
+        $('#filter_status').val(ilkDurum);
+        $('#user_filters_panel').addClass('show');
+        $('#filters_toggle').attr('aria-expanded', 'true');
+    }
+
+    function clearErrors() {
+        var $form = $('#user_form');
+        $form.find('.is-invalid').removeClass('is-invalid');
+        $form.find('.is-invalid-group').removeClass('is-invalid-group');
+        $form.find('[data-error-for]').text('');
+        $('#form_alert').addClass('d-none').text('');
+    }
+
+    function showErrors(errors, general) {
+        clearErrors();
+
+        if (general) { $('#form_alert').removeClass('d-none').text(general); }
+
+        $.each(errors || {}, function (field, message) {
+            // "rol"/"durum" artık radyo grubu; grubun kendi id'si yoktur,
+            // ama "<alan>_group" sarmalayıcısı vardır (bkz. modals.php).
+            $('#' + field).addClass('is-invalid');
+            $('#' + field + '_group').addClass('is-invalid-group');
+            $('[data-error-for="' + field + '"]').text(message);
+        });
+
+        var $first = $('#user_form').find('.is-invalid, .is-invalid-group').first();
+        if ($first.length) { $first.trigger('focus'); }
+    }
+
+    function setLoading(isLoading) {
+        $('#submit_button').prop('disabled', isLoading);
+        $('#submit_spinner').toggleClass('d-none', !isLoading);
+        $('#submit_label').text(isLoading ? 'Kaydediliyor…' : 'Kaydet');
+    }
+
+    function resetForm() {
+        document.getElementById('user_form').reset();
+        $('#user_id').val('');
+        $('#avatar_preview').addClass('d-none').attr('src', '');
+        $('#avatar_placeholder').removeClass('d-none');
+        $('#durum_aktif').prop('checked', true);
+        $('#reauth_group').addClass('d-none');
+        clearErrors();
+    }
+
+    function fetchUser(id, onDone) {
+        $.ajax({
+            url: API.fetch, method: 'POST', dataType: 'json',
+            data: { id: id, csrf_token: CY.token() }
+        })
+        .done(function (response) { onDone(response.data); })
+        .fail(function (xhr) { CY.ajaxError(xhr, 'Kayıt getirilemedi.'); });
+    }
+
+    function openEditModal(data) {
+        resetForm();
+
+        $('#form_action').val('edit');
+        $('#user_id').val(data.id);
+        $('#ad').val(data.ad);
+        $('#soyad').val(data.soyad);
+        $('#kullanici_adi').val(data.kullanici_adi);
+        $('#eposta').val(data.eposta);
+        $('#telefon').val(data.telefon);
+        $('#hakkinda').val(data.hakkinda).trigger('input');   // karakter sayacı
+        $('#rol_' + data.rol).prop('checked', true);
+        $('#durum_' + data.durum).prop('checked', true);
+
+        $('#userModalLabel').text('Kullanıcıyı Düzenle');
+        $('#userModalSubtitle').text('#' + data.id + ' numaralı hesabın bilgilerini güncelleyin.');
+        $('#password_required').addClass('d-none');
+        $('#password_hint').text('Değiştirmek istemiyorsanız boş bırakın.');
+        $('#sifre').attr('placeholder', 'Boş bırakılırsa değişmez');
+
+        // "Hesap bilgisi gönder" yalnızca yeni kayıtta; düzenlemede gönderilmez.
+        $('#hesap_bilgisi_group').addClass('d-none');
+        $('#hesap_bilgisi').prop('disabled', true);
+
+        // Yönetici ya da kendi hesabı: e-posta/parola değişikliği parola onayı ister.
+        $('#reauth_group').toggleClass('d-none', !data.onay_gerekir);
+
+        if (data.avatar_url) {
+            $('#avatar_preview').attr('src', data.avatar_url).removeClass('d-none');
+            $('#avatar_placeholder').addClass('d-none');
+        }
+
+        userModal.show();
+    }
+
+    /* Ortak tablo kurulumu app.js içindedir (CY.table): CSRF, Türkçe
+     * metinler, sayfa boyutu ve kayıt sayacı oradan gelir. Burada
+     * yalnızca kullanıcı listesine ÖZGÜ olanı tanımlıyoruz. */
+    var table = CY.table('#user_table', {
+        isim:  'kullanıcı',
+        order: [[0, 'desc']],
+
+        ajax: {
+            url: API.list,
+            data: function (d) {
+                d.filter_role      = $('#filter_role').val() || '';
+                d.filter_status    = $('#filter_status').val() || '';
+                d.filter_date_from = $('#filter_date_from').val() || '';
+                d.filter_date_to   = $('#filter_date_to').val() || '';
+            }
+        },
+
+        columnDefs: [
+            { targets: 0, className: 'cy-id' },
+            { targets: 1, orderable: false, searchable: false },
+            { targets: 3, className: 'cy-hide-sm' },
+            { targets: 5, className: 'cy-hide-xs' },
+            { targets: 6, orderable: false, searchable: false, className: 'text-center' }
+        ]
+    });
+
+    function reload(resetPaging) { table.ajax.reload(null, resetPaging === true); }
+
+    function updateFilterState() {
+        var count = 0;
+        if ($('#table_search').val()) { count++; }
+        if ($('#filter_role').val()) { count++; }
+        if ($('#filter_status').val()) { count++; }
+        if ($('#filter_date_from').val()) { count++; }
+        if ($('#filter_date_to').val()) { count++; }
+
+        $('#reset_filters').prop('disabled', count === 0);
+        $('#active_filter_count').text(count).toggleClass('d-none', count === 0);
+    }
+
+    if (ilkDurum) { updateFilterState(); }
+
+    $('#table_search').on('input', function () {
+        var value = this.value;
+        updateFilterState();
+        window.clearTimeout(searchTimer);
+        searchTimer = window.setTimeout(function () { table.search(value).draw(); }, 350);
+    });
+
+    $('#filter_role, #filter_status').on('change', function () {
+        updateFilterState();
+        reload(true);
+    });
+
+    $('#filter_date_from, #filter_date_to').on('change', function () {
+        // Bitiş tarihi başlangıçtan küçükse ikisini de aynı güne çek.
+        var from = $('#filter_date_from').val();
+        var to   = $('#filter_date_to').val();
+        if (from && to && to < from) {
+            if (this.id === 'filter_date_from') { $('#filter_date_to').val(from); }
+            else { $('#filter_date_from').val(to); }
+        }
+        updateFilterState();
+        reload(true);
+    });
+
+    $('#reset_filters').on('click', function () {
+        $('#table_search').val('');
+        $('#filter_role').val('');
+        $('#filter_status').val('');
+        $('#filter_date_from').val('');
+        $('#filter_date_to').val('');
+        updateFilterState();
+        table.search('').draw();
+    });
+
+    $('#add_button').on('click', function () {
+        resetForm();
+        $('#form_action').val('add');
+        $('#userModalLabel').text('Yeni Kullanıcı');
+        $('#userModalSubtitle').text('Formu doldurup hesabı oluşturun.');
+        $('#hesap_bilgisi_group').removeClass('d-none');
+        $('#hesap_bilgisi').prop('disabled', !BILGI_GIDEBILIR).prop('checked', BILGI_GIDEBILIR);
+        yeniKayitParolasi();
+        userModal.show();
+    });
+
+    /* Yeni kayıtta "hesap bilgisi gönder" işaretliyse parola ZORUNLU
+     * DEĞİL: boş bırakılırsa kullanıcı bağlantıyla kendi parolasını
+     * belirler (sunucu rastgele bir parola koyar). */
+    function yeniKayitParolasi() {
+        var bilgi = $('#hesap_bilgisi').is(':checked') && !$('#hesap_bilgisi').prop('disabled');
+
+        $('#password_required').toggleClass('d-none', bilgi);
+        $('#password_hint').text(bilgi
+            ? 'İsteğe bağlı. Boş bırakırsanız kullanıcı e-postadaki bağlantıyla kendi parolasını belirler.'
+            : $('#password_hint').attr('data-varsayilan'));
+        $('#sifre').removeAttr('placeholder');
+    }
+
+    $('#hesap_bilgisi').on('change', function () {
+        if ($('#form_action').val() === 'add') { yeniKayitParolasi(); }
+    });
+
+    $('#avatar').on('change', function () {
+        var file = this.files && this.files[0];
+
+        $(this).removeClass('is-invalid');
+        $('[data-error-for="avatar"]').text('');
+
+        if (!file) {
+            $('#avatar_preview').addClass('d-none').attr('src', '');
+            $('#avatar_placeholder').removeClass('d-none');
+            return;
+        }
+        if (!/^image\/(jpeg|png|gif|webp)$/.test(file.type)) {
+            $(this).val('').addClass('is-invalid');
+            $('[data-error-for="avatar"]').text('Yalnızca JPG, PNG, GIF ve WEBP dosyaları yükleyebilirsiniz.');
+            return;
+        }
+        if (file.size > MAX_BYTES) {
+            $(this).val('').addClass('is-invalid');
+            $('[data-error-for="avatar"]').text('Görsel boyutu en fazla ' + MAX_MB + ' MB olabilir.');
+            return;
+        }
+
+        var reader = new FileReader();
+        reader.onload = function (event) {
+            $('#avatar_preview').attr('src', event.target.result).removeClass('d-none');
+            $('#avatar_placeholder').addClass('d-none');
+        };
+        reader.readAsDataURL(file);
+    });
+
+    $('#user_form').on('submit', function (event) {
+        event.preventDefault();
+        clearErrors();
+        setLoading(true);
+
+        $.ajax({
+            url: API.save, method: 'POST',
+            data: new FormData(this), contentType: false, processData: false, dataType: 'json'
+        })
+        .done(function (response) {
+            userModal.hide();
+            CY.notify(response.description, 'success');
+
+            /* Yönetici KENDİ parolasını değiştirdiyse sunucu oturumu
+             * yeniledi ve CSRF anahtarı değişti; sayfadaki eski anahtarla
+             * sonraki istekler reddedilirdi. Sayfayı tazeliyoruz. */
+            if (response.yenile) {
+                window.setTimeout(function () { window.location.reload(); }, 900);
+                return;
+            }
+
+            reload(false);
+        })
+        .fail(function (xhr) {
+            var res = xhr.responseJSON || {};
+            if (xhr.status === 422) { showErrors(res.errors, res.description); return; }
+            CY.ajaxError(xhr, 'İşlem tamamlanamadı.');
+        })
+        .always(function () { setLoading(false); });
+    });
+
+    function showDetail(id) {
+        fetchUser(id, function (data) {
+            currentDetailId = data.id;
+
+            $('#detail_id').text('#' + data.id);
+            $('#detail_fullname').text(data.ad_soyad);
+            $('#detail_kadi').text('@' + data.kullanici_adi);
+            $('#detail_email').text(data.eposta);
+            $('#detail_phone').text(data.telefon || '—');
+            $('#detail_bio').text(data.hakkinda || '—');
+            $('#detail_login').text(data.son_giris);
+            $('#detail_created').text(data.created_at);
+
+            var roleClass = data.rol === 'admin' ? 'admin' : (data.rol === 'editor' ? 'editor' : 'member');
+            $('#detail_role').attr('class', 'cy-role cy-role--' + roleClass).text(data.rol_etiket);
+
+            var statusClass = data.durum === 'aktif' ? 'is-active'
+                : ((data.durum === 'askida' || data.durum === 'onay_bekliyor') ? 'is-hold' : 'is-passive');
+            $('#detail_status').attr('class', 'cy-status ' + statusClass).text(data.durum_etiket);
+
+            if (data.avatar_url) {
+                $('#detail_image').attr('src', data.avatar_url).attr('alt', data.ad_soyad).removeClass('d-none');
+                $('#detail_initial').addClass('d-none');
+            } else {
+                $('#detail_image').addClass('d-none').attr('src', '');
+                $('#detail_initial').text(data.ad.charAt(0).toLocaleUpperCase('tr-TR')).removeClass('d-none');
+            }
+
+            var attempts = data.basarisiz_giris;
+            if (attempts && attempts.adet > 0) {
+                $('#detail_login_attempts_text').text(
+                    attempts.adet + ' başarısız giriş denemesi (son: ' + attempts.son_tarih +
+                    (attempts.son_ip ? ', ' + attempts.son_ip : '') + ')'
+                );
+                $('#detail_login_attempts').removeClass('d-none');
+            } else {
+                $('#detail_login_attempts').addClass('d-none');
+            }
+
+            $('#detail_edit_button').toggleClass('d-none', !data.can_edit);
+            detailModal.show();
+        });
+    }
+
+    $('#user_table').on('click', '.js-view', function () {
+        showDetail($(this).data('id'));
+    });
+
+    $('#detail_edit_button').on('click', function () {
+        if (currentDetailId === null) { return; }
+        var id = currentDetailId;
+        detailModal.hide();
+        $('#detailModal').one('hidden.bs.modal', function () { fetchUser(id, openEditModal); });
+    });
+
+    $('#user_table').on('click', '.js-edit', function () {
+        fetchUser($(this).data('id'), openEditModal);
+    });
+
+    $('#user_table').on('click', '.js-toggle-status', function () {
+        var $button = $(this).prop('disabled', true);
+
+        $.ajax({
+            url: API.status, method: 'POST', dataType: 'json',
+            data: { id: $button.data('id'), csrf_token: CY.token() }
+        })
+        .done(function (response) { CY.notify(response.description, 'success'); reload(false); })
+        .fail(function (xhr) { CY.ajaxError(xhr, 'Durum değiştirilemedi.'); $button.prop('disabled', false); });
+    });
+
+    $('#user_table').on('click', '.js-delete', function () {
+        pendingDeleteId = $(this).data('id');
+        $('#delete_label').text($(this).data('label') || ('#' + pendingDeleteId));
+        deleteModal.show();
+    });
+
+    $('#confirm_delete').on('click', function () {
+        if (pendingDeleteId === null) { return; }
+        var $button = $(this).prop('disabled', true);
+
+        $.ajax({
+            url: API.remove, method: 'POST', dataType: 'json',
+            data: { id: pendingDeleteId, csrf_token: CY.token() }
+        })
+        .done(function (response) { CY.notify(response.description, 'success'); reload(false); })
+        .fail(function (xhr) { CY.ajaxError(xhr, 'Silme işlemi başarısız oldu.'); })
+        .always(function () { $button.prop('disabled', false); deleteModal.hide(); pendingDeleteId = null; });
+    });
+
+    $('#userModal').on('hidden.bs.modal', resetForm);
+    $('#detailModal').on('hidden.bs.modal', function () { currentDetailId = null; });
+
+    /* Tek seferlik adres parametresini siler; ötekiler ("güzel adres"
+     * kapalıyken ?r=panel/kullanicilar) yerinde kalır, yenileme bozulmaz. */
+    function forgetParam(name) {
+        var params = new URLSearchParams(window.location.search);
+        params.delete(name);
+        var rest = params.toString();
+        window.history.replaceState(null, '', window.location.pathname + (rest ? '?' + rest : ''));
+    }
+
+    /* Kontrol panelindeki "Yeni Kullanıcı" kısayolu buraya ?ekle=1 ile
+     * yönlendirir; sayfa yüklenir yüklenmez ekleme modalını açarız. */
+    if (new URLSearchParams(window.location.search).get('ekle') === '1') {
+        $('#add_button').trigger('click');
+        forgetParam('ekle');
+    }
+
+    /* "Yeni üye" mektubundaki "Kullanıcıyı aç" düğmesi ?kullanici={id}
+     * ile gelir: o kullanıcının ayrıntı penceresi açılır. */
+    var ilkKullanici = parseInt(new URLSearchParams(window.location.search).get('kullanici') || '', 10);
+    if (ilkKullanici > 0) {
+        showDetail(ilkKullanici);
+        forgetParam('kullanici');
+    }
+});

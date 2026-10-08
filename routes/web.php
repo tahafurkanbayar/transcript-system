@@ -1,0 +1,246 @@
+<?php
+/**
+ * =====================================================================
+ *  ROTA TABLOSU – Hangi adres hangi denetleyiciye gider?
+ * ---------------------------------------------------------------------
+ *  Üçüncü parametre ARA KATMANLARDIR (middleware); denetleyici
+ *  çalışmadan ÖNCE sırayla uygulanırlar:
+ *
+ *      'installed'         → .env yoksa kurulum sihirbazına yönlendir
+ *      'guest'              → yalnızca giriş YAPMAMIŞ ziyaretçi
+ *      'auth'               → giriş zorunlu
+ *      'csrf'               → sahte istek koruması (veri değiştiren her POST)
+ *      'can:users.delete'   → belirli yetki zorunlu
+ * =====================================================================
+ */
+
+declare(strict_types=1);
+
+use App\Core\Router;
+use App\Http\Controllers\Api\MailApiController;
+use App\Http\Controllers\Api\MessageApiController;
+use App\Http\Controllers\Api\MobileController;
+use App\Http\Controllers\Api\UserApiController;
+use App\Http\Controllers\Api\V1Controller;
+use App\Http\Controllers\AuthController;
+use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\MailController;
+use App\Http\Controllers\MessageController;
+use App\Http\Controllers\PageController;
+use App\Http\Controllers\PasswordResetController;
+use App\Http\Controllers\ProfileController;
+use App\Http\Controllers\PwaController;
+use App\Http\Controllers\Site\ContactController;
+use App\Http\Controllers\Site\HomeController;
+use App\Http\Controllers\Site\NotificationController;
+use App\Http\Controllers\Site\PageController as SitePageController;
+use App\Http\Controllers\Site\SeoController;
+use App\Http\Controllers\SettingsController;
+use App\Http\Controllers\SystemController;
+use App\Http\Controllers\UserController;
+
+$router = new Router();
+
+/* ---------------------------------------------------------------------
+ *  ÖN YÜZ (herkese açık)
+ * ------------------------------------------------------------------ */
+$router->get('',            HomeController::class,    'index', ['installed']);
+$router->get('manifest.webmanifest', PwaController::class, 'manifest', ['installed']);
+// Bakımda site haritası 503 + Retry-After döner; arama motorları bunu
+// "geçici" diye anlar ve dizini silmez. robots.txt açık kalır.
+$router->get('sitemap.xml', SeoController::class, 'sitemap', ['installed', 'bakim']);
+$router->get('robots.txt',  SeoController::class, 'robots',  ['installed']);
+
+$router->get('cevrimdisi',          PwaController::class, 'offline',  ['installed']);
+
+// "bakim": bakım modu açıkken bu uç kapanır. Sayfanın kendisi
+// (GET iletisim) açık kalır — ziyaretçi bakım örtüsünü görür — ama
+// gönderim JSON ucu olduğu için layout'a hiç uğramaz; kapı burada.
+$router->post('api/iletisim/gonder', ContactController::class, 'send', ['installed', 'bakim', 'csrf']);
+
+/* ---------------------------------------------------------------------
+ *  KİMLİK DOĞRULAMA
+ * ------------------------------------------------------------------ */
+$router->get('giris',   AuthController::class, 'showLogin', ['installed', 'guest']);
+$router->post('giris',  AuthController::class, 'login',     ['installed', 'guest', 'csrf']);
+
+// Giriş bakım modunda da AÇIKTIR: yönetici siteyi düzeltebilmek için
+// panele girebilmelidir. Yeni kayıt ise kapanır.
+$router->get('kayit',   AuthController::class, 'showRegister', ['installed', 'bakim', 'guest']);
+$router->post('kayit',  AuthController::class, 'register',     ['installed', 'bakim', 'guest', 'csrf']);
+
+// E-postadaki doğrulama bağlantısı. Oturum açmaz; yalnızca hesabı etkinleştirir.
+$router->get('kayit/dogrula', AuthController::class, 'verify', ['installed']);
+
+// Parolamı unuttum: e-postaya tek kullanımlık, 60 dk geçerli bağlantı (bkz. App\Core\PasswordReset).
+$router->get('parolami-unuttum',  PasswordResetController::class, 'showRequest', ['installed', 'guest']);
+$router->post('parolami-unuttum', PasswordResetController::class, 'sendLink',    ['installed', 'guest', 'csrf']);
+$router->get('parola-sifirla',    PasswordResetController::class, 'showReset',   ['installed', 'guest']);
+$router->post('parola-sifirla',   PasswordResetController::class, 'reset',       ['installed', 'guest', 'csrf']);
+
+// Çıkış POST ile yapılır: bir <img> etiketinin oturumunuzu kapatmasını
+// engellemek için (CSRF koruması).
+$router->post('cikis', AuthController::class, 'logout', ['installed', 'auth', 'csrf']);
+
+/* ---------------------------------------------------------------------
+ *  PANEL SAYFALARI
+ * ------------------------------------------------------------------ */
+$router->get('panel', DashboardController::class, 'index', ['installed', 'auth', 'can:dashboard.view']);
+
+$router->get('panel/kullanicilar', UserController::class, 'index', ['installed', 'auth', 'can:users.view']);
+$router->get('panel/mesajlar',     MessageController::class, 'index', ['installed', 'auth', 'can:messages.view']);
+$router->get('panel/eposta',       MailController::class,    'index', ['installed', 'auth', 'can:mail.view']);
+
+// --- İÇERİK SAYFALARI ---
+// "yeni" SABİT bir rotadır ve "{id}" kalıbından önce yazılmıştır;
+// Router zaten sabitlere öncelik verir ama okurken de belli olsun.
+$router->get('panel/sayfalar',          PageController::class, 'index',   ['installed', 'auth', 'can:pages.view']);
+$router->get('panel/sayfalar/yeni',     PageController::class, 'create',  ['installed', 'auth', 'can:pages.manage']);
+$router->post('panel/sayfalar/yeni',    PageController::class, 'store',   ['installed', 'auth', 'csrf', 'can:pages.manage']);
+$router->get('panel/sayfalar/{id}',     PageController::class, 'edit',    ['installed', 'auth', 'can:pages.manage']);
+$router->post('panel/sayfalar/{id}',    PageController::class, 'update',  ['installed', 'auth', 'csrf', 'can:pages.manage']);
+$router->post('panel/sayfalar/{id}/sil', PageController::class, 'destroy', ['installed', 'auth', 'csrf', 'can:pages.manage']);
+$router->get('panel/sayfalar/{id}/onizle', PageController::class, 'preview', ['installed', 'auth', 'can:pages.manage']);
+$router->post('panel/sayfalar/gorsel',  PageController::class, 'uploadImage', ['installed', 'auth', 'csrf', 'can:pages.manage']);
+
+// Ayarlar bölüm bölümdür: /panel/ayarlar genel bakış, /panel/ayarlar/eposta
+// yalnızca o grubu gösterir ve YALNIZCA onu kaydeder.
+$router->get('panel/ayarlar',            SettingsController::class, 'index',      ['installed', 'auth', 'can:settings.view']);
+$router->post('panel/ayarlar/logo',      SettingsController::class, 'uploadLogo', ['installed', 'auth', 'csrf', 'can:settings.manage']);
+$router->post('panel/ayarlar/logo-sil',  SettingsController::class, 'removeLogo', ['installed', 'auth', 'csrf', 'can:settings.manage']);
+$router->post('panel/ayarlar/favicon',     SettingsController::class, 'uploadFavicon', ['installed', 'auth', 'csrf', 'can:settings.manage']);
+$router->post('panel/ayarlar/favicon-sil', SettingsController::class, 'removeFavicon', ['installed', 'auth', 'csrf', 'can:settings.manage']);
+$router->post('panel/ayarlar/pwa-simge',     SettingsController::class, 'uploadIcon', ['installed', 'auth', 'csrf', 'can:settings.manage']);
+$router->post('panel/ayarlar/pwa-simge-sil', SettingsController::class, 'removeIcon', ['installed', 'auth', 'csrf', 'can:settings.manage']);
+
+// "{grup}" kalıbı "logo" ve "logo-sil" adreslerini de yakalardı.
+// Sorun olmaz: Router önce SABİT rotalara bakar, parametreli olanları
+// yalnızca hiçbiri eşleşmezse dener. Yine de okunurluk için sabit
+// olanları üste yazıyoruz.
+$router->get('panel/ayarlar/{grup}',     SettingsController::class, 'group',      ['installed', 'auth', 'can:settings.view']);
+$router->post('panel/ayarlar/{grup}',    SettingsController::class, 'update',     ['installed', 'auth', 'csrf', 'can:settings.manage']);
+
+$router->get('panel/sistem', SystemController::class, 'index', ['installed', 'auth', 'can:system.view']);
+$router->post('panel/sistem/kuyruk/tekrar',  SystemController::class, 'queueRetry', ['installed', 'auth', 'csrf', 'can:system.manage']);
+$router->post('panel/sistem/kuyruk/temizle', SystemController::class, 'queuePurge', ['installed', 'auth', 'csrf', 'can:system.manage']);
+
+// SSH erişimi olmayan hostlarda bekleyen migration'lar buradan çalıştırılır.
+$router->post('panel/sistem/migrate', SystemController::class, 'migrate', ['installed', 'auth', 'csrf', 'can:system.manage']);
+
+// Modül aç/kapat ("php cy module --enable=Ad" komutunun panel karşılığı).
+$router->post('panel/sistem/modul/{ad}', SystemController::class, 'toggleModule', ['installed', 'auth', 'csrf', 'can:system.manage']);
+
+// Kurulum klasörünü sil / örnek veriyi kaldır (yalnızca yönetici; demo hesabında kilitli).
+$router->post('panel/sistem/kurulum-sil',  SystemController::class, 'removeInstaller', ['installed', 'auth', 'csrf', 'can:system.manage']);
+$router->post('panel/sistem/demo-kaldir', SystemController::class, 'removeDemo',      ['installed', 'auth', 'csrf', 'can:system.manage']);
+
+$router->get('panel/hesabim',              ProfileController::class, 'index',        ['installed', 'auth', 'can:profile.view']);
+$router->post('panel/hesabim/guncelle',    ProfileController::class, 'update',       ['installed', 'auth', 'csrf', 'can:profile.update']);
+$router->post('panel/hesabim/parola',      ProfileController::class, 'password',     ['installed', 'auth', 'csrf', 'can:profile.update']);
+$router->post('panel/hesabim/avatar',      ProfileController::class, 'uploadAvatar', ['installed', 'auth', 'csrf', 'can:profile.update']);
+$router->post('panel/hesabim/avatar-sil',  ProfileController::class, 'removeAvatar', ['installed', 'auth', 'csrf', 'can:profile.update']);
+
+/* ---------------------------------------------------------------------
+ *  AJAX UÇ NOKTALARI (hepsi POST + CSRF)
+ * ------------------------------------------------------------------ */
+
+// Tema tercihi: özel bir yetki gerektirmez, her giriş yapmış kullanıcı
+// kendi görünümünü değiştirebilmelidir.
+$router->post('api/tema', ProfileController::class, 'updateTheme', ['installed', 'auth', 'csrf']);
+$router->post('api/bildirim/kapat', DashboardController::class, 'dismissNotice', ['installed', 'auth', 'csrf']);
+
+$router->post('api/kullanicilar/list',   UserApiController::class, 'list',   ['installed', 'auth', 'csrf', 'can:users.view']);
+$router->post('api/kullanicilar/fetch',  UserApiController::class, 'fetch',  ['installed', 'auth', 'csrf', 'can:users.view']);
+$router->post('api/kullanicilar/save',   UserApiController::class, 'save',   ['installed', 'auth', 'csrf', 'can:users.create|users.update']);
+$router->post('api/kullanicilar/delete', UserApiController::class, 'delete', ['installed', 'auth', 'csrf', 'can:users.delete']);
+$router->post('api/kullanicilar/status', UserApiController::class, 'status', ['installed', 'auth', 'csrf', 'can:users.status']);
+
+$router->post('api/mesajlar/list',   MessageApiController::class, 'list',     ['installed', 'auth', 'csrf', 'can:messages.view']);
+$router->post('api/mesajlar/fetch',  MessageApiController::class, 'fetch',    ['installed', 'auth', 'csrf', 'can:messages.view']);
+$router->post('api/mesajlar/okundu', MessageApiController::class, 'markRead', ['installed', 'auth', 'csrf', 'can:messages.manage']);
+$router->post('api/mesajlar/delete', MessageApiController::class, 'delete',   ['installed', 'auth', 'csrf', 'can:messages.manage']);
+$router->post('api/mesajlar/toplu',  MessageApiController::class, 'bulk',     ['installed', 'auth', 'csrf', 'can:messages.manage']);
+
+// --- E-POSTA MERKEZİ ---
+// Geçmişi görmek "mail.view", göndermek "mail.send" ister; editör
+// gidenleri görebilir ama toplu duyuru gönderemez.
+$router->post('api/eposta/list',    MailApiController::class, 'list',    ['installed', 'auth', 'csrf', 'can:mail.view']);
+$router->post('api/eposta/fetch',   MailApiController::class, 'fetch',   ['installed', 'auth', 'csrf', 'can:mail.view']);
+$router->post('api/eposta/tekrar',  MailApiController::class, 'requeue', ['installed', 'auth', 'csrf', 'can:mail.send']);
+$router->post('api/eposta/sil',     MailApiController::class, 'delete',  ['installed', 'auth', 'csrf', 'can:mail.send']);
+$router->post('api/eposta/temizle', MailApiController::class, 'purge',   ['installed', 'auth', 'csrf', 'can:mail.send']);
+
+$router->post('api/eposta/alicilar', MailApiController::class, 'audience', ['installed', 'auth', 'csrf', 'can:mail.send']);
+$router->post('api/eposta/onizle',   MailApiController::class, 'preview',  ['installed', 'auth', 'csrf', 'can:mail.send']);
+$router->post('api/eposta/gonder',   MailApiController::class, 'send',     ['installed', 'auth', 'csrf', 'can:mail.send']);
+$router->post('api/eposta/isle',     MailApiController::class, 'process',  ['installed', 'auth', 'csrf', 'can:mail.send']);
+
+$router->post('api/eposta/sinama',   MailApiController::class, 'test',    ['installed', 'auth', 'csrf', 'can:settings.manage']);
+$router->post('api/eposta/baglanti', MailApiController::class, 'verify',  ['installed', 'auth', 'csrf', 'can:settings.manage']);
+
+// --- API ANAHTARLARI (Hesabım ekranı) ---
+$router->post('panel/hesabim/api-anahtari',     ProfileController::class, 'createToken',  ['installed', 'auth', 'csrf', 'can:profile.api']);
+$router->post('panel/hesabim/api-anahtari/sil', ProfileController::class, 'revokeToken',  ['installed', 'auth', 'csrf', 'can:profile.api']);
+$router->post('panel/hesabim/oturumlari-kapat', ProfileController::class, 'logoutOthers', ['installed', 'auth', 'csrf', 'can:profile.update']);
+$router->post('panel/hesabim/cihaz/sil',        ProfileController::class, 'revokeSession', ['installed', 'auth', 'csrf', 'can:profile.update']);
+$router->post('panel/hesabim/sil',              ProfileController::class, 'deleteAccount', ['installed', 'auth', 'csrf', 'can:profile.update']);
+$router->post('panel/hesabim/bildirimler',      ProfileController::class, 'notifications', ['installed', 'auth', 'csrf', 'can:profile.update']);
+
+/* ---------------------------------------------------------------------
+ *  REST API (dış istemciler) — "Authorization: Bearer cy_…"
+ * ---------------------------------------------------------------------
+ *  'api'        → geçerli anahtar ZORUNLU (ya da açık bir panel
+ *                 oturumu; o durumda veri değiştiren yöntemlerde CSRF)
+ *  'api.can:x'  → anahtarın sahibinin x yetkisi olmalı
+ *  'api.guest'  → anahtarsız, yalnızca IP başına hız sınırı
+ *
+ *  Anahtar: Panel → Hesabım → API Anahtarları  ya da
+ *           php cy api:token <kullanıcı> "<ad>" [--gun=90]
+ * ------------------------------------------------------------------ */
+$router->group('api/v1', ['installed'], function (Router $r): void {
+    $r->get('ben',            V1Controller::class, 'ben',          ['api']);
+    $r->get('kullanicilar',   V1Controller::class, 'kullanicilar', ['api', 'api.can:users.view']);
+    $r->get('sayfalar',       V1Controller::class, 'sayfalar',     ['api.guest']);
+    $r->get('sayfalar/{slug}', V1Controller::class, 'sayfa',       ['api.guest']);
+
+    // Mobil uygulama: giriş/çıkış, cihazlar, örnek dosyalar (bkz. MobileController, docs/MOBIL-API.md)
+    $r->post('oturum',            MobileController::class, 'login',         ['api.guest']);
+    $r->delete('oturum',          MobileController::class, 'logout',        ['api']);
+    $r->get('oturumlar',          MobileController::class, 'sessions',      ['api']);
+    $r->delete('oturumlar/{id}',  MobileController::class, 'revokeSession', ['api']);
+    $r->get('dosyalar',           MobileController::class, 'files',         ['api']);
+    $r->get('dosyalar/{ad}',      MobileController::class, 'file',          ['api']);
+});
+
+/* ---------------------------------------------------------------------
+ *  İÇERİK SAYFALARI (ön yüz) – EN SONA YAZILIR
+ * ---------------------------------------------------------------------
+ *  /hakkimizda, /iletisim, /gizlilik … hepsi buraya düşer ve
+ *  "sayfalar" tablosundan okunur.
+ *
+ *  NEDEN EN SONDA? Router parametreli rotaları yalnızca hiçbir SABİT
+ *  rota eşleşmediğinde dener; yani "giris" ya da "panel" buraya asla
+ *  gelmez. Yine de dosyanın en altında durması niyeti belli eder:
+ *  bu bir yakalayıcıdır, üstündeki her şey ondan önceliklidir.
+ *
+ *  Yayında olmayan ya da var olmayan bir adres 404 verir — sessizce
+ *  ana sayfaya yönlendirmek hem ziyaretçiyi hem arama motorunu
+ *  yanıltırdı.
+ * ------------------------------------------------------------------ */
+$router->get('onizleme/{id}', SitePageController::class, 'preview', ['installed']);   // imzalı, 30 dk (bkz. PageController::previewUrl)
+$router->get('duyurular/iptal', NotificationController::class, 'unsubscribe', ['installed']);   // imzalı, giriş gerektirmez; yalnızca onay sayfası
+$router->post('duyurular/iptal', NotificationController::class, 'confirm', ['installed']);    // CSRF'siz: yetki imzadır, posta istemcisi tek tıkla POST atar (RFC 8058)
+$router->get('{slug}', SitePageController::class, 'show', ['installed']);
+
+/* ---------------------------------------------------------------------
+ *  BULUNAMAYAN ADRESLER
+ * ---------------------------------------------------------------------
+ *  Burada bir şey tanımlamıyoruz: eşleşmeyen adres için Router
+ *  HttpException::notFound() fırlatır, ErrorHandler da isteğin
+ *  türüne göre 404 sayfasını ya da JSON yanıtını üretir.
+ *
+ *  Özel bir davranış isterseniz (ör. bir modülün kendi arşiv
+ *  yönlendirmesi) $router->fallback(...) ile devralabilirsiniz.
+ * ------------------------------------------------------------------ */
+
+return $router;

@@ -1,0 +1,153 @@
+# =====================================================================
+#  SÜREKLİ DENETİM – her itmede ve çekme isteğinde çalışır
+# ---------------------------------------------------------------------
+#  1. test      Desteklenen her PHP sürümünde bütün .php dosyalarının
+#               sözdizimi denetlenir; veritabanı gerektirmeyen birim
+#               testleri (rol matrisi, XSS, politika…) çalışır.
+#  2. kurulum   Gerçek bir MySQL 8 ile: depo yerleşik PHP sunucusunda
+#               açılır, kurulum sihirbazı HTTP üzerinden örnek veriyle
+#               çalıştırılır, duman testi üç kez koşar (demo AÇIK, demo
+#               KAPALI, geliştirme modu APP_DEBUG=true),
+#               sonra eski sürümlerden yükseltilen şemanın yeni
+#               kurulumla aynı olduğu denetlenir. Son olarak
+#               database/ornek-veritabani.sql boş bir veritabanına
+#               aktarılır ve site onunla duman testinden geçer.
+#
+#  Bağımlılık yok: Composer kurulmaz, PHPUnit gerekmez.
+# =====================================================================
+
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Birim · PHP ${{ matrix.php }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.1', '8.2', '8.3', '8.4']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: mbstring, pdo_mysql, pdo_sqlite, gd, fileinfo, curl
+          coverage: none
+
+      - name: Sözdizimi denetimi
+        run: |
+          hatali=0
+          while IFS= read -r -d '' dosya; do
+            php -l "$dosya" > /dev/null || hatali=1
+          done < <(find . -path ./.git -prune -o \( -name '*.php' -o -name cy \) -type f -print0)
+          exit $hatali
+
+      - name: Birim testleri
+        run: php tests/unit.php
+
+  kurulum:
+    name: Kurulum + duman testi · PHP ${{ matrix.php }} · MySQL 8
+    runs-on: ubuntu-latest
+    needs: test
+
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.1', '8.4']
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -proot"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # şema testi eski sürüm etiketlerini okur
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: mbstring, pdo_mysql, gd, fileinfo, curl
+          coverage: none
+
+      - name: Geliştirme sunucusunu başlat
+        run: |
+          nohup php -S 127.0.0.1:8000 -t . app/Support/gelistirme-sunucusu.php > sunucu.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -s -o /dev/null http://127.0.0.1:8000/kurulum/index.php && break
+            sleep 1
+          done
+
+      - name: Sihirbazla kur (örnek veri + demo modu)
+        run: >
+          php tests/kurulum.php http://127.0.0.1:8000
+          --db-host=127.0.0.1 --db-adi=cy_ci --db-kullanici=root --db-parola=root
+          --ornek-veri --demo --yonetici=yonetici --parola=Yonetici1234
+
+      - name: Duman testi (demo modu AÇIK)
+        run: php tests/smoke.php http://127.0.0.1:8000 --kullanici=yonetici --parola=Yonetici1234
+
+      - name: Duman testi (demo modu KAPALI)
+        run: |
+          sed -i 's/^APP_DEMO=true/APP_DEMO=false/' .env
+          # İlk koşunun bilerek yaptığı hatalı girişler IP sayacında kalır;
+          # temizlenmezse kilit testi önceki koşunun denemelerini de sayar.
+          mysql -h 127.0.0.1 -uroot -proot cy_ci -e "DELETE FROM login_attempts"
+          php tests/smoke.php http://127.0.0.1:8000 --kullanici=yonetici --parola=Yonetici1234
+
+      # Sihirbazın "geliştirme modu" kutusuyla kurulmuş site: örnek hesaplar
+      # duruyor ama demo kapalı. Giriş ekranı parola ÖNERMEMELİ (1.6.1'e
+      # kadar altı hesabı "Demo1234!" ile listeliyordu).
+      - name: Duman testi (geliştirme modu, APP_DEBUG=true, demo KAPALI)
+        run: |
+          sed -i 's/^APP_ENV=.*/APP_ENV=local/; s/^APP_DEBUG=.*/APP_DEBUG=true/' .env
+          mysql -h 127.0.0.1 -uroot -proot cy_ci -e "DELETE FROM login_attempts"
+          php tests/smoke.php http://127.0.0.1:8000 --kullanici=yonetici --parola=Yonetici1234
+
+      - name: Şema kayması (eski sürümden yükseltme = yeni kurulum)
+        run: |
+          son=$(git tag --sort=-v:refname | head -1)
+          for etiket in v1.2.0 "$son"; do
+            [ -n "$etiket" ] || continue
+            echo "→ $etiket"
+            git show "$etiket:kurulum/database.sql" > /tmp/eski.sql
+            php tests/sema.php --eski=/tmp/eski.sql --host=127.0.0.1 --kullanici=root --parola=root
+          done
+
+      # Sihirbazsız kurulum: README'deki adımlar. Dosya boş bir veritabanına
+      # aktarılır, site yayın modunda ona bağlanır; bekleyen migration
+      # olmamalı, duman testi örnek yöneticiyle geçmeli.
+      - name: SQL dosyasıyla kurulum (database/ornek-veritabani.sql)
+        run: |
+          mysql -h 127.0.0.1 -uroot -proot -e "CREATE DATABASE cy_sql CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+          mysql -h 127.0.0.1 -uroot -proot cy_sql < database/ornek-veritabani.sql
+          sed -i 's/^DB_NAME=.*/DB_NAME=cy_sql/; s/^APP_ENV=.*/APP_ENV=production/; s/^APP_DEBUG=.*/APP_DEBUG=false/' .env
+          php cy cache:clear
+          php cy migrate:status | tee durum.txt
+          grep -q " 0 bekliyor" durum.txt
+          php tests/smoke.php http://127.0.0.1:8000 --kullanici=ali.yonetici --parola='Demo1234!'
+
+      - name: Hata olursa günlükleri göster
+        if: failure()
+        run: |
+          echo "::group::sunucu.log"; cat sunucu.log || true; echo "::endgroup::"
+          for f in storage/logs/*.log; do echo "::group::$f"; tail -n 80 "$f"; echo "::endgroup::"; done

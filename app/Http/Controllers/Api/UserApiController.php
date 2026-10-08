@@ -1,0 +1,462 @@
+<?php
+/**
+ * =====================================================================
+ *  UserApiController – Kullanıcı CRUD işlemlerinin AJAX uç noktaları
+ * ---------------------------------------------------------------------
+ *  YETKİ KURALLARI (rol tablosuna EK olarak uygulanan iş kuralları):
+ *    1. Kimse kendi hesabını silemez veya durumunu değiştiremez
+ *    2. Kimse kendi rolünü değiştiremez
+ *    3. Sistemdeki SON aktif yönetici silinemez / rolü indirilemez / pasife alınamaz
+ * =====================================================================
+ */
+
+declare(strict_types=1);
+
+namespace App\Http\Controllers\Api;
+
+use App\Core\Auth;
+use App\Core\Events\Events;
+use App\Core\Mail\Notifier;
+use App\Core\PasswordReset;
+use App\Core\RateLimiter;
+use App\Core\Request;
+use App\Core\Response;
+use App\Core\Uploader;
+use App\Core\Validator;
+use App\Events\EmailChanged;
+use App\Events\PasswordChanged;
+use App\Http\Controller;
+use App\Models\Role;
+use App\Models\User;
+use RuntimeException;
+
+final class UserApiController extends Controller
+{
+    /* =================================================================
+     *  1) LİSTELEME (DataTables sunucu taraflı protokolü)
+     * ============================================================== */
+    public function list(Request $request): void
+    {
+        // Arama, sıralama ve sayfalama Controller::tableQuery'den gelir;
+        // burada yalnızca bu ekrana özgü filtreleri ekliyoruz.
+        $result = $this->users()->paginate($this->tableQuery($request) + [
+            'role'      => $request->input('filter_role'),
+            'status'    => $request->input('filter_status'),
+            'date_from' => $request->input('filter_date_from'),
+            'date_to'   => $request->input('filter_date_to'),
+        ]);
+
+        $rows = [];
+
+        foreach ($result['rows'] as $user) {
+            $rows[] = $this->toTableRow($user);
+        }
+
+        $this->tableJson($request, $result, $rows);
+    }
+
+    /** @return array<int,string|int> */
+    private function toTableRow(User $user): array
+    {
+        $current = Auth::user();
+        $isSelf  = $current !== null && $current->id === $user->id;
+
+        $avatar = $user->avatarUrl() !== ''
+            ? '<img src="' . e($user->avatarUrl()) . '" class="cy-avatar" alt="" loading="lazy">'
+            : '<span class="cy-avatar cy-avatar--initial">' . e($user->initials()) . '</span>';
+
+        $nameCell =
+            '<div class="cy-user-cell">'
+            . '<span class="cy-user-cell__name">' . e($user->fullName()) . '</span>'
+            . '<span class="cy-user-cell__meta">@' . e($user->kullaniciAdi) . ' · ' . e($user->eposta) . '</span>'
+            . ($isSelf ? '<span class="cy-tag cy-tag--self">siz</span>' : '')
+            . '</div>';
+
+        $roleBadge = '<span class="cy-role cy-role--' . e(Role::variant($user->rol)) . '">' . e($user->roleLabel()) . '</span>';
+
+        $statusMap = ['aktif' => 'is-active', 'pasif' => 'is-passive', 'askida' => 'is-hold', 'onay_bekliyor' => 'is-hold'];
+        $statusClass = $statusMap[$user->durum] ?? 'is-passive';
+
+        if (Auth::can('users.status') && !$isSelf) {
+            $next = $user->durum === 'aktif' ? 'pasif' : 'aktif';
+            $statusBadge = '<button type="button" class="cy-status ' . $statusClass . ' js-toggle-status"'
+                . ' data-id="' . $user->id . '" data-next="' . e($next) . '" title="Durumu değiştir">'
+                . '<span class="cy-status__dot"></span>' . e($user->statusLabel()) . '</button>';
+        } else {
+            $statusBadge = '<span class="cy-status ' . $statusClass . '"><span class="cy-status__dot"></span>' . e($user->statusLabel()) . '</span>';
+        }
+
+        $actions = '<div class="cy-actions">'
+            . '<button type="button" class="cy-btn-icon cy-btn-icon--view js-view" data-id="' . $user->id . '"'
+            . ' title="Detayı gör" aria-label="Detayı gör">' . icon('eye', 'cy-icon cy-icon--sm') . '</button>';
+
+        if (Auth::can('users.update')) {
+            $actions .= '<button type="button" class="cy-btn-icon cy-btn-icon--edit js-edit" data-id="' . $user->id . '"'
+                . ' title="Düzenle" aria-label="Düzenle">' . icon('edit', 'cy-icon cy-icon--sm') . '</button>';
+        }
+
+        if (Auth::can('users.delete') && !$isSelf) {
+            $actions .= '<button type="button" class="cy-btn-icon cy-btn-icon--delete js-delete" data-id="' . $user->id . '"'
+                . ' data-label="' . e($user->fullName()) . '"'
+                . ' title="Sil" aria-label="Sil">' . icon('trash', 'cy-icon cy-icon--sm') . '</button>';
+        }
+
+        $actions .= '</div>';
+
+        return [
+            $user->id,
+            $avatar,
+            $nameCell,
+            '<span class="cy-cell-muted">' . e($user->eposta) . '</span>',
+            $roleBadge,
+            $statusBadge,
+            $actions,
+        ];
+    }
+
+    /* =================================================================
+     *  2) TEK KAYIT GETİRME
+     * ============================================================== */
+    public function fetch(Request $request): void
+    {
+        $user  = $this->requireUser($request);
+        $extra = [
+            'can_edit'   => Auth::can('users.update') && $this->mayManage($user),
+            'can_delete' => Auth::can('users.delete') && !Auth::isSelf($user->id) && $this->mayManage($user),
+            // E-posta/parola değişirse işlemi yapanın parolası istenir (bkz. save).
+            'onay_gerekir' => Auth::isSelf($user->id) || $user->isAdmin(),
+        ];
+
+        if (Auth::can('users.view')) {
+            $basarisiz = (new RateLimiter($this->db))->recentFailures($user->eposta, $user->kullaniciAdi);
+
+            $extra['basarisiz_giris'] = [
+                'adet'      => $basarisiz['adet'],
+                'son_ip'    => $basarisiz['son_ip'],
+                'son_tarih' => $basarisiz['son_tarih'] !== null ? User::formatDate($basarisiz['son_tarih']) : null,
+            ];
+        }
+
+        Response::json([
+            'success' => true,
+            'data'    => array_merge($user->toArray(), $extra),
+        ]);
+    }
+
+    /* =================================================================
+     *  3) EKLEME / GÜNCELLEME
+     * ============================================================== */
+    public function save(Request $request): void
+    {
+        $action = $request->input('action') === 'edit' ? 'edit' : 'add';
+        $isEdit = $action === 'edit';
+
+        if (!Auth::can($isEdit ? 'users.update' : 'users.create')) {
+            Response::error('Bu işlem için yetkiniz bulunmuyor.', 403);
+        }
+
+        $target = $isEdit ? $this->requireUser($request, 'id') : null;
+
+        if ($target !== null && !$this->mayManage($target)) {
+            Response::error(self::ADMIN_ONLY, 403);
+        }
+
+        /* Yeni kayıtta "hesap bilgisi gönder": parola zorunlu değil;
+         * boşsa rastgele parola konur, kullanıcı 48 saatlik bağlantıyla
+         * kendi parolasını belirler. Mektup gidemiyorsa seçenek yok sayılır. */
+        $hesapBilgisi = !$isEdit && $request->input('hesap_bilgisi') === '1' && PasswordReset::canSendLinks();
+
+        /* Parola boş, kutu işaretsiz ama işaretlenebilir: iki yolu birden
+         * söyle. "Parola alanı boş bırakılamaz" kutunun varlığını unutturuyordu. */
+        $ikiYol = !$isEdit && !$hesapBilgisi && (string) ($_POST['sifre'] ?? '') === '' && PasswordReset::canSendLinks();
+
+        $validator = new Validator($_POST);
+        $validator->name('ad', 'Ad')
+                  ->name('soyad', 'Soyad')
+                  ->username('kullanici_adi')
+                  ->email('eposta')
+                  ->phone('telefon')
+                  ->text('hakkinda', 'Hakkında', 0, 1000)
+                  ->password('sifre', !$isEdit && !$hesapBilgisi && !$ikiYol);
+
+        if ($ikiYol) {
+            $validator->addError('sifre', 'Parola yazın ya da "Kullanıcıya hesap bilgisi gönder"i işaretleyin.');
+        }
+
+        if ($validator->passes() && $this->users()->fieldTaken('eposta', (string) $validator->validated()['eposta'], $target?->id)) {
+            $validator->addError('eposta', 'Bu e-posta adresi başka bir hesapta kayıtlı.');
+        }
+        if ($validator->passes() && $this->users()->fieldTaken('kullanici_adi', (string) $validator->validated()['kullanici_adi'], $target?->id)) {
+            $validator->addError('kullanici_adi', 'Bu kullanıcı adı başka bir hesapta kayıtlı.');
+        }
+
+        $role = $isEdit ? $target->rol : Role::MEMBER;
+
+        if (Auth::can('users.role') && array_key_exists('rol', $_POST)) {
+            $validator->in('rol', Role::all(), 'Rol');
+
+            if (!isset($validator->errors()['rol'])) {
+                $role = (string) $validator->validated()['rol'];
+            }
+        }
+
+        if ($isEdit && Auth::isSelf($target->id) && $role !== $target->rol) {
+            $validator->addError('rol', 'Kendi rolünüzü değiştiremezsiniz.');
+        }
+
+        // Yönetici yalnızca yönetici tarafından atanabilir (users.role başka role verilse bile).
+        if ($role === Role::ADMIN && ($target === null || $target->rol !== Role::ADMIN) && !(Auth::user()?->isAdmin() ?? false)) {
+            $validator->addError('rol', 'Yönetici rolünü yalnızca yöneticiler verebilir.');
+        }
+
+        $status = $isEdit ? $target->durum : 'aktif';
+
+        if (Auth::can('users.status') && array_key_exists('durum', $_POST)) {
+            $validator->in('durum', User::STATUSES, 'Durum');
+
+            if (!isset($validator->errors()['durum'])) {
+                $status = (string) $validator->validated()['durum'];
+            }
+        }
+
+        if ($isEdit && Auth::isSelf($target->id) && $status !== 'aktif') {
+            $validator->addError('durum', 'Kendi hesabınızı pasife alamazsınız.');
+        }
+
+        // Etkin olmayan hesap bağlantıyı kullanamaz (PasswordReset::find).
+        if ($hesapBilgisi && $status !== 'aktif') {
+            $validator->addError('hesap_bilgisi', 'Hesap bilgisi yalnızca "Aktif" hesaba gönderilebilir.');
+        }
+
+        // Son aktif yöneticinin yetkisi/durumu elinden alınamaz.
+        if ($isEdit && $target->isAdmin() && $target->isActive()
+            && ($role !== Role::ADMIN || $status !== 'aktif')
+            && !$this->users()->otherActiveAdminExists($target->id)) {
+
+            $validator->addError('rol', 'Sistemdeki son aktif yönetici bu şekilde değiştirilemez.');
+        }
+
+        /* YENİDEN DOĞRULAMA: bir YÖNETİCİNİN ya da kendi hesabının e-posta
+         * veya parolası değişiyorsa işlemi yapanın parolası istenir.
+         * Eskiden yalnızca Hesabım ekranı soruyordu; bu uç aynı işi
+         * sormadan yaptığı için o koruma boşa çıkıyordu. */
+        if ($isEdit && (Auth::isSelf($target->id) || $target->isAdmin()) && $validator->passes()) {
+            $yeni           = $validator->validated();
+            $epostaDegisti  = strcasecmp((string) $yeni['eposta'], $target->eposta) !== 0;
+            $parolaDegisti  = !empty($yeni['sifre']);
+
+            if ($epostaDegisti || $parolaDegisti) {
+                $hata = \App\Core\PasswordConfirm::check((int) Auth::id(), $request->string('onay_parola'));
+
+                if ($hata !== null) {
+                    $validator->addError('onay_parola', $hata === \App\Core\PasswordConfirm::WRONG
+                        ? 'Bu değişiklik için kendi parolanızı doğru girin.'
+                        : $hata);
+                }
+            }
+        }
+
+        $newAvatar = null;
+
+        if ($request->hasFile('avatar')) {
+            try {
+                if ($validator->passes()) {
+                    $newAvatar = Uploader::avatar((array) $request->file('avatar'));
+                } else {
+                    Uploader::validate((array) $request->file('avatar'));
+                }
+            } catch (RuntimeException $e) {
+                $validator->addError('avatar', $e->getMessage());
+            }
+        }
+
+        if ($validator->fails()) {
+            if ($newAvatar !== null) {
+                Uploader::delete($newAvatar);
+            }
+
+            Response::error('Lütfen formdaki hataları düzeltin.', 422, ['errors' => $validator->errors()]);
+        }
+
+        $data = $validator->validated();
+
+        $payload = [
+            'ad'            => $data['ad'],
+            'soyad'         => $data['soyad'],
+            'kullanici_adi' => $data['kullanici_adi'],
+            'eposta'        => $data['eposta'],
+            'telefon'       => $data['telefon'] ?? '',
+            'hakkinda'      => $data['hakkinda'] ?? '',
+            'rol'           => $role,
+            'durum'         => $status,
+        ];
+
+        if ($newAvatar !== null) {
+            $payload['avatar'] = $newAvatar;
+        }
+
+        if ($isEdit) {
+            if (!empty($data['sifre'])) {
+                $payload['sifre'] = $data['sifre'];
+            }
+
+            $dusuruluyor = $target->isAdmin() && $target->isActive() && ($role !== Role::ADMIN || $status !== 'aktif');
+
+            if ($dusuruluyor) {
+                if (!$this->users()->changeAdminSafely($target->id, fn () => $this->users()->update($target->id, $payload))) {
+                    if ($newAvatar !== null) {
+                        Uploader::delete($newAvatar);
+                    }
+
+                    Response::error('Sistemdeki son aktif yönetici bu şekilde değiştirilemez.', 409);
+                }
+            } else {
+                $this->users()->update($target->id, $payload);
+            }
+
+            if ($newAvatar !== null && $target->avatar !== '') {
+                Uploader::delete($target->avatar);
+            }
+
+            if (!empty($payload['sifre'])) {
+                Events::dispatch(new PasswordChanged($target->id, kendisi: Auth::isSelf($target->id), kaynak: PasswordChanged::YONETICI));
+            }
+
+            // Adres değiştiyse ESKİ adrese bilgi (bkz. Listeners\EpostaDegistiBildir).
+            if (mb_strtolower((string) $payload['eposta']) !== mb_strtolower($target->eposta)) {
+                Events::dispatch(new EmailChanged($target->id, $target->eposta, (string) $payload['eposta'], EmailChanged::YONETICI));
+            }
+
+            /* Yönetici KENDİ parolasını buradan değiştirdiyse oturum sürümü
+             * arttı; eskiden kendi oturumu da kapanıyordu. Bu cihaz yeni
+             * sürümle açık tutulur (bkz. Auth::refreshCurrentDevice). */
+            if (!empty($payload['sifre']) && Auth::isSelf($target->id)) {
+                Auth::refreshCurrentDevice($target->id);
+
+                Response::success('Bilgileriniz ve parolanız güncellendi. Diğer cihazlardaki oturumlarınız kapatıldı.', [
+                    'id'     => $target->id,
+                    'yenile' => true,
+                ]);
+            }
+
+            Response::success('Kullanıcı başarıyla güncellendi.', ['id' => $target->id]);
+        }
+
+        // Parola boşsa (yalnızca "hesap bilgisi gönder" ile mümkün) kimsenin
+        // bilmediği rastgele bir parola: giriş ancak bağlantıyla açılır.
+        $payload['sifre'] = (string) ($data['sifre'] ?? '') !== '' ? (string) $data['sifre'] : bin2hex(random_bytes(24));
+        $newId = $this->users()->create($payload);
+
+        if ($hesapBilgisi && ($yeni = $this->users()->find($newId)) !== null) {
+            $gitti = Notifier::hesapAcildi($yeni, PasswordReset::setupLink($yeni, $request->ip()), PasswordReset::HESAP_ACILIS_SAAT);
+
+            Response::success($gitti
+                ? 'Kullanıcı eklendi; hesap bilgisi e-postayla gönderildi.'
+                : 'Kullanıcı eklendi ama hesap bilgisi gönderilemedi (E-posta geçmişine bakın).', ['id' => $newId]);
+        }
+
+        Response::success('Kullanıcı başarıyla eklendi.', ['id' => $newId]);
+    }
+
+    /* =================================================================
+     *  4) SİLME
+     * ============================================================== */
+    public function delete(Request $request): void
+    {
+        $target = $this->requireUser($request);
+
+        if (Auth::isSelf($target->id)) {
+            Response::error('Kendi hesabınızı silemezsiniz.', 403);
+        }
+
+        if (!$this->mayManage($target)) {
+            Response::error(self::ADMIN_ONLY, 403);
+        }
+
+        $silindi = false;
+        $sil     = function () use ($target, &$silindi): void {
+            $silindi = $this->users()->delete($target->id);
+        };
+
+        if ($target->isAdmin() && $target->isActive()) {
+            if (!$this->users()->changeAdminSafely($target->id, $sil)) {
+                Response::error('Sistemdeki son yönetici silinemez.', 409);
+            }
+        } else {
+            $sil();
+        }
+
+        if (!$silindi) {
+            Response::error('Silinecek kayıt bulunamadı.', 404);
+        }
+
+        if ($target->avatar !== '') {
+            Uploader::delete($target->avatar);
+        }
+
+        Response::success('Kullanıcı başarıyla silindi.', ['id' => $target->id]);
+    }
+
+    /* =================================================================
+     *  5) DURUM DEĞİŞTİRME
+     * ============================================================== */
+    public function status(Request $request): void
+    {
+        $target = $this->requireUser($request);
+
+        if (Auth::isSelf($target->id)) {
+            Response::error('Kendi hesabınızın durumunu değiştiremezsiniz.', 403);
+        }
+
+        if (!$this->mayManage($target)) {
+            Response::error(self::ADMIN_ONLY, 403);
+        }
+
+        $newStatus = $target->durum === 'aktif' ? 'pasif' : 'aktif';
+        $degistir  = fn () => $this->users()->update($target->id, ['durum' => $newStatus]);
+
+        if ($newStatus !== 'aktif' && $target->isAdmin()) {
+            if (!$this->users()->changeAdminSafely($target->id, $degistir)) {
+                Response::error('Sistemdeki son aktif yönetici pasifleştirilemez.', 409);
+            }
+        } else {
+            $degistir();
+        }
+
+        Response::success(
+            $newStatus === 'aktif' ? 'Hesap aktifleştirildi.' : 'Hesap pasifleştirildi.',
+            ['id' => $target->id, 'durum' => $newStatus]
+        );
+    }
+
+    private const ADMIN_ONLY = 'Yönetici hesaplarını yalnızca yöneticiler değiştirebilir.';
+
+    /**
+     * Bu hesabı yönetebilir mi? Yönetici hesabını YALNIZCA yönetici.
+     *
+     * Role.php editöre users.update verilebileceğini söylüyor; bu
+     * denetim olmadan o editör bir yöneticinin e-postasını ve parolasını
+     * değiştirip hesabı ele geçirebilirdi.
+     */
+    private function mayManage(User $target): bool
+    {
+        return !$target->isAdmin() || (Auth::user()?->isAdmin() ?? false);
+    }
+
+    private function requireUser(Request $request, string $field = 'id'): User
+    {
+        $id = $request->int($field, 1);
+
+        if ($id === null) {
+            Response::error('Geçersiz kayıt numarası.', 400);
+        }
+
+        $user = $this->users()->find($id);
+
+        if ($user === null) {
+            Response::error('Kayıt bulunamadı.', 404);
+        }
+
+        return $user;
+    }
+}
