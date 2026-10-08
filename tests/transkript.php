@@ -11,7 +11,8 @@
  *  Bölümler: modül künyesi, TranskriptPolicy, rota erişim matrisi,
  *  migration'lar (SQL sahte bir PDO ile yakalanır, veritabanına gitmez).
  *  AI sağlayıcıları (normalize, hata kodları; ağa gidilmez) ve Search.
- *  Sonraki adımlarda: UrlParser, Chunker, ResultValidator.
+ *  UrlParser ve YoutubeMetadata (sahte HTTP istemcisiyle).
+ *  Sonraki adımlarda: Cleaner, Chunker, ResultValidator.
  *
  *  Çıkış kodu: 0 → hepsi geçti, 1 → en az bir test kaldı.
  * =====================================================================
@@ -31,6 +32,7 @@ require CY_BASE . '/app/bootstrap.php';
 
 use App\Core\Database\Migration;
 use App\Core\Env;
+use App\Core\Log\Logger;
 use App\Core\Modules\Module;
 use App\Core\Modules\Modules;
 use App\Core\Setting;
@@ -41,6 +43,11 @@ use Modules\Transkript\Ai\AiHatasi;
 use Modules\Transkript\Ai\ClaudeProvider;
 use Modules\Transkript\Ai\GeminiProvider;
 use Modules\Transkript\Ai\OpenAiCompatibleProvider;
+use Modules\Transkript\Http\HttpIstemci;
+use Modules\Transkript\Http\HttpYanit;
+use Modules\Transkript\Kaynak\KaynakHatasi;
+use Modules\Transkript\Kaynak\UrlParser;
+use Modules\Transkript\Kaynak\YoutubeMetadata;
 use Modules\Transkript\Services\Search;
 use Modules\Transkript\TranskriptPolicy;
 
@@ -501,6 +508,178 @@ dogrula('FULLTEXT yolu: alaka sırası, limit en çok 200', str_contains($ft['sq
     && str_contains($ft['sql'], 'MATCH(arama_metni)'));
 dogrula('FULLTEXT yolu: sorgu katlanır ("Çoklu AJAN" → +coklu* +ajan*)', $ft['params'][':q_whr'] === '+coklu* +ajan*');
 
+/* ---------------------------------------------------------------- */
+echo "\nUrlParser (YouTube bağlantısı → 11 karakterlik kimlik)\n";
+
+$kimlik = 'dQw4w9WgXcQ';
+$gecerli = [
+    'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+    'http://youtube.com/watch?v=dQw4w9WgXcQ',
+    'https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=120s&list=PL123',
+    'https://www.youtube.com/watch?feature=share&v=dQw4w9WgXcQ',
+    'https://www.youtube.com/watch/?v=dQw4w9WgXcQ',
+    'www.youtube.com/watch?v=dQw4w9WgXcQ',
+    'youtube.com/watch?v=dQw4w9WgXcQ',
+    'https://m.youtube.com/watch?v=dQw4w9WgXcQ&feature=youtu.be',
+    'https://music.youtube.com/watch?v=dQw4w9WgXcQ',
+    'https://youtu.be/dQw4w9WgXcQ',
+    'https://youtu.be/dQw4w9WgXcQ?t=42&si=abc',
+    'youtu.be/dQw4w9WgXcQ',
+    'https://www.youtube.com/shorts/dQw4w9WgXcQ',
+    'https://youtube.com/shorts/dQw4w9WgXcQ?feature=share',
+    'https://www.youtube.com/embed/dQw4w9WgXcQ?start=10',
+    'https://www.youtube.com/live/dQw4w9WgXcQ?si=x',
+    'https://www.youtube.com/v/dQw4w9WgXcQ',
+    'https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ',
+    'HTTPS://WWW.YOUTUBE.COM/watch?v=dQw4w9WgXcQ',
+    'https://www.youtube.com./watch?v=dQw4w9WgXcQ',
+    '  https://youtu.be/dQw4w9WgXcQ  ',
+    'dQw4w9WgXcQ',
+];
+$yanlisOkunan = array_filter($gecerli, static fn (string $u): bool => UrlParser::videoKimligi($u) !== $kimlik);
+dogrula('Geçerli ' . count($gecerli) . ' biçimin hepsinden kimlik çıkar (watch, youtu.be, shorts, embed, live, mobil, music, nocookie, şemasız)',
+    $yanlisOkunan === [], implode(' · ', $yanlisOkunan));
+
+$gecersiz = [
+    '',
+    'https://www.youtube.com/',
+    'https://www.youtube.com/watch',
+    'https://www.youtube.com/watch?v=kisa',
+    'https://www.youtube.com/watch?v=dQw4w9WgXcQ1',          // 12 karakter
+    'https://www.youtube.com/watch?v=dQw4w9WgX$Q',            // geçersiz karakter
+    'https://www.youtube.com/watch?v[]=dQw4w9WgXcQ',          // dizi parametre
+    'https://www.youtube.com/playlist?list=PLx0sYbCqOb8TBPRdmBHs5Iftvv9TPboYG',
+    'https://www.youtube.com/embed/videoseries?list=PL123',   // "videoseries" 11 karakter ama liste
+    'https://www.youtube.com/@kanal',
+    'https://www.youtube.com/channel/UC_x5XG1OV2P6uZZ5FSM9Ttw',
+    'https://youtube.com.evil.com/watch?v=dQw4w9WgXcQ',
+    'https://evilyoutube.com/watch?v=dQw4w9WgXcQ',
+    'https://youtube.com@evil.com/watch?v=dQw4w9WgXcQ',       // kullanıcı bilgisi hilesi
+    'https://evil.com/?u=https://youtube.com/watch?v=dQw4w9WgXcQ',
+    'https://evil.com/youtu.be/dQw4w9WgXcQ',
+    'javascript:alert(1)//youtube.com/watch?v=dQw4w9WgXcQ',
+    'ftp://youtube.com/watch?v=dQw4w9WgXcQ',
+    'https://vimeo.com/123456',
+    'https://www.yоutube.com/watch?v=dQw4w9WgXcQ',            // Kiril "о"
+    str_repeat('a', 3000),
+];
+$kabulEdilen = array_filter($gecersiz, static fn (string $u): bool => UrlParser::videoKimligi($u) !== null);
+dogrula('Geçersiz ' . count($gecersiz) . ' girdinin hepsi reddedilir (başka alan, @ hilesi, javascript:, liste, kanal, videoseries)',
+    $kabulEdilen === [], implode(' · ', array_map(static fn (string $u): string => mb_substr($u, 0, 60), $kabulEdilen)));
+
+dogrula('cozumle(): geçersizde KaynakHatasi(gecersiz_url) ve Türkçe mesaj', (static function (): bool {
+    try {
+        UrlParser::cozumle('https://vimeo.com/1');
+    } catch (KaynakHatasi $e) {
+        return $e->kod === 'gecersiz_url' && !$e->yenidenDenenebilir() && str_contains($e->kullaniciMesaji(), 'YouTube');
+    }
+
+    return false;
+})());
+dogrula('İstek adresi kullanıcının yazdığından değil kimlikten kurulur', UrlParser::izlemeAdresi($kimlik) === 'https://www.youtube.com/watch?v=dQw4w9WgXcQ');
+
+/* ---------------------------------------------------------------- */
+echo "\nYoutubeMetadata (sahte HTTP; ağa gidilmez)\n";
+
+/** Adres önekine göre hazır yanıt veren, istekleri kaydeden istemci. */
+final class SahteHttp implements HttpIstemci
+{
+    /** @var array<int,array{adres:string,basliklar:array<int,string>}> */
+    public array $istekler = [];
+
+    /** @param array<string,HttpYanit> $yanitlar adres öneki => yanıt */
+    public function __construct(private readonly array $yanitlar)
+    {
+    }
+
+    public function get(string $adres, array $basliklar = []): HttpYanit
+    {
+        $this->istekler[] = ['adres' => $adres, 'basliklar' => $basliklar];
+
+        foreach ($this->yanitlar as $onek => $yanit) {
+            if (str_starts_with($adres, $onek)) {
+                return $yanit;
+            }
+        }
+
+        return new HttpYanit(0, '', [], 'sahte: tanımsız adres', 7);
+    }
+
+    public function post(string $adres, string $govde, array $basliklar = []): HttpYanit
+    {
+        return $this->get($adres, $basliklar);
+    }
+}
+
+// Uyarılar (Data API yedeğe düştü) gerçek log klasörünü kirletmesin.
+Logger::useDirectory(sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'transkript-test-log');
+
+const DATA_API = 'https://www.googleapis.com/youtube/v3/videos';
+const OEMBED   = 'https://www.youtube.com/oembed';
+
+/** @return string KaynakHatasi kodu ya da '' */
+function kaynakHataKodu(callable $fn): string
+{
+    try {
+        $fn();
+    } catch (KaynakHatasi $e) {
+        return $e->kod;
+    }
+
+    return '';
+}
+
+$dataApiOge = ['items' => [[
+    'snippet' => [
+        'title' => 'Çoklu ajan mimarisi', 'channelTitle' => 'Çılgın Kanal', 'channelId' => 'UC_x5XG1OV2P6uZZ5FSM9Ttw',
+        'publishedAt' => '2026-01-15T10:00:00Z', 'defaultAudioLanguage' => 'tr', 'liveBroadcastContent' => 'none',
+        'thumbnails' => ['high' => ['url' => 'https://i.ytimg.com/vi/x/hq.jpg'], 'maxres' => ['url' => 'https://i.ytimg.com/vi/x/max.jpg']],
+    ],
+    'contentDetails' => ['duration' => 'PT2H3M4S'],
+    'status' => ['privacyStatus' => 'public', 'uploadStatus' => 'processed'],
+]]];
+
+$http = new SahteHttp([DATA_API => new HttpYanit(200, (string) json_encode($dataApiOge))]);
+$b    = (new YoutubeMetadata($http, 'gizli-anahtar'))->getir($kimlik);
+dogrula('Data API: başlık, kanal, süre (PT2H3M4S → 7384 sn), dil, en büyük görsel',
+    $b->baslik === 'Çoklu ajan mimarisi' && $b->kanalAdi === 'Çılgın Kanal' && $b->kanalId === 'UC_x5XG1OV2P6uZZ5FSM9Ttw'
+    && $b->sureSn === 7384 && $b->dil === 'tr' && $b->kucukResim === 'https://i.ytimg.com/vi/x/max.jpg'
+    && $b->gizlilik === 'public' && !$b->canliYayin && $b->kaynak === 'data_api' && $b->yayinTarihi !== null);
+dogrula('API anahtarı URL\'de değil başlıkta gider (log\'a düşmez)',
+    count($http->istekler) === 1 && !str_contains($http->istekler[0]['adres'], 'gizli-anahtar')
+    && in_array('X-Goog-Api-Key: gizli-anahtar', $http->istekler[0]['basliklar'], true));
+
+$bos = new HttpYanit(200, '{"items":[]}');
+dogrula('Data API boş + oEmbed 401 → gizli_video (kalıcı)', kaynakHataKodu(static fn () => (new YoutubeMetadata(new SahteHttp([DATA_API => $bos, OEMBED => new HttpYanit(401, 'Unauthorized')]), 'k'))->getir($kimlik)) === 'gizli_video');
+dogrula('Data API boş + oEmbed 404 → video_bulunamadi', kaynakHataKodu(static fn () => (new YoutubeMetadata(new SahteHttp([DATA_API => $bos, OEMBED => new HttpYanit(404, 'Not Found')]), 'k'))->getir($kimlik)) === 'video_bulunamadi');
+
+$silinmis = $dataApiOge;
+$silinmis['items'][0]['status']['uploadStatus'] = 'rejected';
+dogrula('uploadStatus rejected → silinmis_video', kaynakHataKodu(static fn () => (new YoutubeMetadata(new SahteHttp([DATA_API => new HttpYanit(200, (string) json_encode($silinmis))]), 'k'))->getir($kimlik)) === 'silinmis_video');
+
+$oembed = new HttpYanit(200, '{"title":"Me at the zoo","author_name":"jawed","thumbnail_url":"https://i.ytimg.com/vi/x/hqdefault.jpg"}');
+$http   = new SahteHttp([DATA_API => new HttpYanit(403, '{"error":{"errors":[{"reason":"quotaExceeded"}]}}'), OEMBED => $oembed]);
+$b      = (new YoutubeMetadata($http, 'k'))->getir($kimlik);
+dogrula('Data API kota hatası → oEmbed yedeği (analiz durmaz)', $b->kaynak === 'oembed' && $b->baslik === 'Me at the zoo' && $b->sureSn === null && count($http->istekler) === 2);
+
+$http = new SahteHttp([OEMBED => $oembed]);
+$b    = (new YoutubeMetadata($http, ''))->getir($kimlik);
+dogrula('Anahtarsız: Data API\'ye hiç gidilmez, oEmbed kullanılır', $b->kanalAdi === 'jawed' && count($http->istekler) === 1 && str_starts_with($http->istekler[0]['adres'], OEMBED)
+    && str_contains($http->istekler[0]['adres'], rawurlencode(UrlParser::izlemeAdresi($kimlik))));
+
+$hata = static fn (HttpYanit $y): string => kaynakHataKodu(static fn () => (new YoutubeMetadata(new SahteHttp([OEMBED => $y]), ''))->getir($kimlik));
+dogrula('oEmbed 503 / 429 / ağ hatası → metadata_hatasi (geçici, yeniden denenir)',
+    $hata(new HttpYanit(503, '')) === 'metadata_hatasi' && $hata(new HttpYanit(429, '')) === 'metadata_hatasi'
+    && $hata(new HttpYanit(0, '', [], 'Could not resolve host', 6)) === 'metadata_hatasi'
+    && (new KaynakHatasi('metadata_hatasi'))->yenidenDenenebilir() && !(new KaynakHatasi('gizli_video'))->yenidenDenenebilir());
+dogrula('Geçersiz kimlikle istek atılmaz', kaynakHataKodu(static fn () => (new YoutubeMetadata(new SahteHttp([]), ''))->getir('kisa')) === 'gecersiz_url');
+
+dogrula('ISO 8601 süre: PT2H3M4S, PT45S, P1DT2H, P0D; bozukta null',
+    YoutubeMetadata::iso8601Sure('PT2H3M4S') === 7384 && YoutubeMetadata::iso8601Sure('PT45S') === 45
+    && YoutubeMetadata::iso8601Sure('P1DT2H') === 93600 && YoutubeMetadata::iso8601Sure('P0D') === 0
+    && YoutubeMetadata::iso8601Sure('') === null && YoutubeMetadata::iso8601Sure('PT') === null && YoutubeMetadata::iso8601Sure('2 saat') === null);
+
+Logger::useDirectory(null);
 Setting::flush();
 Modules::forget();
 
