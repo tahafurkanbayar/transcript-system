@@ -55,6 +55,9 @@ jobs:
       - name: Birim testleri
         run: php tests/unit.php
 
+      - name: Transkript modülü birim testleri
+        run: php tests/transkript.php
+
   kurulum:
     name: Kurulum + duman testi · PHP ${{ matrix.php }} · MySQL 8
     runs-on: ubuntu-latest
