@@ -1,16 +1,17 @@
 {
     "baslik": "Transkript",
-    "aciklama": "Transkript modülü",
-    "surum": "1.0.0",
+    "aciklama": "YouTube videolarından ve yüklenen kayıtlardan zaman damgalı transcript ve AI analizi",
+    "surum": "0.1.0",
+    "kurulumda_acik": true,
 
     "yetkiler": {
-        "editor": [],
-        "uye": []
+        "editor": ["transkript.view", "transkript.analyze", "transkript.chat"],
+        "uye":    ["transkript.view", "transkript.chat"]
     },
 
     "menu": {
         "route": "panel/transkript",
-        "icon": "server",
+        "icon": "file",
         "label": "Transkript",
         "can": "transkript.view"
     }
