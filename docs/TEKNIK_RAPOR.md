@@ -309,7 +309,7 @@ MVP, bir YouTube URL'sinden zaman damgalı web raporuna kadar olan ana hattı ç
 
 **Kabul ölçütü:** 2 saatlik, altyazılı bir video URL'si girildiğinde rapor 5 dakika içinde hazır; tüm zaman damgaları videoda doğru yere atlıyor; aynı URL ikinci kez girilince yeni AI çağrısı yapılmıyor.
 
-- [ ] **1. Kurulum:** cy-php-starter'ın kopyasıyla `transcript-system` reposu, kurulum sihirbazı, `php cy make:module Transkript`.
+- [x] **1. Kurulum:** cy-php-starter'ın kopyasıyla `transcript-system` reposu, kurulum sihirbazı, `php cy make:module Transkript`.
 - [ ] **2. Modül iskeleti:** `module.json` (menü + yetkiler), `routes.php`, 11 tablonun migration'ları.
 - [ ] **3. Taşınan parçalar:** ai-integration-system'den `src/Ai/`, search-autocomplete'ten `Search.php` (FULLTEXT, `tr_fold`, vurgulama).
 - [ ] **4. Kaynak bilgisi:** `UrlParser` (testli), `YoutubeMetadata` (Data API + oEmbed yedeği), cache kontrolü.
