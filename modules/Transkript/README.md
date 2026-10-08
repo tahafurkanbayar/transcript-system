@@ -51,7 +51,7 @@ yalnızca sahibine ve `transkript.admin` yetkisi olana açıktır.
 |---|---|
 | `transkript_kaynaklar` | YouTube videosu ya da yüklenen dosya; UNIQUE(`tur`, `dis_kimlik`, `sahip_id`) cache anahtarı |
 | `transkript_metinler` | Bir kaynağın transcript sürümü (sağlayıcı, dil) |
-| `transkript_segmentler` | Zaman damgalı satırlar, FULLTEXT(`metin`) |
+| `transkript_segmentler` | Zaman damgalı satırlar; `arama_metni` = `Search::trFold(metin)` üzerinde FULLTEXT |
 | `transkript_analizler` | Analiz çalışması + rapor, durum / aşama / ilerleme, token ve maliyet |
 | `transkript_parcalar` | AI'a giden parçalar ve map sonuçları (kaldığı yerden devam) |
 | `transkript_analiz_ogeleri` | Konu, nokta, iddia, fikir, teknik, zaman maddeleri |
@@ -59,6 +59,12 @@ yalnızca sahibine ve `transkript.admin` yetkisi olana açıktır.
 | `transkript_sohbetler` / `transkript_sohbet_mesajlari` | Kayda sor |
 | `transkript_ilgi_alanlari` | Kişisel filtrenin ilgi alanları |
 | `ai_kullanim_kaydi` | Her AI / ASR çağrısının token ve maliyeti (adı genel, başka modüller de yazabilir) |
+
+**Arama neden katlanmış sütunda?** `utf8mb4_turkish_ci`'de "I"nın küçüğü
+"ı"dır: "ai" araması "AI"yı, "api" "API"yi bulmaz. `unicode_ci` ise "IŞIK" ile
+"ışık"ı eşleştirmez. Segment yazan kod `arama_metni`'ni `Search::trFold($metin)`
+ile doldurur (CHECK kısıtı boş bırakılmasına izin vermez); sorgu da aynı
+katlamadan geçer. Böylece "ai" → "AI", "isik" → "IŞIK / ışık" bulunur.
 
 Kullanıcı sütunlarına (`sahip_id`, `kullanici_id` …) bilerek yabancı anahtar
 verilmez: kurulum sihirbazı `kullanicilar`'a bağlı tabloları görünce aynı
@@ -74,6 +80,20 @@ Panel: `panel/transkript` (liste), `panel/transkript/{kaynak_id}` (rapor),
 API (`Authorization: Bearer cy_…`): `api/v1/transkript/analiz`, `dosya`,
 `kaynaklar`, `kaynaklar/{kaynak_id}`, `…/ozet`, `…/transkript`, `…/sohbet`,
 `istatistik`. Ayrıntı ve erişim matrisi: `tests/transkript.php`.
+
+## Yapay zekâ
+
+`src/Ai/` CilginYazilim/ai-integration-system'den (MIT) taşındı: Gemini, Claude
+ve OpenAI uyumlu (Groq, xAI, OpenRouter, Ollama) sağlayıcılar, tek
+normalleştirilmiş yanıt, `Retry-After` uyumlu yeniden deneme, `PRICING` +
+`priceFor()` maliyet hesabı. Aşama başı model `Ai::make($saglayici, $model)`
+ile seçilir. Hatalar `AiHatasi` olarak gelir; `kod` alanı yeniden denenip
+denenmeyeceğini söyler (`rate_limit`, `sunucu`, `baglanti`, `zaman_asimi`
+geçici). Anahtarlar yalnızca `.env`'de (`GEMINI_API_KEY`, `CLAUDE_API_KEY`,
+`GROQ_API_KEY`, `AI_API_KEY`).
+
+Fiyat tabloları kaynaktaki anlık görüntüdür; kullanmadan önce sağlayıcının
+güncel fiyatıyla karşılaştırın.
 
 ## Komutlar
 
