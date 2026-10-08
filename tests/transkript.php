@@ -12,7 +12,8 @@
  *  migration'lar (SQL sahte bir PDO ile yakalanır, veritabanına gitmez).
  *  AI sağlayıcıları (normalize, hata kodları; ağa gidilmez) ve Search.
  *  UrlParser ve YoutubeMetadata (sahte HTTP istemcisiyle).
- *  Sonraki adımlarda: Cleaner, Chunker, ResultValidator.
+ *  Transcript zinciri, YouTube / Gemini sağlayıcıları, Cleaner, Chunker.
+ *  Sonraki adımlarda: ResultValidator.
  *
  *  Çıkış kodu: 0 → hepsi geçti, 1 → en az bir test kaldı.
  * =====================================================================
@@ -45,10 +46,27 @@ use Modules\Transkript\Ai\GeminiProvider;
 use Modules\Transkript\Ai\OpenAiCompatibleProvider;
 use Modules\Transkript\Http\HttpIstemci;
 use Modules\Transkript\Http\HttpYanit;
+use Modules\Transkript\Ayarlar;
+use Modules\Transkript\Kaynak\Kaynak;
 use Modules\Transkript\Kaynak\KaynakHatasi;
 use Modules\Transkript\Kaynak\UrlParser;
 use Modules\Transkript\Kaynak\YoutubeMetadata;
+use Modules\Transkript\Services\Chunker;
+use Modules\Transkript\Services\Cleaner;
+use Modules\Transkript\Services\Parca;
 use Modules\Transkript\Services\Search;
+use Modules\Transkript\Transcript\AsrProvider;
+use Modules\Transkript\Transcript\ExternalTranscriptProvider;
+use Modules\Transkript\Transcript\GeminiVideoProvider;
+use Modules\Transkript\Transcript\ProviderUnavailable;
+use Modules\Transkript\Transcript\RateLimited;
+use Modules\Transkript\Transcript\Segment;
+use Modules\Transkript\Transcript\TranscriptHatasi;
+use Modules\Transkript\Transcript\TranscriptNotFound;
+use Modules\Transkript\Transcript\TranscriptProviderInterface;
+use Modules\Transkript\Transcript\TranscriptResult;
+use Modules\Transkript\Transcript\TranscriptZinciri;
+use Modules\Transkript\Transcript\YouTubeTranscriptProvider;
 use Modules\Transkript\TranskriptPolicy;
 
 $gecti = 0;
@@ -506,7 +524,8 @@ dogrula('FULLTEXT yolu: her yer tutucu bir kez geçer ve hepsi bağlanır (emül
     && array_diff($tutucular[0], array_keys($ft['params'])) === [] && array_diff(array_keys($ft['params']), $tutucular[0]) === []);
 dogrula('FULLTEXT yolu: alaka sırası, limit en çok 200', str_contains($ft['sql'], 'ORDER BY skor DESC') && $ft['params'][':lim'] === 200
     && str_contains($ft['sql'], 'MATCH(arama_metni)'));
-dogrula('FULLTEXT yolu: sorgu katlanır ("Çoklu AJAN" → +coklu* +ajan*)', $ft['params'][':q_whr'] === '+coklu* +ajan*');
+dogrula('FULLTEXT yolu: sorgu katlanır; rapor araması HEPSİ (+coklu* +ajan*), sohbet bağlamı HERHANGİ (coklu* ajan*)',
+    $ft['params'][':q_whr'] === 'coklu* ajan*' && Search::segmentSorgusu(7, 'Çoklu AJAN', 10)['params'][':q_whr'] === '+coklu* +ajan*');
 
 /* ---------------------------------------------------------------- */
 echo "\nUrlParser (YouTube bağlantısı → 11 karakterlik kimlik)\n";
@@ -587,8 +606,8 @@ final class SahteHttp implements HttpIstemci
     /** @var array<int,array{adres:string,basliklar:array<int,string>}> */
     public array $istekler = [];
 
-    /** @param array<string,HttpYanit> $yanitlar adres öneki => yanıt */
-    public function __construct(private readonly array $yanitlar)
+    /** @param array<string,HttpYanit|list<HttpYanit>> $yanitlar adres öneki => yanıt (liste: sırayla, sonuncusu tekrarlanır) */
+    public function __construct(private array $yanitlar)
     {
     }
 
@@ -598,6 +617,10 @@ final class SahteHttp implements HttpIstemci
 
         foreach ($this->yanitlar as $onek => $yanit) {
             if (str_starts_with($adres, $onek)) {
+                if (is_array($yanit)) {
+                    return count($yanit) > 1 ? array_shift($this->yanitlar[$onek]) : $yanit[0];
+                }
+
                 return $yanit;
             }
         }
@@ -678,6 +701,322 @@ dogrula('ISO 8601 süre: PT2H3M4S, PT45S, P1DT2H, P0D; bozukta null',
     YoutubeMetadata::iso8601Sure('PT2H3M4S') === 7384 && YoutubeMetadata::iso8601Sure('PT45S') === 45
     && YoutubeMetadata::iso8601Sure('P1DT2H') === 93600 && YoutubeMetadata::iso8601Sure('P0D') === 0
     && YoutubeMetadata::iso8601Sure('') === null && YoutubeMetadata::iso8601Sure('PT') === null && YoutubeMetadata::iso8601Sure('2 saat') === null);
+
+/* ---------------------------------------------------------------- */
+echo "\nTranscript zinciri (sahte sağlayıcılar)\n";
+
+/** Sahte sağlayıcı: verilen hatayı fırlatır ya da sonucu döner; çağrıları sayar. */
+final class SahteSaglayici implements TranscriptProviderInterface
+{
+    public int $cagri = 0;
+
+    public function __construct(
+        private readonly string $ad,
+        private readonly ?Throwable $hata = null,
+        private readonly bool $destekler = true,
+    ) {
+    }
+
+    public function name(): string
+    {
+        return $this->ad;
+    }
+
+    public function supports(Kaynak $kaynak): bool
+    {
+        return $this->destekler;
+    }
+
+    public function fetch(Kaynak $kaynak, array $preferredLangs): TranscriptResult
+    {
+        $this->cagri++;
+
+        if ($this->hata !== null) {
+            throw $this->hata;
+        }
+
+        return new TranscriptResult([new Segment(0, 1000, 'merhaba')], 'tr', $this->ad, false);
+    }
+}
+
+$ytKaynak = new Kaynak(1, 'youtube', 'dQw4w9WgXcQ', 0, 125, null);
+
+/** @return TranscriptResult|Throwable */
+function zincirSonucu(array $saglayicilar, Kaynak $kaynak): TranscriptResult|Throwable
+{
+    try {
+        return (new TranscriptZinciri($saglayicilar))->getir($kaynak, ['tr']);
+    } catch (Throwable $e) {
+        return $e;
+    }
+}
+
+$bulunamadi = new SahteSaglayici('youtube', new TranscriptNotFound('altyazı yok'));
+$basarili   = new SahteSaglayici('gemini');
+$sonuc      = zincirSonucu([$bulunamadi, $basarili], $ytKaynak);
+dogrula('İlk sağlayıcı bulamazsa sıradaki denenir, ilk başarılı döner', $sonuc instanceof TranscriptResult && $sonuc->saglayici === 'gemini' && $bulunamadi->cagri === 1);
+
+$ikinci = new SahteSaglayici('gemini');
+dogrula('Video gizliyse (KaynakHatasi) zincir durur, sıradaki çağrılmaz',
+    ($e = zincirSonucu([new SahteSaglayici('youtube', new KaynakHatasi('gizli_video')), $ikinci], $ytKaynak)) instanceof KaynakHatasi && $e->kod === 'gizli_video' && $ikinci->cagri === 0);
+dogrula('Hepsi "yok" → TranscriptNotFound (kalıcı)',
+    ($e = zincirSonucu([new SahteSaglayici('a', new TranscriptNotFound()), new SahteSaglayici('b', new TranscriptNotFound())], $ytKaynak)) instanceof TranscriptNotFound && !$e->yenidenDenenebilir());
+dogrula('Hız sınırı varsa → RateLimited (iş sonra yeniden dener)',
+    ($e = zincirSonucu([new SahteSaglayici('a', new RateLimited()), new SahteSaglayici('b', new TranscriptNotFound())], $ytKaynak)) instanceof RateLimited && $e->yenidenDenenebilir());
+dogrula('IP engeli + Gemini anahtarsız → geçici transkript_api_hatasi',
+    ($e = zincirSonucu([new SahteSaglayici('a', new ProviderUnavailable('ip_engeli', '', true)), new SahteSaglayici('b', new ProviderUnavailable('anahtar_yok'))], $ytKaynak)) instanceof ProviderUnavailable
+    && $e->kod === 'transkript_api_hatasi' && $e->yenidenDenenebilir() && str_contains($e->getMessage(), 'a: ip_engeli'));
+dogrula('Altyazı yok + Gemini anahtarsız → TranscriptNotFound',
+    zincirSonucu([new SahteSaglayici('a', new TranscriptNotFound()), new SahteSaglayici('b', new ProviderUnavailable('anahtar_yok'))], $ytKaynak) instanceof TranscriptNotFound);
+$desteklemeyen = new SahteSaglayici('asr', null, false);
+dogrula('Kaynağı desteklemeyen sağlayıcı atlanır; hiçbiri desteklemezse saglayici_yok',
+    zincirSonucu([$desteklemeyen, $basarili], $ytKaynak) instanceof TranscriptResult && $desteklemeyen->cagri === 0
+    && ($e = zincirSonucu([$desteklemeyen], $ytKaynak)) instanceof ProviderUnavailable && $e->kod === 'saglayici_yok');
+
+Ayarlar::set('transcript.saglayicilar', ['youtube', 'olmayan', 'gemini', 'asr']);
+dogrula('Zincir sırası config / .env\'den; bilinmeyen ad atlanır', TranscriptZinciri::fromAyarlar()->adlar() === ['youtube', 'gemini', 'asr']);
+Ayarlar::forget();
+dogrula('Varsayılan sıra: youtube, gemini', TranscriptZinciri::fromAyarlar()->adlar() === ['youtube', 'gemini']);
+dogrula('AsrProvider yalnız dosyayı, YouTube sağlayıcıları yalnız youtube\'u destekler',
+    (new AsrProvider())->supports(new Kaynak(2, 'ses_dosyasi', str_repeat('a', 64))) && !(new AsrProvider())->supports($ytKaynak)
+    && !(new ExternalTranscriptProvider())->supports(new Kaynak(2, 'video_dosyasi', str_repeat('a', 64))));
+
+/* ---------------------------------------------------------------- */
+echo "\nYouTubeTranscriptProvider (sahte HTTP; ağa gidilmez)\n";
+
+const IZLEME = 'https://www.youtube.com/watch';
+const PLAYER = 'https://www.youtube.com/youtubei/v1/player';
+const ALTYAZI = 'https://www.youtube.com/api/timedtext';
+
+$sayfa = new HttpYanit(200, '<html><script>ytcfg.set({"INNERTUBE_API_KEY":"AIzaTEST_key-1"});</script></html>');
+$player = static fn (array $izler, array $ek = []): HttpYanit => new HttpYanit(200, (string) json_encode([
+    'playabilityStatus' => ['status' => 'OK'],
+    'captions' => ['playerCaptionsTracklistRenderer' => ['captionTracks' => $izler] + $ek],
+]));
+$iz = static fn (string $dil, bool $otomatik, string $ek = ''): array => [
+    'baseUrl' => ALTYAZI . '?v=dQw4w9WgXcQ&lang=' . $dil . '&fmt=srv3' . $ek,
+    'languageCode' => $dil,
+    'name' => ['runs' => [['text' => $dil]]],
+] + ($otomatik ? ['kind' => 'asr'] : []);
+$xml = new HttpYanit(200, '<?xml version="1.0" encoding="utf-8" ?><transcript>'
+    . '<text start="0.5" dur="2.16">it&amp;#39;s a &lt;font color=&quot;#fff&quot;&gt;test&lt;/font&gt;</text>'
+    . '<text start="2.66" dur="1.5">ikinci   satır</text><text start="4" dur="1">   </text></transcript>');
+
+$http   = new SahteHttp([IZLEME => $sayfa, PLAYER => $player([$iz('en', true), $iz('tr', false)]), ALTYAZI => $xml]);
+$sonuc  = (new YouTubeTranscriptProvider($http))->fetch($ytKaynak, ['tr']);
+dogrula('Elle girilmiş Türkçe iz seçilir; saglayici youtube_elle',
+    $sonuc->dil === 'tr' && $sonuc->saglayici === 'youtube_elle' && !$sonuc->otomatikMi);
+dogrula('XML: çift kaçış açılır, etiket atılır, saniye → ms, boş satır atılır',
+    count($sonuc->segmentler) === 2 && $sonuc->segmentler[0]->metin === "it's a test"
+    && $sonuc->segmentler[0]->baslangicMs === 500 && $sonuc->segmentler[0]->bitisMs === 2660 && $sonuc->segmentler[1]->metin === 'ikinci satır');
+$sonIstek = end($http->istekler);
+dogrula('Altyazı XML biçiminde istenir (fmt=srv3 atılır); player ANDROID istemcisiyle',
+    is_array($sonIstek) && str_starts_with($sonIstek['adres'], ALTYAZI) && !str_contains($sonIstek['adres'], 'fmt=')
+    && str_contains($http->istekler[1]['adres'], 'key=AIzaTEST_key-1'));
+
+$izler = [$iz('en', true), $iz('fr-FR', true), $iz('de', false)];
+dogrula('Dil sırası: tercih (elle) → orijinal (elle, otomatik) → en → herhangi',
+    YouTubeTranscriptProvider::izSec($izler, ['tr'], 'en-US')['languageCode'] === 'en'
+    && YouTubeTranscriptProvider::izSec($izler, ['de'], 'en-US')['languageCode'] === 'de'
+    && YouTubeTranscriptProvider::izSec($izler, ['tr'], 'fr')['languageCode'] === 'fr-FR'
+    && YouTubeTranscriptProvider::izSec([$iz('tr', true)], ['tr'], null)['languageCode'] === 'tr'
+    && YouTubeTranscriptProvider::izSec([$iz('tr', true), $iz('en', false)], ['tr'], 'tr')['languageCode'] === 'tr'
+    && YouTubeTranscriptProvider::izSec([], ['tr'], null) === null);
+dogrula('Orijinal dil: audioTracks[defaultAudioTrackIndex] ("en-US.4"); tek ses izinde null',
+    YouTubeTranscriptProvider::orijinalDil(['audioTracks' => [['audioTrackId' => 'fr-FR.10'], ['audioTrackId' => 'en-US.4']], 'defaultAudioTrackIndex' => 1]) === 'en-US'
+    && YouTubeTranscriptProvider::orijinalDil(['captionTracks' => []]) === null);
+
+$durumHatasi = static function (string $durum, string $neden = '', bool $altyazisiz = false): string {
+    try {
+        YouTubeTranscriptProvider::izListesi(['playabilityStatus' => ['status' => $durum, 'reason' => $neden]] + ($altyazisiz ? [] : ['captions' => []]), 'x');
+    } catch (KaynakHatasi | TranscriptHatasi $e) {
+        return get_class($e) === KaynakHatasi::class ? 'kaynak:' . $e->kod : $e->kod . ($e->yenidenDenenebilir() ? '+' : '');
+    }
+
+    return 'yok';
+};
+dogrula('Bot engeli → ip_engeli (geçici, zincir Gemini\'ye geçer)', $durumHatasi('LOGIN_REQUIRED', 'Sign in to confirm you’re not a bot') === 'ip_engeli+');
+dogrula('Gizli → KaynakHatasi(gizli_video); kaldırılmış → silinmis_video; yok → video_bulunamadi',
+    $durumHatasi('LOGIN_REQUIRED', 'This video is private') === 'kaynak:gizli_video'
+    && $durumHatasi('ERROR', 'This video has been removed by the uploader') === 'kaynak:silinmis_video'
+    && $durumHatasi('ERROR', 'Video unavailable') === 'kaynak:video_bulunamadi');
+dogrula('Yaş sınırı / oynatılamaz → ProviderUnavailable; "page" sözcüğü yaş sınırı sayılmaz',
+    $durumHatasi('LOGIN_REQUIRED', 'Sign in to confirm your age') === 'yas_siniri' && $durumHatasi('UNPLAYABLE', 'Not available on this page') === 'oynatilamaz');
+dogrula('Altyazı kapalı → TranscriptNotFound(altyazi_kapali)', $durumHatasi('OK', '', true) === 'altyazi_kapali');
+
+$hataKodu = static function (SahteHttp $h) use ($ytKaynak): string {
+    try {
+        (new YouTubeTranscriptProvider($h))->fetch($ytKaynak, ['tr']);
+    } catch (TranscriptHatasi $e) {
+        return $e->kod;
+    }
+
+    return 'yok';
+};
+dogrula('reCAPTCHA sayfası → rate_limit; player 429 → rate_limit',
+    $hataKodu(new SahteHttp([IZLEME => new HttpYanit(200, '<div class="g-recaptcha"></div>')])) === 'rate_limit'
+    && $hataKodu(new SahteHttp([IZLEME => $sayfa, PLAYER => new HttpYanit(429, '')])) === 'rate_limit');
+dogrula('İz PoToken isterse (exp=xpe) potoken_gerekli; altyazı isteği atılmaz',
+    $hataKodu($h = new SahteHttp([IZLEME => $sayfa, PLAYER => $player([$iz('en', true, '&exp=xpe')])])) === 'potoken_gerekli' && count($h->istekler) === 2);
+dogrula('Ağ hatası → geçici baglanti',
+    $hataKodu(new SahteHttp([IZLEME => new HttpYanit(0, '', [], 'Could not resolve host', 6)])) === 'baglanti');
+
+$onay = new HttpYanit(200, '<form action="https://consent.youtube.com/s"><input name="v" value="cb.2021-17-p0.tr+FX+123"></form>');
+$http = new SahteHttp([IZLEME => [$onay, $sayfa], PLAYER => $player([$iz('tr', false)]), ALTYAZI => $xml]);
+(new YouTubeTranscriptProvider($http))->fetch($ytKaynak, ['tr']);
+dogrula('AB çerez onayı: ikinci istek "Cookie: CONSENT=YES+…" başlığıyla (kaynakta Set-Cookie idi)',
+    in_array('Cookie: CONSENT=YES+cb.2021-17-p0.tr+FX+123', $http->istekler[1]['basliklar'], true));
+
+dogrula('xmlAdresi: fmt parametresi nerede olursa olsun atılır',
+    YouTubeTranscriptProvider::xmlAdresi(ALTYAZI . '?v=x&fmt=srv3&lang=en') === ALTYAZI . '?v=x&lang=en'
+    && YouTubeTranscriptProvider::xmlAdresi(ALTYAZI . '?fmt=json3') === ALTYAZI);
+$xxe = YouTubeTranscriptProvider::xmlCozumle('<?xml version="1.0"?><!DOCTYPE t [<!ENTITY e SYSTEM "file:///' . str_replace('\\', '/', __FILE__) . '">]><transcript><text start="1" dur="1">a&e;b</text></transcript>');
+dogrula('XXE: dış varlık dosyası okunmaz', !str_contains(implode(' ', array_map(static fn (Segment $s): string => $s->metin, $xxe)), 'dogrula'));
+dogrula('Bozuk / boş XML boş liste döner', YouTubeTranscriptProvider::xmlCozumle('<transcript><text') === [] && YouTubeTranscriptProvider::xmlCozumle('') === []);
+
+/* ---------------------------------------------------------------- */
+echo "\nGeminiVideoProvider (sahte çağrı; ağa ve AI'a gidilmez)\n";
+
+dogrula('Pencereler: süre biliniyorsa 20 dk dilimler, değilse / kısaysa tek çağrı',
+    GeminiVideoProvider::pencereler(2500, 1200) === [[0, 1200], [1200, 2400], [2400, 2500]]
+    && GeminiVideoProvider::pencereler(null, 1200) === [[null, null]] && GeminiVideoProvider::pencereler(900, 1200) === [[null, null]]);
+dogrula('Zaman okuma: hh:mm:ss, mm:ss, kesirli, saniye; bozukta null',
+    GeminiVideoProvider::zamaniOku('01:02:03') === 3723000 && GeminiVideoProvider::zamaniOku('02:03') === 123000
+    && GeminiVideoProvider::zamaniOku('1:02:03.5') === 3723500 && GeminiVideoProvider::zamaniOku('75') === 75000
+    && GeminiVideoProvider::zamaniOku('00:61:00') === null && GeminiVideoProvider::zamaniOku('yarım saat') === null);
+
+$cagrilar = [];
+$yanitlar = [
+    '{"dil":"en","satirlar":[{"bas":"00:00:05","metin":"hello"},{"bas":"00:00:12","metin":"world"},{"bas":"00:25:00","metin":"pencere dışı"}]}',
+    // İkinci pencere zamanları GÖRELİ veriyor (00:00:05 = 20:05)
+    '{"dil":"en","satirlar":[{"bas":"00:00:05","metin":"second"},{"bas":"bozuk","metin":"atılır"},{"bas":"00:00:09","metin":"  "}]}',
+    '{"dil":"en","satirlar":[{"bas":"00:40:10","metin":"last"}]}',
+];
+$gemini = new GeminiVideoProvider(
+    static function (array $parcalar, string $sistem, array $ek) use (&$cagrilar, &$yanitlar): array {
+        $cagrilar[] = [$parcalar, $ek];
+
+        return ['text' => array_shift($yanitlar), 'refusal' => null, 'stop_reason' => 'end_turn', 'model' => 'gemini-2.5-flash',
+            'usage' => ['input_tokens' => 1000, 'output_tokens' => 200], 'cost' => 0.0008];
+    },
+    1200,
+    ['mediaResolution' => 'MEDIA_RESOLUTION_LOW'],
+);
+$sonuc = $gemini->fetch(new Kaynak(1, 'youtube', 'dQw4w9WgXcQ', 0, 2500), ['tr']);
+$baslangiclar = array_map(static fn (Segment $s): int => $s->baslangicMs, $sonuc->segmentler);
+dogrula('3 pencere = 3 çağrı; fileData + videoMetadata + JSON şeması + düşük çözünürlük',
+    count($cagrilar) === 3 && ($cagrilar[1][0][0]['videoMetadata'] ?? null) === ['startOffset' => '1200s', 'endOffset' => '2400s']
+    && str_contains($cagrilar[0][0][0]['fileData']['fileUri'], 'dQw4w9WgXcQ')
+    && ($cagrilar[0][1]['responseSchema'] ?? null) === GeminiVideoProvider::SEMA && ($cagrilar[0][1]['mediaResolution'] ?? '') === 'MEDIA_RESOLUTION_LOW');
+dogrula('Göreli zaman kaydırılır, pencere dışı ve bozuk satır atılır',
+    $baslangiclar === [5000, 12000, 1205000, 2410000], implode(',', $baslangiclar));
+dogrula('Bitiş = sonraki başlangıç (en çok 30 sn); saglayici gemini, otomatik',
+    $sonuc->segmentler[0]->bitisMs === 12000 && $sonuc->segmentler[1]->bitisMs === 42000 && $sonuc->saglayici === 'gemini' && $sonuc->otomatikMi && $sonuc->dil === 'en');
+dogrula('Her çağrının token ve maliyeti döner (ai_kullanim_kaydi için)',
+    count($sonuc->aiKullanimi) === 3 && $sonuc->aiKullanimi[0]['giris_token'] === 1000 && $sonuc->aiKullanimi[0]['maliyet_usd'] === 0.0008);
+
+[$dil, $kurtarilan] = GeminiVideoProvider::cozumle(['text' => '```json' . "\n" . '{"dil":"tr","satirlar":[{"bas":"00:00:01","metin":"Bir"},{"bas":"00:00:04","metin":"İki \"tırnak\""},{"bas":"00:00:0', 'refusal' => null, 'stop_reason' => 'max_tokens']);
+dogrula('max token\'da kesilen JSON: tamamlanmış satırlar kurtarılır', $dil === 'tr' && count($kurtarilan) === 2 && $kurtarilan[1]['metin'] === 'İki "tırnak"');
+
+$geminiHata = static function (AiHatasi|array $davranis): string {
+    $saglayici = new GeminiVideoProvider(static function () use ($davranis): array {
+        if ($davranis instanceof AiHatasi) {
+            throw $davranis;
+        }
+
+        return $davranis;
+    });
+
+    try {
+        $saglayici->fetch(new Kaynak(1, 'youtube', 'dQw4w9WgXcQ'), ['tr']);
+    } catch (TranscriptHatasi $e) {
+        return $e->kod . ($e->yenidenDenenebilir() ? '+' : '');
+    }
+
+    return 'yok';
+};
+dogrula('AI hata eşlemesi: rate_limit, anahtar_yok (kalıcı), sunucu (geçici)',
+    $geminiHata(new AiHatasi('', 'rate_limit', 429)) === 'rate_limit+' && $geminiHata(new AiHatasi('', 'anahtar_yok')) === 'anahtar_yok'
+    && $geminiHata(new AiHatasi('', 'sunucu', 503)) === 'sunucu+');
+dogrula('Reddetme → gemini_reddetti; boş liste → transkript_bulunamadi; JSON değil → yanit_cozulemedi',
+    $geminiHata(['text' => '', 'refusal' => 'SAFETY']) === 'gemini_reddetti'
+    && $geminiHata(['text' => '{"dil":"tr","satirlar":[]}', 'refusal' => null]) === 'transkript_bulunamadi'
+    && $geminiHata(['text' => 'Üzgünüm, yapamam.', 'refusal' => null]) === 'yanit_cozulemedi');
+
+/* ---------------------------------------------------------------- */
+echo "\nCleaner (temizleme ve 15–30 sn bloklar)\n";
+
+dogrula('Varlık, etiket, [Music] / [Müzik] / ♪ ve fazla boşluk atılır',
+    Cleaner::metniTemizle('it&amp;#39;s [Music] ♪ <font color="#fff">fine</font>   [Müzik] ok') === "it's fine ok"
+    && Cleaner::metniTemizle('[Alkış]') === '');
+
+$temiz = (new Cleaner())->temizle([
+    new Segment(4920, 9840, 'üçüncü'),
+    new Segment(199, 4920, 'birinci'),
+    new Segment(2520, 7560, 'ikinci'),
+    new Segment(7000, 7500, '[Music]'),
+    new Segment(9840, 11000, 'üçüncü'),
+]);
+dogrula('Sıralanır, boş atılır, örtüşen bitiş sonraki başlangıca çekilir',
+    count($temiz) === 3 && $temiz[0]->metin === 'birinci' && $temiz[0]->bitisMs === 2520 && $temiz[1]->bitisMs === 4920);
+dogrula('Ardışık aynı satır tek segment olur, bitişi uzar', $temiz[2]->metin === 'üçüncü' && $temiz[2]->bitisMs === 11000);
+
+$kisa = [];
+for ($i = 0; $i < 30; $i++) {
+    $kisa[] = new Segment($i * 2000, $i * 2000 + 2000, $i === 8 ? 'cümle biter.' : 'kelime');
+}
+$bloklar = (new Cleaner())->bloklara($kisa);
+dogrula('Blok cümle sonunda kapanır (15 sn\'den sonra ilk nokta)', $bloklar[0]->bitisMs === 18000 && str_ends_with($bloklar[0]->metin, 'biter.'));
+dogrula('Noktalama yoksa 30 sn\'yi aşmadan kapanır', $bloklar[1]->sureMs() <= 30000 && count($bloklar) === 3);
+$uzun = (new Cleaner())->bloklara([new Segment(0, 40000, 'tek uzun konuşma'), new Segment(40000, 42000, 'sonra')]);
+dogrula('30 sn\'yi tek başına aşan segment bölünmez', count($uzun) === 2 && $uzun[0]->sureMs() === 40000);
+$konusmaci = (new Cleaner())->bloklara([new Segment(0, 2000, 'a', 'K1'), new Segment(2000, 4000, 'b', 'K2')]);
+dogrula('Konuşmacı değişince blok kapanır', count($konusmaci) === 2 && $konusmaci[1]->konusmaci === 'K2');
+
+/* ---------------------------------------------------------------- */
+echo "\nChunker (~8–10 dk / ~4.000 token, 30 sn örtüşme)\n";
+
+// 3 saat, 5 sn'lik otomatik altyazı satırları; her 4 satırda bir cümle sonu.
+$ucSaat = [];
+for ($t = 0, $i = 0; $t < 3 * 3600 * 1000; $t += 5000, $i++) {
+    $ucSaat[] = new Segment($t, $t + 5000, 'bu satırda konuşmacı bir şeyler anlatıyor ve devam ediyor' . ($i % 4 === 3 ? '.' : ''));
+}
+$parcalar = (new Chunker())->parcala((new Cleaner())->hazirla($ucSaat));
+$sureler  = array_map(static fn (Parca $p): int => intdiv($p->sureMs(), 1000), $parcalar);
+dogrula('3 saatlik video ~20 parça (' . count($parcalar) . ')', count($parcalar) >= 18 && count($parcalar) <= 23);
+dogrula('Son parça hariç her parça 8–10 dk', min(array_slice($sureler, 0, -1)) >= 480 && max($sureler) <= 600 + 120, implode(',', $sureler));
+dogrula('İlk parça 0\'da başlar, son parça videonun sonunda biter, sıra 1..n',
+    $parcalar[0]->baslangicMs === 0 && end($parcalar)->bitisMs === 3 * 3600 * 1000 && array_column(array_map(static fn (Parca $p): array => ['s' => $p->sira], $parcalar), 's') === range(1, count($parcalar)));
+$ortusmeler = [];
+for ($i = 1; $i < count($parcalar); $i++) {
+    $ortusmeler[] = $parcalar[$i - 1]->bitisMs - $parcalar[$i]->baslangicMs;
+}
+dogrula('Ardışık parçalar arasında boşluk yok, örtüşme ≤ 1 dk', min($ortusmeler) > 0 && max($ortusmeler) <= 60000, implode(',', $ortusmeler));
+$cumleIle = array_filter(array_slice($parcalar, 0, -1), static fn (Parca $p): bool => Cleaner::cumleSonu($p->segmentler[count($p->segmentler) - 1]->metin));
+dogrula('Parçalar cümle sonunda kesilir', count($cumleIle) === count($parcalar) - 1);
+
+// Noktalama yok: 9. dakikadaki 3 sn'lik sessizlikten kesilmeli.
+$noktasiz = [];
+for ($t = 0; $t < 20 * 60 * 1000; $t += 20000) {
+    $ek = $t === 540000 ? 3000 : 0;
+    $noktasiz[] = new Segment($t, $t + 20000 - 500 - $ek, 'noktalamasız otomatik altyazı metni');
+}
+$kesim = (new Chunker())->parcala($noktasiz);
+dogrula('Noktalama yoksa en uzun sessizlikten kesilir', $kesim[0]->bitisMs === 540000 + 20000 - 500 - 3000, (string) $kesim[0]->bitisMs);
+$bitisik = array_map(static fn (int $t): Segment => new Segment($t, $t + 20000, 'boşluksuz otomatik altyazı'), range(0, 20 * 60 * 1000, 20000));
+$bitisikKesim = (new Chunker())->parcala($bitisik)[0]->bitisMs;
+dogrula('Ne noktalama ne sessizlik varsa 9 dk\'ya en yakın blokta kesilir', abs($bitisikKesim - 540000) <= 10000, (string) $bitisikKesim);
+
+$yogun = [];
+for ($t = 0; $t < 30 * 60 * 1000; $t += 15000) {
+    $yogun[] = new Segment($t, $t + 15000, str_repeat('yoğun teknik anlatım ', 100) . '.');
+}
+$yogunParca = (new Chunker())->parcala($yogun);
+dogrula('Yoğun metinde token sınırı süreden önce dolar (≤ 5.000 token)', $yogunParca[0]->sureMs() < 480000 && max(array_map(static fn (Parca $p): int => $p->tahminiToken, $yogunParca)) <= 5000);
+$onBucuk = array_map(static fn (int $t): Segment => new Segment($t, $t + 15000, 'kısa video.'), range(0, 10 * 60 * 1000 + 15000, 15000));
+dogrula('Kısa kuyruk ayrı parça olmaz (10,5 dk → 1 parça); boş girdi → []',
+    count((new Chunker())->parcala($onBucuk)) === 1 && (new Chunker())->parcala([]) === []);
+dogrula('Token tahmini: karakter / 3,5', (new Chunker())->tahminiToken(str_repeat('a', 35)) === 10);
 
 Logger::useDirectory(null);
 Setting::flush();

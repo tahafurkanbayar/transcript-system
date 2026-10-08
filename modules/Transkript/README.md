@@ -97,6 +97,30 @@ API (`Authorization: Bearer cy_…`): `api/v1/transkript/analiz`, `dosya`,
 - `Http/`: `HttpIstemci` arayüzü ve curl uygulaması; testler sahte istemciyle
   ağa gitmeden çalışır.
 
+## Transcript
+
+`Transcript/TranscriptZinciri` sağlayıcıları `config.php` → `transcript.saglayicilar`
+sırasıyla dener (`.env`: `TRANSCRIPT_PROVIDERS`, varsayılan `youtube,gemini`):
+
+| Sağlayıcı | Nasıl | Not |
+|---|---|---|
+| `youtube` | İzleme sayfası → InnerTube `player` (ANDROID istemcisi) → altyazı XML'i | Ücretsiz. MrMySQL/youtube-transcript'ten (WTFPL) taşındı. Dil: tercih (elle) → orijinal ses dili → en |
+| `gemini` | Gemini'ye YouTube URL'si, JSON şemalı zaman damgalı transcript | Ücretli, `GEMINI_API_KEY`. Uzun video 20 dk pencerelere bölünür, düşük çözünürlük, düşünme kapalı |
+| `harici` | Ücretli transcript API | 5c. aşama, iskelet |
+| `asr` | Yüklenen dosyada Whisper benzeri | 5b. aşama, iskelet; YouTube sesi ASR'a verilmez |
+
+Gizli / silinmiş video zinciri durdurur (`KaynakHatasi`); diğer hatalarda sıradaki
+sağlayıcı denenir, hepsi başarısızsa tek sonuç hatası döner (hız sınırı ve geçici
+hatalar yeniden denenir). Her deneme `storage/logs/transkript-*.log`'a yazılır.
+
+`Repositories/SegmentRepository::kaydet()` transcript'i tek transaction'da, 500'erli
+toplu INSERT ile yazar (2 saatlik video ~3.000 segment, ~0,3 sn).
+
+`Services/Cleaner`: varlık / etiket / [Müzik] temizliği, örtüşen otomatik altyazı
+satırlarının düzeltilmesi, 15–30 sn cümle blokları. `Services/Chunker`: 8–10 dk ya
+da ~4.000 token parçalar, 30 sn örtüşme; kesim cümle sonunda (9 dk'ya en yakın),
+noktalama yoksa en uzun sessizlikte. Ölçüm: 2 saatlik video 14 parça, 9–10 dk.
+
 ## Yapay zekâ
 
 `src/Ai/` CilginYazilim/ai-integration-system'den (MIT) taşındı: Gemini, Claude
