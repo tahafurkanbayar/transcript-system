@@ -71,6 +71,10 @@
 .tk-asama.is-bitti { color: var(--cy-text); }
 .tk-asama.is-bitti .tk-asama__isaret { background: var(--cy-success); border-color: var(--cy-success); }
 .tk-asama.is-suruyor { color: var(--cy-text); font-weight: 600; }
+/* Hatayla duran aşama (ve hatalı parça sayısı) kırmızı */
+.tk-asama.is-hata { color: var(--cy-danger); font-weight: 600; }
+.tk-asama.is-hata .tk-asama__isaret { background: var(--cy-danger); border-color: var(--cy-danger); }
+.tk-asama.is-hata small { color: var(--cy-danger); }
 .tk-asama.is-suruyor .tk-asama__isaret { border-color: var(--cy-brand); border-right-color: transparent; animation: tk-don 1s linear infinite; }
 @keyframes tk-don { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .tk-asama.is-suruyor .tk-asama__isaret { animation: none; border-right-color: var(--cy-brand); } }
@@ -193,3 +197,6 @@ a.tk-zaman.is-oynuyor { background: var(--cy-brand); color: #fff; }
 .tk-zincir { margin: 0; padding-left: 1.1rem; }
 .tk-zincir li { margin-bottom: .35rem; }
 .tk-zincir .cy-pill { margin-left: .25rem; }
+/* Başarısız analizde yöneticiye zincirin özeti (liste ve rapor) */
+.tk-zincir-ozeti { display: block; margin-top: .25rem; font-size: .8rem; color: var(--cy-text-muted); overflow-wrap: anywhere; }
+.tk-saglayici-tablo td, .tk-gunluk td { vertical-align: top; }

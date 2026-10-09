@@ -165,19 +165,58 @@ final class AnalizRepository
      * hangi aşamada durduğu okunur kalır. İlk hata kodu korunur (iptal
      * edilmiş analize geç gelen iş hatası "iptal edildi"yi ezmez).
      *
+     * $ozet: yapay zekâ hatasında zincirin özeti (YedekliSaglayici::ozet);
+     * yalnız yöneticiye gösterilir, sağlayıcının kendi mesajını taşımaz.
+     *
      * @return bool true → analiz bu çağrıyla bitti
      */
-    public function hataylaBitir(int $id, string $kod): bool
+    public function hataylaBitir(int $id, string $kod, ?string $ozet = null): bool
     {
         $statement = $this->db->prepare(
             "UPDATE transkript_analizler
-                SET durum = 'hata', hata_kodu = :kod, bitti_at = NOW(),
+                SET durum = 'hata', hata_kodu = :kod, hata_ozeti = :ozet, bitti_at = NOW(),
                     asama = SUBSTRING_INDEX(asama, ':', 1)
               WHERE id = :id AND durum NOT IN ('tamamlandi', 'hata')"
         );
-        $statement->execute([':kod' => mb_substr($kod, 0, 50), ':id' => $id]);
+        $statement->execute([':kod' => mb_substr($kod, 0, 50), ':ozet' => $ozet !== null ? mb_substr($ozet, 0, 500) : null, ':id' => $id]);
 
         return $statement->rowCount() === 1;
+    }
+
+    /**
+     * Hatayla duran analizi KALDIĞI YERDEN sürdürür: durum geri alınır,
+     * hata silinir, aşama (durduğu yer) korunur. Hatalı ve yarım kalan
+     * parçalar yeniden "bekliyor" olur; TAMAMLANAN PARÇALAR KORUNUR, AI'a
+     * yeniden gitmez. Analiz bu arada başka bir yolla açıldıysa false.
+     */
+    public function devamEttir(int $id, string $durum): bool
+    {
+        $statement = $this->db->prepare(
+            "UPDATE transkript_analizler
+                SET durum = :durum, hata_kodu = NULL, hata_ozeti = NULL, bitti_at = NULL
+              WHERE id = :id AND durum = 'hata'"
+        );
+        $statement->execute([':durum' => $durum, ':id' => $id]);
+
+        if ($statement->rowCount() !== 1) {
+            return false;
+        }
+
+        $this->db->prepare(
+            "UPDATE transkript_parcalar SET durum = 'bekliyor', hata = NULL
+              WHERE analiz_id = :analiz AND durum IN ('hata', 'isleniyor')"
+        )->execute([':analiz' => $id]);
+
+        return true;
+    }
+
+    /** @return list<int> henüz işlenmemiş parçaların sırası */
+    public function bekleyenParcalar(int $analizId): array
+    {
+        $statement = $this->db->prepare("SELECT sira FROM transkript_parcalar WHERE analiz_id = :analiz AND durum = 'bekliyor' ORDER BY sira");
+        $statement->execute([':analiz' => $analizId]);
+
+        return array_map('intval', $statement->fetchAll(PDO::FETCH_COLUMN));
     }
 
     /* =================================================================
@@ -374,6 +413,8 @@ final class AnalizRepository
             'ilerleme'  => (int) $analiz['ilerleme'],
             'parca'     => $this->parcaSayilari((int) $analiz['id']),
             'hata_kodu' => $analiz['hata_kodu'] !== null ? (string) $analiz['hata_kodu'] : null,
+            // Yedek zincirinin özeti: yalnız yöneticiye (KaynakDurumu süzer).
+            'hata_ozeti' => isset($analiz['hata_ozeti']) && $analiz['hata_ozeti'] !== '' ? (string) $analiz['hata_ozeti'] : null,
             'guncel_mi' => (bool) $analiz['guncel_mi'],
             // Sırada bekleme süresi; veritabanı oturumu uygulamanın saat dilimindedir.
             'gecen_sn'  => max(0, time() - (int) strtotime((string) $analiz['created_at'])),

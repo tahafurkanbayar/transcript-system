@@ -52,6 +52,14 @@ $router->get('panel/transkript/ilerleme/{kaynak_id}', KaynakController::class, '
 $router->post('panel/transkript/kuyruk/isle', KaynakController::class, 'kuyruguIsle',
     ['installed', 'auth', 'csrf', 'can:transkript.admin']);
 
+// Komut satırısız kuyruk: işçi yokken açık panel sayfası tek tek iş işletir (KaynakController::kuyrukTik).
+$router->post('panel/transkript/kuyruk/tik', KaynakController::class, 'kuyrukTik',
+    ['installed', 'auth', 'csrf', 'can:transkript.analyze']);
+
+// "Bekleyenleri yeniden dene": geçici sebeple duran analizler kaldığı yerden sürer.
+$router->post('panel/transkript/yeniden-dene', KaynakController::class, 'bekleyenleriSurdur',
+    ['installed', 'auth', 'csrf', 'can:transkript.admin']);
+
 // Modülün JS / CSS dosyaları (modules/ klasörü tarayıcıya kapalı; bkz. Varliklar).
 $router->get('panel/transkript/varlik/{dosya}', KaynakController::class, 'varlik',
     ['installed', 'auth', 'can:transkript.view']);
@@ -61,6 +69,10 @@ $router->get('panel/transkript/ayarlar', AyarController::class, 'goster',
     ['installed', 'auth', 'can:transkript.admin']);
 
 $router->post('panel/transkript/ayarlar', AyarController::class, 'kaydet',
+    ['installed', 'auth', 'csrf', 'can:transkript.admin']);
+
+// Yedek zinciri: devre dışı / dinlenen sağlayıcılar hemen yeniden denensin.
+$router->post('panel/transkript/ayarlar/dinlenme-sifirla', AyarController::class, 'dinlenmeSifirla',
     ['installed', 'auth', 'csrf', 'can:transkript.admin']);
 
 $router->get('panel/transkript/{kaynak_id}/transkript', KaynakController::class, 'transkript',

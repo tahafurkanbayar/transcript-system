@@ -74,7 +74,7 @@ final class Ai
         'groq' => [
             'label'         => 'Groq',
             'key_names'     => ['GROQ_API_KEY', 'AI_API_KEY'],
-            'default_model' => 'llama-3.3-70b-versatile',
+            'default_model' => 'openai/gpt-oss-120b',      // 2026-10: llama-3.3-70b-versatile kaldırıldı
             'base_url'      => 'https://api.groq.com/openai/v1',
             'console'       => 'console.groq.com/keys',
             'free'          => true,
@@ -82,7 +82,7 @@ final class Ai
         'openrouter' => [
             'label'         => 'OpenRouter',
             'key_names'     => ['OPENROUTER_API_KEY'],
-            'default_model' => 'meta-llama/llama-3.3-70b-instruct:free',
+            'default_model' => 'google/gemma-4-31b-it:free', // ücretsiz, JSON destekli; liste sık değişir
             'base_url'      => 'https://openrouter.ai/api/v1',
             'console'       => 'openrouter.ai/keys',
             'free'          => true,

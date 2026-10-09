@@ -99,6 +99,23 @@
         if (d && typeof d.kuyruk_takili === 'boolean') {
             $('.js-tk-kuyruk-uyari').prop('hidden', !d.kuyruk_takili);
         }
+
+        tarayicidanIsle(d);
+    }
+
+    /* Komut satırısız kuyruk: işçi yokken (tarayici_isle) sunucu, kilitle TEK
+     * bir işi çalıştırır. Aynı anda bu sekmeden tek istek; yanıtı beklenmez,
+     * ilerleme yoklaması sürer. global:false → kapalıysa hata bildirimi yok. */
+    var tikAdresi = $('.js-tk-kuyruk-uyari').attr('data-tik') || '';
+    var tikSuruyor = false;
+
+    function tarayicidanIsle(d) {
+        if (!tikAdresi || tikSuruyor || !d || d.tarayici_isle !== true) { return; }
+
+        tikSuruyor = true;
+
+        $.ajax({ url: tikAdresi, method: 'POST', dataType: 'json', global: false, data: { csrf_token: CY.token() } })
+            .always(function () { tikSuruyor = false; });
     }
 
     /* Sekme arka plandayken istek atılmaz; dönünce hemen bir kez bakılır. */
@@ -275,13 +292,17 @@
                 $k.find('.js-tk-etiket').text(d.etiket);
                 $k.find('.js-tk-yuzde').text('%' + d.ilerleme);
                 $k.find('.js-tk-cubuk').css('width', d.ilerleme + '%').parent().attr('aria-valuenow', d.ilerleme);
-                $k.find('.js-tk-parca').text(d.parca && d.parca.toplam > 0 ? d.parca.biten + ' / ' + d.parca.toplam : '');
+                $k.find('.js-tk-parca').text(d.parca && d.parca.toplam > 0
+                    ? d.parca.biten + ' / ' + d.parca.toplam + (d.parca.hatali > 0 ? ' · ' + d.parca.hatali + ' hatalı' : '') : '');
                 $k.find('.js-tk-sirada-metin').text(d.sirada || '');
                 $k.find('.js-tk-sirada').prop('hidden', !d.sirada);
                 kuyrukUyarisi(d);
 
+                // Hatayla durduysa o aşama "tamamlandı" görünmesin: kırmızı.
                 $k.find('.tk-asama').each(function (i) {
-                    $(this).toggleClass('is-bitti', i < simdiki).toggleClass('is-suruyor', i === simdiki);
+                    $(this).toggleClass('is-bitti', i < simdiki)
+                        .toggleClass('is-suruyor', i === simdiki && d.durum !== 'hata')
+                        .toggleClass('is-hata', i === simdiki && d.durum === 'hata');
                 });
 
                 if (d.durum === 'tamamlandi' || d.durum === 'hata') {

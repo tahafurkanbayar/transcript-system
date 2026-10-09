@@ -286,7 +286,7 @@ final class Pipeline
                 if ($saglayici instanceof YedekliSaglayici) {
                     $this->denemeleriKaydet($saglayici);
                 } else {
-                    $this->kaydet($ad, $saglayici->model(), null, $baslangic, 'hata');
+                    $this->kaydet($ad, $saglayici->model(), null, $baslangic, 'hata', $e->kod);
                 }
 
                 throw $e;
@@ -345,12 +345,12 @@ final class Pipeline
                 'cikis_token' => 0,
                 'maliyet_usd' => 0.0,
                 'sure_ms'     => $d['sure_ms'],
-            ], 'analiz', $this->analizId, 'hata');
+            ], 'analiz', $this->analizId, 'hata', $d['kod']);
         }
     }
 
     /** @param array<string,mixed>|null $yanit */
-    private function kaydet(string $saglayici, string $model, ?array $yanit, int|float $baslangic, string $durum): void
+    private function kaydet(string $saglayici, string $model, ?array $yanit, int|float $baslangic, string $durum, ?string $hataKodu = null): void
     {
         $this->kullanim->kaydet([
             'saglayici'   => $saglayici,
@@ -359,7 +359,7 @@ final class Pipeline
             'cikis_token' => (int) ($yanit['usage']['output_tokens'] ?? 0),
             'maliyet_usd' => self::maliyet($yanit),
             'sure_ms'     => (int) ((hrtime(true) - $baslangic) / 1_000_000),
-        ], 'analiz', $this->analizId, $durum);
+        ], 'analiz', $this->analizId, $durum, $hataKodu ?? ($durum === 'basarili' ? null : $durum));
     }
 
     /**

@@ -21,6 +21,7 @@ declare(strict_types=1);
 namespace Modules\Transkript\Repositories;
 
 use InvalidArgumentException;
+use Modules\Transkript\HataKodlari;
 use Modules\Transkript\Kaynak\UrlParser;
 use Modules\Transkript\Kaynak\VideoBilgisi;
 use Modules\Transkript\Services\Search;
@@ -135,8 +136,8 @@ final class KaynakRepository
      *  LİSTE (panel/transkript ve api/v1/transkript/kaynaklar)
      * ============================================================== */
 
-    /** Liste durum filtresi → son analizin koşulu. */
-    public const LISTE_DURUMLARI = ['hazir', 'suruyor', 'hata'];
+    /** Liste durum filtresi → son analizin koşulu. İptal edilen "hata" sayılmaz, ayrı süzülür. */
+    public const LISTE_DURUMLARI = ['hazir', 'suruyor', 'hata', 'iptal'];
 
     /**
      * Kaynaklar, son analizleriyle birlikte; en son analiz edilen başta.
@@ -174,7 +175,8 @@ final class KaynakRepository
         $kosullar[] = match ((string) ($filtre['durum'] ?? '')) {
             'hazir'   => 'EXISTS (SELECT 1 FROM transkript_analizler r WHERE r.kaynak_id = k.id AND r.guncel_mi = 1 AND r.durum = \'tamamlandi\')',
             'suruyor' => 'a.durum NOT IN (\'tamamlandi\', \'hata\')',
-            'hata'    => 'a.durum = \'hata\'',
+            'hata'    => 'a.durum = \'hata\' AND (a.hata_kodu IS NULL OR a.hata_kodu <> \'iptal_edildi\')',
+            'iptal'   => 'a.durum = \'hata\' AND a.hata_kodu = \'iptal_edildi\'',
             default   => '1 = 1',
         };
 
@@ -198,7 +200,7 @@ final class KaynakRepository
         $sorgu = $this->db->prepare(
             "SELECT k.id, k.tur, k.dis_kimlik, k.sahip_id, k.baslik, k.kanal_adi, k.sure_sn, k.kucuk_resim, k.yayin_tarihi,
                     k.durum AS kaynak_durumu,
-                    a.id AS analiz_id, a.kullanici_id, a.durum, a.asama, a.ilerleme, a.hata_kodu, a.created_at,
+                    a.id AS analiz_id, a.kullanici_id, a.durum, a.asama, a.ilerleme, a.hata_kodu, a.hata_ozeti, a.created_at,
                     (SELECT r.id FROM transkript_analizler r
                       WHERE r.kaynak_id = k.id AND r.guncel_mi = 1 AND r.durum = 'tamamlandi'
                       ORDER BY r.id DESC LIMIT 1) AS rapor_analiz_id
@@ -251,7 +253,7 @@ final class KaynakRepository
         // Son analize göre (liste ile aynı kural).
         $son = $this->db->prepare(
             "SELECT COALESCE(SUM(a.durum NOT IN ('tamamlandi', 'hata')), 0) AS suruyor,
-                    COALESCE(SUM(a.durum = 'hata'), 0) AS hata
+                    COALESCE(SUM(a.durum = 'hata' AND (a.hata_kodu IS NULL OR a.hata_kodu <> 'iptal_edildi')), 0) AS hata
                FROM transkript_analizler a
               WHERE a.id IN (SELECT MAX(a2.id) FROM transkript_analizler a2 GROUP BY a2.kaynak_id)" . $kendi
         );
@@ -295,7 +297,7 @@ final class KaynakRepository
 
         $son = $this->db->prepare(
             "SELECT COALESCE(SUM(a.durum NOT IN ('tamamlandi', 'hata')), 0) AS suruyor,
-                    COALESCE(SUM(a.durum = 'hata'), 0) AS hata
+                    COALESCE(SUM(a.durum = 'hata' AND (a.hata_kodu IS NULL OR a.hata_kodu <> 'iptal_edildi')), 0) AS hata
                FROM transkript_analizler a
                JOIN transkript_kaynaklar k ON k.id = a.kaynak_id
               WHERE a.id IN (SELECT MAX(a2.id) FROM transkript_analizler a2 GROUP BY a2.kaynak_id)
@@ -352,6 +354,34 @@ final class KaynakRepository
         )->fetch(PDO::FETCH_ASSOC) ?: [];
 
         return ['token' => (int) ($satir['token'] ?? 0), 'maliyet' => round((float) ($satir['maliyet'] ?? 0), 4)];
+    }
+
+    /**
+     * Son analizi geçici sebeple duran kaynaklar (HataKodlari::DEVAM_EDILEBILIR):
+     * yöneticinin "Bekleyenleri yeniden dene" düğmesi bunları sürdürür.
+     *
+     * @return list<array<string,mixed>>
+     */
+    public function devamEdilebilirKaynaklar(int $enCok = 100): array
+    {
+        $kodlar = HataKodlari::DEVAM_EDILEBILIR;
+        $yerler = implode(', ', array_map(static fn (int $i): string => ':k' . $i, array_keys($kodlar)));
+
+        $statement = $this->db->prepare(
+            "SELECT k.* FROM transkript_kaynaklar k
+               JOIN transkript_analizler a ON a.id = (SELECT MAX(a2.id) FROM transkript_analizler a2 WHERE a2.kaynak_id = k.id)
+              WHERE a.durum = 'hata' AND a.hata_kodu IN ($yerler)
+              ORDER BY a.id
+              LIMIT " . max(1, min(500, $enCok))
+        );
+
+        foreach ($kodlar as $i => $kod) {
+            $statement->bindValue(':k' . $i, $kod);
+        }
+
+        $statement->execute();
+
+        return $statement->fetchAll(PDO::FETCH_ASSOC);
     }
 
     /** gizli / silinmiş video (KaynakHatasi) kaydı. */

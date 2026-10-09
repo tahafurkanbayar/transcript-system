@@ -25,7 +25,10 @@ declare(strict_types=1);
 
 namespace Modules\Transkript\Services;
 
+use App\Core\Cache\Cache;
+use Modules\Transkript\Ai\YedekliSaglayici;
 use Modules\Transkript\HataKodlari;
+use Modules\Transkript\Jobs\TranskriptIsi;
 use Modules\Transkript\Repositories\AnalizRepository;
 use Modules\Transkript\Repositories\KaynakRepository;
 use Modules\Transkript\TranskriptPolicy;
@@ -60,7 +63,11 @@ final class KaynakDurumu
         $suruyor  = $analiz !== null && !in_array($analiz['durum'], AnalizRepository::BITMIS_DURUMLAR, true);
         $kuyruk   = $suruyor ? (new KuyrukDurumu($this->db))->getir() : null;
         $ayrinti  = $analiz === null || $this->policy === null || $this->policy->canSeeErrorDetail($analiz);
+        $yonetici = $this->policy === null || $this->policy->isAdmin();
         $hataKodu = HataKodlari::gorunenKod($analiz['hata_kodu'] ?? null, $ayrinti);
+        // Yapay zekâ dinleniyor: iş ertelendi, devam saati (TranskriptIsi::erteleyebilir).
+        $devam    = $suruyor ? Cache::get(TranskriptIsi::ERTELEME_ONEKI . $analiz['analiz_id']) : null;
+        $devam    = is_int($devam) && $devam > time() ? $devam : null;
 
         return [
             'kaynak_id'     => $kaynakId,
@@ -76,10 +83,13 @@ final class KaynakDurumu
             'asama'         => $analiz['asama'] ?? null,
             'ilerleme'      => $analiz['ilerleme'] ?? 0,
             'parca'         => $analiz['parca'] ?? ['toplam' => 0, 'biten' => 0, 'hatali' => 0],
-            'etiket'        => self::etiket($analiz, $ayrinti),
+            'etiket'        => $devam !== null ? self::ertelemeMetni($devam) : self::etiket($analiz, $ayrinti, $yonetici),
             'hata'          => $hataKodu !== null
-                ? ['kod' => $hataKodu, 'mesaj' => HataKodlari::gorunenMesaj($analiz['hata_kodu'], $ayrinti)]
+                ? ['kod' => $hataKodu, 'mesaj' => HataKodlari::gorunenMesaj($analiz['hata_kodu'], $ayrinti, $yonetici)]
+                    // Zincirin özeti ("Gemini: günlük kota … · OpenRouter: model yok …") yalnız yöneticiye.
+                    + ($yonetici && ($analiz['hata_ozeti'] ?? null) !== null ? ['ozet' => $analiz['hata_ozeti']] : [])
                 : null,
+            'ertelendi'     => $devam !== null ? YedekliSaglayici::saat($devam) : null,
             'rapor_hazir'   => $rapor !== null,
             'rapor_analiz_id' => $rapor !== null ? (int) $rapor['id'] : null,
             'sirada_sn'     => $sirada ? (int) $analiz['gecen_sn'] : null,
@@ -87,6 +97,9 @@ final class KaynakDurumu
             // Analiz bitmişse işçi sorulmaz (sorgu yok, uyarı yok).
             'isci_calisiyor' => $kuyruk === null || $kuyruk['calisiyor'],
             'kuyruk_takili'  => $kuyruk !== null && $kuyruk['takildi'],
+            // Komut satırısız kuyruk: sayfa arka planda panel/transkript/kuyruk/tik atsın mı?
+            'tarayici_isle'  => $kuyruk !== null && $kuyruk['bekleyen'] > 0 && KuyrukDurumu::tarayicidanIslenir()
+                && !KuyrukDurumu::isciGorulduMu() && ($this->policy === null || $this->policy->canAnalyze()),
         ];
     }
 
@@ -95,15 +108,16 @@ final class KaynakDurumu
      *
      * @param array<string,mixed>|null $analiz AnalizRepository::ilerlemeBilgisi
      * @param bool $ayrinti iç hata nedeni gösterilsin mi (bkz. HataKodlari::gorunenMesaj)
+     * @param bool $yonetici "yöneticinize bildirin" yerine yöneticiye uygun metin
      */
-    public static function etiket(?array $analiz, bool $ayrinti = true): string
+    public static function etiket(?array $analiz, bool $ayrinti = true, bool $yonetici = false): string
     {
         if ($analiz === null) {
             return 'Henüz analiz edilmedi';
         }
 
         if ($analiz['durum'] === 'hata') {
-            return HataKodlari::gorunenMesaj($analiz['hata_kodu'] ?? null, $ayrinti);
+            return HataKodlari::gorunenMesaj($analiz['hata_kodu'] ?? null, $ayrinti, $yonetici);
         }
 
         if ($analiz['durum'] === 'bekliyor' && empty($analiz['calisiyor'])) {
@@ -118,5 +132,12 @@ final class KaynakDurumu
         }
 
         return $metin;
+    }
+
+    /** Ertelenen analizin satırı: "… saat 10:01 civarında kendiliğinden sürecek." */
+    public static function ertelemeMetni(int $devam, ?int $simdi = null): string
+    {
+        return 'Yapay zekâ servisleri şu an meşgul; analiz ' . (str_starts_with(YedekliSaglayici::saat($devam, $simdi), 'yarın') ? '' : 'saat ')
+            . YedekliSaglayici::saat($devam, $simdi) . ' civarında kendiliğinden sürecek.';
     }
 }

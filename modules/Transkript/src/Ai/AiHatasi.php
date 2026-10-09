@@ -16,6 +16,11 @@
  *  getMessage() TEKNİK ayrıntıdır (sağlayıcının kendi mesajı dahil);
  *  yalnızca log'a yazılır. Kullanıcıya gösterilecek Türkçe metin
  *  hata koduna göre ayrıca seçilir (9. adım).
+ *
+ *  $bekleme: sağlayıcının "şu kadar bekle" dediği saniye (Retry-After,
+ *  Gemini retryDelay). Yedek zinciri dinlenme süresini buna göre
+ *  kurar. "zincir_dinleniyor" (bütün sağlayıcılar dinlenmede) hata
+ *  değildir: iş en erken açılışa kadar ertelenir (TranskriptIsi).
  * =====================================================================
  */
 
@@ -36,6 +41,7 @@ final class AiHatasi extends RuntimeException
         public readonly string $kod,
         public readonly int $httpDurumu = 0,
         ?Throwable $previous = null,
+        public readonly ?int $bekleme = null,
     ) {
         parent::__construct($message, $httpDurumu, $previous);
     }

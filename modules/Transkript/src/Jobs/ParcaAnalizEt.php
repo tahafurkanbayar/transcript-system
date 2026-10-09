@@ -15,8 +15,10 @@
  *    geçici (ağ, hız sınırı)  parça bırakılır, kuyruk yeniden dener (3 deneme)
  *    kalıcı (bozuk yanıt)     parça "hata" olur; rapor o parça olmadan,
  *                             uyarıyla tamamlanır
- *    AI ayarı yok / günlük    bütün analiz durur: hiçbir parça işlenemez
- *    kota doldu
+ *    yapay zekâ dinleniyor    parça bırakılır, iş açılış saatine ertelenir
+ *                             (TranskriptIsi::erteleyebilir); hata değil
+ *    AI ayarı yok / erteleme  bütün analiz durur: hiçbir parça işlenemez
+ *    süresi doldu
  *    denemeler tükendi        failed(): parça "hata", zincir sürer
  *
  *  SON PARÇA: biten (tamamlanan + hatalı) sayısı toplama ulaşınca
@@ -74,6 +76,11 @@ final class ParcaAnalizEt extends TranskriptIsi
         try {
             $this->calis($analiz);
         } catch (Throwable $e) {
+            // Yapay zekâ dinleniyor: parça bırakılır, iş açılış saatine ertelenir.
+            if ($this->erteleyebilir($e, fn () => $this->analizler()->parcayiBirak($this->analizId, $this->parca, $e->getMessage()))) {
+                return;
+            }
+
             $kod = self::kaliciKod($e);
 
             if ($kod === null) {
