@@ -50,6 +50,7 @@ declare(strict_types=1);
 namespace Modules\Transkript\Ai;
 
 use App\Core\Env;
+use Modules\Transkript\Ayarlar;
 
 final class Ai
 {
@@ -308,15 +309,42 @@ final class Ai
     }
 
     /**
-     * Sağlayıcının modeli: <AD>_MODEL (ör. GROQ_MODEL, OPENROUTER_MODEL)
-     * varsa o, yoksa bilinen varsayılan. AI_MODEL yalnız birincil
+     * Sağlayıcının modeli: Transkript ayarlarında o sağlayıcı için seçilen
+     * model (ai.modeller.<ad>), yoksa <AD>_MODEL (ör. GROQ_MODEL,
+     * OPENROUTER_MODEL), yoksa bilinen varsayılan. AI_MODEL yalnız birincil
      * sağlayıcıya aittir (model()); burada okunmaz.
      */
     public static function varsayilanModel(string $ad): string
     {
+        $panel = trim((string) Ayarlar::get('ai.modeller.' . $ad, ''));
+
+        return $panel !== '' ? $panel : self::ortamModeli($ad);
+    }
+
+    /** Panel değeri olmadan: <AD>_MODEL ya da bilinen varsayılan (ayarlar ekranındaki "Varsayılan: …"). */
+    public static function ortamModeli(string $ad): string
+    {
         $ortam = trim(Env::get(strtoupper(str_replace('-', '_', $ad)) . '_MODEL', ''));
 
         return $ortam !== '' ? $ortam : (string) (self::PROVIDERS[$ad]['default_model'] ?? '');
+    }
+
+    /**
+     * Ayarlar ekranında model kutusunun önerileri (serbest yazılabilir;
+     * ücretsiz modeller sık değişir). Gemini ve Claude için bilinen liste,
+     * ötekilerde varsayılan ve .env'deki model.
+     *
+     * @return list<string>
+     */
+    public static function modelOnerileri(string $ad): array
+    {
+        $liste = match ($ad) {
+            'gemini' => array_values(array_filter(GeminiProvider::models(), static fn (string $m): bool => str_contains($m, 'flash'))),
+            'claude' => ClaudeProvider::models(),
+            default  => [],
+        };
+
+        return array_values(array_unique(array_filter([self::ortamModeli($ad), (string) (self::PROVIDERS[$ad]['default_model'] ?? ''), ...$liste])));
     }
 
     /* =================================================================

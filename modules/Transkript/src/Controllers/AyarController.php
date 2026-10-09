@@ -46,8 +46,12 @@ final class AyarController extends Controller
 
         $girdi = [];
 
-        foreach (array_keys(PanelAyarlari::ALANLAR) as $alan) {
-            $girdi[$alan] = mb_substr($request->input($alan), 0, 100);
+        foreach (PanelAyarlari::ALANLAR as $alan => $tanim) {
+            /* Ekranda olmayan model alanı (sağlayıcı şu an zincirde değil)
+             * formla gelmez; kayıtlı değeri silinmesin. */
+            $girdi[$alan] = $tanim['tur'] === 'model' && $request->raw($alan) === null
+                ? (PanelAyarlari::ham($alan) ?? '')
+                : mb_substr($request->input($alan), 0, 100);
         }
 
         $hatalar = PanelAyarlari::kaydet($this->db, $girdi);
@@ -147,6 +151,10 @@ final class AyarController extends Controller
 
     private static function varsayilanMetni(string $alan, mixed $deger): string
     {
+        if ((PanelAyarlari::ALANLAR[$alan]['tur'] ?? '') === 'model') {
+            return Ai::ortamModeli((string) PanelAyarlari::ALANLAR[$alan]['saglayici']);
+        }
+
         return match ($alan) {
             'ai_model'     => (string) ($deger ?: Ai::model()),
             'altyazi_dili' => $deger === [] ? 'videonun kendi dili' : 'Türkçe altyazı varsa onu',

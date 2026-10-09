@@ -28,7 +28,8 @@ use Modules\Transkript\Services\KuyrukDurumu;
 use Modules\Transkript\Varliklar;
 
 $gruplar = [
-    'Yapay zekâ ve transcript' => ['ai_model', 'altyazi_dili', 'en_uzun_dk'],
+    // Zincirdeki her sağlayıcının modeli (asıl: ai_model; yedekler: model_<ad>).
+    'Yapay zekâ ve transcript' => ['ai_model', ...PanelAyarlari::yedekModelAlanlari(), 'altyazi_dili', 'en_uzun_dk'],
     'Kim analiz başlatır, ne kadar?' => ['uye_analiz', 'gunluk_sinir', 'saatlik_sinir', 'gunluk_token_tavani', 'gunluk_maliyet_tavani'],
     'Maliyet tahmini (1M token)' => ['fiyat_giris', 'fiyat_cikis'],
     'Ana sayfa'                => ['ana_sayfa'],
@@ -82,6 +83,17 @@ $sayi     = static fn (int $n): string => number_format($n, 0, ',', '.');
                                                 <option value="<?= e((string) $deger) ?>"<?= (string) $deger === $degerler[$alan] ? ' selected' : '' ?>><?= e($etiket) ?></option>
                                             <?php endforeach; ?>
                                         </select>
+                                    <?php elseif ($tanim['tur'] === 'model'): ?>
+                                        <?php /* Serbest model kimliği; öneriler datalist'te (ücretsiz modeller sık değişir). */ ?>
+                                        <input type="text" maxlength="100" spellcheck="false" autocomplete="off" list="<?= e($id) ?>_oneriler"
+                                               class="form-control cy-mono<?= $hata !== null ? ' is-invalid' : '' ?>" id="<?= e($id) ?>" name="<?= e($alan) ?>"
+                                               value="<?= e($degerler[$alan]) ?>" placeholder="<?= e('Varsayılan: ' . $varsayilanlar[$alan]) ?>"
+                                               aria-describedby="<?= e($id) ?>_aciklama">
+                                        <datalist id="<?= e($id) ?>_oneriler">
+                                            <?php foreach (Ai::modelOnerileri((string) $tanim['saglayici']) as $oneri): ?>
+                                                <option value="<?= e($oneri) ?>"></option>
+                                            <?php endforeach; ?>
+                                        </datalist>
                                     <?php else: ?>
                                         <input type="text" inputmode="<?= $tanim['tur'] === 'tamsayi' ? 'numeric' : 'decimal' ?>" maxlength="20"
                                                class="form-control<?= $hata !== null ? ' is-invalid' : '' ?>" id="<?= e($id) ?>" name="<?= e($alan) ?>"
