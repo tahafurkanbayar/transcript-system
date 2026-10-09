@@ -6,8 +6,9 @@
  *  Liste + yeni analiz (panel/transkript), rapor sayfası
  *  (panel/transkript/{kaynak_id}), analiz başlatma ve ilerleme JSON'u.
  *
- *  Ekranların içi 8. adımda dolar; analiz başlatma ve ilerleme ucu
- *  6. adımda hazır.
+ *  Ayrıca transcript (okuma + arama) JSON'u ve modülün JS / CSS
+ *  dosyaları (Varliklar). Rapor ve liste verisi API ile ortak
+ *  servislerden gelir (RaporVerisi, KaynakDurumu, KaynakRepository).
  *
  *  HTTP isteğinde uzun iş yapılmaz: analiz yalnızca kayıt açar ve
  *  ilk işi kuyruğa bırakır (Services\AnalizBaslatici; API de aynı
@@ -21,38 +22,134 @@ declare(strict_types=1);
 namespace Modules\Transkript\Controllers;
 
 use App\Core\Auth;
-use App\Core\Database;
 use App\Core\Exceptions\HttpException;
 use App\Core\Log\Logger;
 use App\Core\Request;
 use App\Core\Response;
+use App\Core\Setting;
 use App\Http\Controller;
 use Modules\Transkript\HataKodlari;
 use Modules\Transkript\Repositories\KaynakRepository;
+use Modules\Transkript\Repositories\SegmentRepository;
 use Modules\Transkript\Services\AnalizBaslatici;
 use Modules\Transkript\Services\AnalizReddedildi;
+use Modules\Transkript\Services\Cleaner;
 use Modules\Transkript\Services\KaynakDurumu;
+use Modules\Transkript\Services\RaporVerisi;
+use Modules\Transkript\Services\Search;
 use Modules\Transkript\TranskriptPolicy;
+use Modules\Transkript\Transcript\Segment;
+use Modules\Transkript\Varliklar;
+use Modules\Transkript\Zaman;
 use Throwable;
 
 final class KaynakController extends Controller
 {
-    /** GET panel/transkript */
+    /** GET panel/transkript?q=&durum=&sayfa= — yeni analiz + sunucu taraflı sayfalı liste */
     public function index(Request $request): void
     {
+        $user   = Auth::user();
+        $policy = new TranskriptPolicy($user);
+        $repo   = new KaynakRepository($this->db);
+
+        $filtre = [
+            'q'     => mb_substr($request->input('q'), 0, 100),
+            'durum' => in_array($request->input('durum'), KaynakRepository::LISTE_DURUMLARI, true) ? $request->input('durum') : '',
+        ];
+        $boyut = max(5, min(50, (int) Setting::get('sistem_sayfa_basina', '10') ?: 10));
+        $sayfa = $request->int('sayfa', 1, 100000) ?? 1;
+        $liste = $repo->liste($filtre, $sayfa, $boyut, $user?->id, $policy->isAdmin());
+
+        Varliklar::youtubeIzinleri();
+
         $this->view('Transkript::index', [
-            'title'    => 'Transkript',
-            'subtitle' => 'YouTube videolarından zaman damgalı transcript ve AI analizi.',
+            'title'      => 'Transkript',
+            'subtitle'   => 'YouTube videolarından zaman damgalı transcript ve AI analizi.',
+            'policy'     => $policy,
+            'filtre'     => $filtre,
+            'liste'      => $liste,
+            'sayfa'      => $sayfa,
+            'boyut'      => $boyut,
+            'istatistik' => $repo->istatistik($policy->canSeeAllCosts() ? null : $user?->id),
+            'hepsi'      => $policy->canSeeAllCosts(),
         ]);
     }
 
-    /** GET panel/transkript/{kaynak_id} */
+    /** GET panel/transkript/{kaynak_id} — rapor; analiz sürüyorsa canlı ilerleme */
     public function goster(Request $request, string $kaynak_id): void
     {
+        $kaynak = $this->gorulebilirKaynak($kaynak_id);
+        $veri   = (new RaporVerisi($this->db))->getir($kaynak);
+        $adres  = parse_url(url_full(''));
+
+        Varliklar::youtubeIzinleri();
+
         $this->view('Transkript::goster', [
-            'title'    => 'Analiz raporu',
-            'kaynakId' => self::kimlik($kaynak_id),
+            'title'  => trim((string) $kaynak['baslik']) !== '' ? (string) $kaynak['baslik'] : 'Analiz raporu',
+            'kaynak' => $kaynak,
+            'veri'   => $veri,
+            'policy' => new TranskriptPolicy(Auth::user()),
+            // Gömülü oynatıcının postMessage hedefi: bu sayfanın kökeni.
+            'origin' => ($adres['scheme'] ?? 'http') . '://' . ($adres['host'] ?? 'localhost') . (isset($adres['port']) ? ':' . $adres['port'] : ''),
         ]);
+    }
+
+    /**
+     * GET panel/transkript/{kaynak_id}/transkript?q= — rapor sayfasındaki
+     * Transcript bölümü. q boşsa 15–30 sn'lik okunur bloklar, doluysa
+     * arama sonuçları (Search: FULLTEXT, kısa sorguda LIKE). Metin düz
+     * metindir; vurgulamayı JS textContent ile yapar.
+     */
+    public function transkript(Request $request, string $kaynak_id): void
+    {
+        $kaynak = $this->gorulebilirKaynak($kaynak_id);
+        $metin  = (new SegmentRepository($this->db))->sonMetin((int) $kaynak['id']);
+        $q      = mb_substr($request->input('q'), 0, 100);
+
+        if ($metin === null) {
+            Response::success("Bu kaynağın transcript'i henüz yok.", ['satirlar' => [], 'kelimeler' => [], 'arama' => $q !== '']);
+        }
+
+        if ($q === '') {
+            $satirlar = array_map(
+                static fn (Segment $b): array => self::satir($b->baslangicMs, $b->metin),
+                Cleaner::fromAyarlar()->hazirla((new SegmentRepository($this->db))->segmentler((int) $metin['id']))
+            );
+
+            Response::success(count($satirlar) . ' bölüm', ['satirlar' => $satirlar, 'kelimeler' => [], 'arama' => false]);
+        }
+
+        $satirlar = array_map(
+            static fn (array $s): array => self::satir((int) $s['baslangic_ms'], (string) $s['metin']),
+            (new Search($this->db))->segmentler((int) $metin['id'], $q, 100, Search::SIRA_ZAMAN)
+        );
+
+        Response::success(count($satirlar) . ' sonuç', ['satirlar' => $satirlar, 'kelimeler' => Search::queryWords($q), 'arama' => true]);
+    }
+
+    /**
+     * GET panel/transkript/varlik/{dosya} — modülün JS / CSS dosyası.
+     * Beyaz liste dışı ad 404. ?v= (dosya zamanı) varsa bir yıl önbellek.
+     */
+    public function varlik(Request $request, string $dosya): void
+    {
+        $yol    = Varliklar::yol($dosya) ?? throw HttpException::notFound();
+        $etiket = '"' . substr(sha1($dosya . filemtime($yol) . filesize($yol)), 0, 20) . '"';
+
+        if (!headers_sent()) {
+            header_remove('Pragma');
+            header('Content-Type: ' . Varliklar::tur($dosya));
+            header('Cache-Control: ' . ($request->input('v') !== '' ? 'private, max-age=31536000, immutable' : 'private, no-cache'));
+            header('ETag: ' . $etiket);
+        }
+
+        if (trim((string) ($_SERVER['HTTP_IF_NONE_MATCH'] ?? '')) === $etiket) {
+            http_response_code(304);
+            exit;
+        }
+
+        readfile($yol);
+        exit;
     }
 
     /**
@@ -63,7 +160,7 @@ final class KaynakController extends Controller
     public function analiz(Request $request): void
     {
         try {
-            $sonuc = (new AnalizBaslatici(Database::connection(), Auth::user()))
+            $sonuc = (new AnalizBaslatici($this->db, Auth::user()))
                 ->youtube($request->input('url'), $request->bool('yeniden'));
         } catch (AnalizReddedildi $e) {
             if ($e->beklemeSn > 0 && !headers_sent()) {
@@ -99,17 +196,27 @@ final class KaynakController extends Controller
      */
     public function ilerleme(Request $request, string $kaynak_id): void
     {
-        $db     = Database::connection();
-        $kaynak = (new KaynakRepository($db))->bul(self::kimlik($kaynak_id));
+        $durum = (new KaynakDurumu($this->db))->getir($this->gorulebilirKaynak($kaynak_id));
 
-        // Görme yetkisi olmayan kayıt "yok" sayılır; varlığı da sızmaz.
+        Response::success($durum['etiket'], $durum);
+    }
+
+    /** Kaynak yoksa ya da kullanıcı göremiyorsa 404 (varlığı da sızmaz). @return array<string,mixed> */
+    private function gorulebilirKaynak(string $kaynakId): array
+    {
+        $kaynak = (new KaynakRepository($this->db))->bul(self::kimlik($kaynakId));
+
         if ($kaynak === null || !(new TranskriptPolicy(Auth::user()))->canViewSource($kaynak)) {
             throw HttpException::notFound();
         }
 
-        $durum = (new KaynakDurumu($db))->getir($kaynak);
+        return $kaynak;
+    }
 
-        Response::success($durum['etiket'], $durum);
+    /** @return array{sn:int,zaman:string,metin:string} */
+    private static function satir(int $ms, string $metin): array
+    {
+        return ['sn' => intdiv($ms, 1000), 'zaman' => Zaman::yaz($ms), 'metin' => $metin];
     }
 
     /** Rotadaki {kaynak_id} yalnızca pozitif tam sayı olabilir; değilse 404. */
