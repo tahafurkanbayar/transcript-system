@@ -18,6 +18,7 @@
  *  ResultValidator (sabit JSON örnekleri), sağlayıcıların JSON modu,
  *  istemler, Pipeline (sahte sağlayıcıyla; API'ye gidilmez).
  *  Ekranlar: RaporVerisi, Varliklar (beyaz liste, CSP), liste sorgusu.
+ *  Dışa aktarma: Markdown, YouTube bölümleri, SRT / VTT / TXT.
  *
  *  Çıkış kodu: 0 → hepsi geçti, 1 → en az bir test kaldı.
  * =====================================================================
@@ -69,6 +70,7 @@ use Modules\Transkript\Repositories\KaynakRepository;
 use Modules\Transkript\Services\AnalizBaslatici;
 use Modules\Transkript\Services\AnalizReddedildi;
 use Modules\Transkript\Services\Chunker;
+use Modules\Transkript\Services\DisaAktarim;
 use Modules\Transkript\Services\GecersizSonuc;
 use Modules\Transkript\Services\Istem;
 use Modules\Transkript\Services\Cleaner;
@@ -204,6 +206,7 @@ $beklenen = [
     'GET panel/transkript/ilerleme/{kaynak_id}'              => 'UEY',
     'GET panel/transkript/varlik/{dosya}'                    => 'UEY',
     'GET panel/transkript/{kaynak_id}/transkript'            => 'UEY',
+    'GET panel/transkript/{kaynak_id}/indir/{bicim}'         => 'UEY',
     'GET panel/transkript/{kaynak_id}'                       => 'UEY',
     'POST panel/transkript/{kaynak_id}/sohbet'               => 'UEY',
     'POST api/v1/transkript/analiz'                          => 'EY',
@@ -1557,6 +1560,51 @@ $yoneticiPdo = new KayitPdo();
 (new KaynakRepository($yoneticiPdo))->liste(['durum' => 'uydurma'], 1, 10, 1, true);
 dogrula('Liste: yönetici her kaynağı görür; bilinmeyen durum filtresi yok sayılır',
     !str_contains(implode("\n", $yoneticiPdo->sorgular), ':ben') && str_contains(implode("\n", $yoneticiPdo->sorgular), 'WHERE 1 = 1'));
+
+/* ---------------------------------------------------------------- */
+echo "\nDışa aktarma (Markdown, YouTube bölümleri, SRT / VTT)\n";
+
+$kaynakOrnek = ['tur' => 'youtube', 'dis_kimlik' => 'iG9CE55wbtY', 'baslik' => 'Do schools kill creativity? | TED', 'kanal_adi' => 'TED', 'sure_sn' => 1159];
+$raporOrnek  = [
+    'summary'          => "İlk paragraf.\n\nİkinci [tıkla](javascript:alert(1)) paragraf.",
+    'detailed_summary' => '# başlık değil',
+    'topics'           => [['title' => 'Giriş', 'start' => '00:00:30', 'end' => '00:03:00', 'summary' => 'a'], ['title' => 'Okul', 'start' => '00:03:08', 'end' => null, 'summary' => ''],
+                           ['title' => 'Zeka', 'start' => '00:13:02', 'end' => null, 'summary' => ''], ['title' => 'Çok yakın', 'start' => '00:13:05', 'end' => null, 'summary' => '']],
+    'important_points' => [['text' => 'Önemli *nokta*', 'at' => '00:02:05', 'importance' => 'critical']],
+    'technical_information' => [['name' => 'PHP', 'category' => 'dil', 'description' => null, 'at' => null]],
+    'claims'           => [['text' => 'İddia', 'at' => '00:05:00', 'speaker_confidence' => 'opinion']],
+    'ideas'            => [], 'timestamps' => [['at' => '00:00:00', 'label' => 'Başlangıç']],
+    'recommendations'  => [['text' => 'Öneri']],
+];
+$md = DisaAktarim::markdown($kaynakOrnek, $raporOrnek, ['model' => 'gemini-2.5-flash', 'bitti_at' => '2026-10-09 09:00:00']);
+dogrula('Markdown: başlık, meta, bölümler, zaman damgası youtu.be bağlantısı',
+    str_starts_with($md, "# Do schools kill creativity? \\| TED\n") && str_contains($md, 'Kanal: TED · Süre: 19:19 · Video: <https://youtu.be/iG9CE55wbtY>')
+    && str_contains($md, '- **Kritik:** Önemli \\*nokta\\* [00:02:05](https://youtu.be/iG9CE55wbtY?t=125)')
+    && str_contains($md, "### Dil\n") && str_contains($md, '_(görüş)_') && str_contains($md, '_Transkript ile üretildi · gemini-2.5-flash · 09.10.2026 09:00.'));
+dogrula('Markdown: AI metni bağlantıya / başlığa dönüşmez (kaçışlanır), paragraflar korunur',
+    str_contains($md, "İlk paragraf.\n\nİkinci \\[tıkla\\](javascript:alert(1)) paragraf.") && str_contains($md, "\\# başlık değil")
+    && preg_match('/(?<!\\\\)\]\(javascript/', $md) === 0);
+
+$bolumler = DisaAktarim::bolumListesi($raporOrnek, 1159);
+dogrula('YouTube bölümleri: ilk satır 0:00, 10 sn\'den yakın bölüm atlanır, m:ss biçimi',
+    $bolumler === "0:00 Giriş\n3:08 Okul\n13:02 Zeka", json_encode($bolumler, JSON_UNESCAPED_UNICODE));
+dogrula('YouTube bölümleri: 3\'ten az bölüm → boş; 1 saatten uzun videoda h:mm:ss',
+    DisaAktarim::bolumListesi(['topics' => [['title' => 'A', 'start' => '00:00:00']], 'timestamps' => []]) === ''
+    && str_starts_with(DisaAktarim::bolumListesi(['topics' => [['title' => 'A', 'start' => '00:00:00'], ['title' => 'B', 'start' => '00:30:00'], ['title' => 'C', 'start' => '01:10:00']]]), "0:00:00 A\n0:30:00 B\n1:10:00 C"));
+
+$altyaziSegment = [new Segment(0, 2500, 'Merhaba'), new Segment(2000, 4000, 'dünya --> ok'), new Segment(4000, 4100, '  '), new Segment(4100, 6000, 'son')];
+$srt = DisaAktarim::altyazi($altyaziSegment, 'srt');
+$vtt = DisaAktarim::altyazi($altyaziSegment, 'vtt');
+dogrula('SRT: numaralı, virgüllü zaman, örtüşen satırın sonu kırpılır, boş satır atlanır',
+    str_starts_with($srt, "1\n00:00:00,000 --> 00:00:02,000\nMerhaba\n\n2\n00:00:02,000 --> 00:00:04,000\ndünya → ok\n\n3\n00:00:04,100 --> 00:00:06,000\nson\n"), json_encode($srt, JSON_UNESCAPED_UNICODE));
+dogrula('VTT: WEBVTT başlığı, noktalı zaman, numara yok',
+    str_starts_with($vtt, "WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nMerhaba\n") && !str_contains($vtt, "\n1\n"));
+dogrula('TXT: "[hh:mm:ss] metin" satırları', DisaAktarim::metin([new Segment(65000, 70000, 'Bir dakika beş.')]) === "[00:01:05] Bir dakika beş.\n");
+dogrula('Dosya adı ASCII: Türkçe katlanır, işaretler tire olur',
+    DisaAktarim::dosyaAdi($kaynakOrnek, 'rapor.md') === 'do-schools-kill-creativity-ted.rapor.md'
+    && DisaAktarim::dosyaAdi(['baslik' => 'Çılgın Şeyler!', 'dis_kimlik' => 'x'], 'transkript.srt') === 'cilgin-seyler.srt');
+dogrula('Okuma süresi: ~200 sözcük/dk, en az 1 dk',
+    RaporVerisi::okumaDakikasi(['summary' => str_repeat('söz ', 450)]) === 3 && RaporVerisi::okumaDakikasi([]) === 1);
 
 Logger::useDirectory(null);
 Setting::flush();
