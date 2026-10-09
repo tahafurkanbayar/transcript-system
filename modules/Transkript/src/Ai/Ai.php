@@ -15,7 +15,8 @@
  *
  *      gemini  (varsayılan)  ücretsiz katmanı var — aistudio.google.com
  *      groq                  ücretsiz katmanı var — console.groq.com
- *      openai-compatible     xAI (Grok), OpenRouter, Ollama …
+ *      openrouter / mistral / cerebras   ücretsiz katmanı var (OpenAI uyumlu)
+ *      openai-compatible     xAI (Grok), Ollama … (AI_BASE_URL ile)
  *      claude                ücretli — console.anthropic.com
  *
  *  ---------------------------------------------------------------
@@ -24,6 +25,11 @@
  *  deponun önündeki en pahalı engeldi: kodu okumak isteyen çoğu
  *  kişi çalışır hâlini hiç görmeden ayrılıyordu. Artık anahtar
  *  almak birkaç saniye sürüyor ve hiçbir şey ödemiyorsunuz.
+ *
+ *  ---------------------------------------------------------------
+ *  YEDEK ZİNCİRİ: AI_PROVIDERS=gemini,openrouter,groq verilirse
+ *  Pipeline bunları YedekliSaglayici ile sırayla dener (zincir(),
+ *  zincirdeKullanilabilir()). Sağlayıcı başına model <AD>_MODEL.
  *
  *  ---------------------------------------------------------------
  *  ANAHTAR ARAMA SIRASI
@@ -73,6 +79,30 @@ final class Ai
             'console'       => 'console.groq.com/keys',
             'free'          => true,
         ],
+        'openrouter' => [
+            'label'         => 'OpenRouter',
+            'key_names'     => ['OPENROUTER_API_KEY'],
+            'default_model' => 'meta-llama/llama-3.3-70b-instruct:free',
+            'base_url'      => 'https://openrouter.ai/api/v1',
+            'console'       => 'openrouter.ai/keys',
+            'free'          => true,
+        ],
+        'mistral' => [
+            'label'         => 'Mistral',
+            'key_names'     => ['MISTRAL_API_KEY'],
+            'default_model' => 'mistral-small-latest',
+            'base_url'      => 'https://api.mistral.ai/v1',
+            'console'       => 'console.mistral.ai/api-keys',
+            'free'          => true,
+        ],
+        'cerebras' => [
+            'label'         => 'Cerebras',
+            'key_names'     => ['CEREBRAS_API_KEY'],
+            'default_model' => 'llama-3.3-70b',
+            'base_url'      => 'https://api.cerebras.ai/v1',
+            'console'       => 'cloud.cerebras.ai',
+            'free'          => true,
+        ],
         'openai-compatible' => [
             'label'         => 'OpenAI uyumlu (xAI · OpenRouter · Ollama)',
             'key_names'     => ['AI_API_KEY', 'XAI_API_KEY', 'OPENROUTER_API_KEY'],
@@ -91,6 +121,9 @@ final class Ai
     ];
 
     private const DEFAULT_PROVIDER = 'gemini';
+
+    /** Her sağlayıcının ortak anahtarı (AI_API_KEY): zincirde yalnız birincile verilir. */
+    private const GENEL_ANAHTAR = 'AI_API_KEY';
 
     /* =================================================================
      *  SEÇİM
@@ -146,10 +179,18 @@ final class Ai
         return self::key($saglayici ?? self::provider()) !== '';
     }
 
-    /** Sağlayıcının anahtarını ortamdan okur. */
-    private static function key(string $saglayici): string
+    /**
+     * Sağlayıcının anahtarını ortamdan okur. $genel = false: ortak
+     * AI_API_KEY sayılmaz. Zincirde birincil olmayan halka için böyle
+     * çağrılır; yoksa Gemini'nin anahtarı Groq'a da gönderilirdi.
+     */
+    private static function key(string $saglayici, bool $genel = true): string
     {
         foreach ((array) (self::PROVIDERS[$saglayici]['key_names'] ?? []) as $name) {
+            if (!$genel && $name === self::GENEL_ANAHTAR) {
+                continue;
+            }
+
             $value = trim(Env::get((string) $name, ''));
 
             if ($value !== '') {
@@ -181,7 +222,7 @@ final class Ai
      *
      * @throws AiHatasi Bilinmeyen sağlayıcı ya da eksik anahtar/ayar.
      */
-    public static function make(string $saglayici, string $model = '', ?int $maxTokens = null, ?int $zamanAsimi = null): Provider
+    public static function make(string $saglayici, string $model = '', ?int $maxTokens = null, ?int $zamanAsimi = null, bool $genelAnahtar = true): Provider
     {
         $name = strtolower(trim($saglayici));
 
@@ -189,7 +230,7 @@ final class Ai
             throw new AiHatasi('Bilinmeyen AI sağlayıcısı: "' . $saglayici . '".', 'ayar_eksik');
         }
 
-        $key = self::key($name);
+        $key = self::key($name, $genelAnahtar);
 
         if ($key === '') {
             $expected = (string) ((array) self::PROVIDERS[$name]['key_names'])[0];
@@ -201,7 +242,7 @@ final class Ai
             ), 'anahtar_yok');
         }
 
-        $model     = trim($model) !== '' ? trim($model) : (string) self::PROVIDERS[$name]['default_model'];
+        $model     = trim($model) !== '' ? trim($model) : self::varsayilanModel($name);
         /* Env::get boş satırda ('AI_MAX_TOKENS=') varsayılanı değil ''
          * döndürür; (int) '' = 0 sınırı 256'ya düşürür ve yanıt yarıda
          * kesilirdi. Env::int boş değerde varsayılanı verir. */
@@ -217,7 +258,7 @@ final class Ai
                 $zamanAsimi,
             ),
 
-            'groq', 'openai-compatible' => new OpenAiCompatibleProvider(
+            'groq', 'openrouter', 'mistral', 'cerebras', 'openai-compatible' => new OpenAiCompatibleProvider(
                 $key,
                 $model,
                 self::baseUrl($name),
@@ -247,7 +288,8 @@ final class Ai
     {
         $url = trim(Env::get('AI_BASE_URL', ''));
 
-        if ($url !== '') {
+        // Zincirde AI_BASE_URL yalnız kendi sağlayıcısına aittir (birincil ya da openai-compatible).
+        if ($url !== '' && ($name === 'openai-compatible' || $name === self::provider())) {
             return $url;
         }
 
@@ -263,6 +305,87 @@ final class Ai
         }
 
         return $known;
+    }
+
+    /**
+     * Sağlayıcının modeli: <AD>_MODEL (ör. GROQ_MODEL, OPENROUTER_MODEL)
+     * varsa o, yoksa bilinen varsayılan. AI_MODEL yalnız birincil
+     * sağlayıcıya aittir (model()); burada okunmaz.
+     */
+    public static function varsayilanModel(string $ad): string
+    {
+        $ortam = trim(Env::get(strtoupper(str_replace('-', '_', $ad)) . '_MODEL', ''));
+
+        return $ortam !== '' ? $ortam : (string) (self::PROVIDERS[$ad]['default_model'] ?? '');
+    }
+
+    /* =================================================================
+     *  YEDEK ZİNCİRİ (YedekliSaglayici)
+     * ============================================================== */
+
+    /**
+     * Denenecek sağlayıcılar, sırayla: .env AI_PROVIDERS
+     * (ör. "gemini,openrouter,groq"). Boşsa yalnız AI_PROVIDER.
+     * Bilinmeyen ve tekrarlanan adlar atlanır.
+     *
+     * @return list<string>
+     */
+    public static function zincir(): array
+    {
+        $liste = [];
+
+        foreach (Env::list('AI_PROVIDERS', []) as $ad) {
+            $ad = strtolower(trim((string) $ad));
+
+            if (isset(self::PROVIDERS[$ad]) && !in_array($ad, $liste, true)) {
+                $liste[] = $ad;
+            }
+        }
+
+        return $liste !== [] ? $liste : [self::provider()];
+    }
+
+    /**
+     * Zincire girebilir mi: anahtarı (birincil değilse kendi adına
+     * olanı) tanımlı ve gerekiyorsa taban adresi biliniyor.
+     */
+    public static function zincirdeKullanilabilir(string $ad, bool $birincil): bool
+    {
+        if (!isset(self::PROVIDERS[$ad]) || self::key($ad, $birincil) === '') {
+            return false;
+        }
+
+        return $ad !== 'openai-compatible' || trim(Env::get('AI_BASE_URL', '')) !== '';
+    }
+
+    /**
+     * Ayarlar ekranı için zincirin durumu (anahtar değeri yok).
+     *
+     * @return list<array{ad:string, etiket:string, tanimli:bool, model:string, dinlenme_sn:int, ucretsiz:bool, konsol:string}>
+     */
+    public static function zincirDurumu(): array
+    {
+        $durum = [];
+
+        foreach (self::zincir() as $i => $ad) {
+            $durum[] = [
+                'ad'          => $ad,
+                'etiket'      => (string) self::PROVIDERS[$ad]['label'],
+                'tanimli'     => self::zincirdeKullanilabilir($ad, $i === 0),
+                'model'       => $i === 0 && $ad === self::provider() ? self::model() : self::varsayilanModel($ad),
+                'dinlenme_sn' => YedekliSaglayici::dinlenmeKalan($ad),
+                'ucretsiz'    => (bool) self::PROVIDERS[$ad]['free'],
+                'konsol'      => (string) self::PROVIDERS[$ad]['console'],
+            ];
+        }
+
+        return $durum;
+    }
+
+    /** Okunur ad ("Groq"); bilinmiyorsa kendisi. */
+    public static function etiket(string $ad): string
+    {
+        return (string) (self::PROVIDERS[$ad]['label'] ?? $ad);
     }
 
     /* =================================================================

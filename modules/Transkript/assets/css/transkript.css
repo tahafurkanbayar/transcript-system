@@ -188,3 +188,8 @@ a.tk-zaman.is-oynuyor { background: var(--cy-brand); color: #fff; }
 
 /* Liste: sağa yaslı üst satır (yönetici ayarları) */
 .tk-ust--sag { display: flex; justify-content: flex-end; }
+
+/* Ayarlar → Durum: yapay zekâ yedek sırası */
+.tk-zincir { margin: 0; padding-left: 1.1rem; }
+.tk-zincir li { margin-bottom: .35rem; }
+.tk-zincir .cy-pill { margin-left: .25rem; }

@@ -1,7 +1,7 @@
 {
     "baslik": "Transkript",
     "aciklama": "YouTube videolarından zaman damgalı transcript ve Türkçe yapay zekâ raporu (ses / video dosyası yükleme sonraki aşamada)",
-    "surum": "0.3.0",
+    "surum": "0.4.0",
     "kurulumda_acik": true,
 
     "yetkiler": {

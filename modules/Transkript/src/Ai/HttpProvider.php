@@ -31,6 +31,9 @@ abstract class HttpProvider implements Provider
     /** Geçici hatalarda kaç kez yeniden denensin? */
     protected const MAX_RETRIES = 3;
 
+    /** null: MAX_RETRIES. Yedek zincirinde son halka değilse 0 (bkz. yenidenDenemeSiniri). */
+    private ?int $denemeSiniri = null;
+
     public function __construct(
         protected readonly string $apiKey,
         protected readonly string $modelName,
@@ -42,6 +45,25 @@ abstract class HttpProvider implements Provider
     public function model(): string
     {
         return $this->modelName;
+    }
+
+    /**
+     * Geçici hatada (429, 5xx, ağ) aynı istek içinde en çok kaç kez
+     * yeniden denensin. YedekliSaglayici, zincirde arkasında başka
+     * sağlayıcı olan halkayı 0'a çeker: kotası dolan servisi dakikalarca
+     * beklemek yerine hemen sıradakine geçilir. Son halka varsayılanla
+     * (MAX_RETRIES, Retry-After uyumu) çalışır.
+     */
+    public function yenidenDenemeSiniri(int $kez): static
+    {
+        $this->denemeSiniri = max(0, $kez);
+
+        return $this;
+    }
+
+    private function denemeSiniri(): int
+    {
+        return $this->denemeSiniri ?? static::MAX_RETRIES;
     }
 
     /* =================================================================
@@ -154,7 +176,7 @@ abstract class HttpProvider implements Provider
 
             if ($curlError !== '') {
                 // Ağ hatası da geçicidir; aynı kurallarla yeniden deniyoruz.
-                if ($attempt <= static::MAX_RETRIES) {
+                if ($attempt <= $this->denemeSiniri()) {
                     $this->backoff($attempt, null);
 
                     continue;
@@ -179,7 +201,7 @@ abstract class HttpProvider implements Provider
 
             $retryable = $this->retryable($status, $raw);
 
-            if ($retryable && $attempt <= static::MAX_RETRIES) {
+            if ($retryable && $attempt <= $this->denemeSiniri()) {
                 /* SUNUCU "NE KADAR BEKLE" DERSE ONA UYULUR.
                  * Retry-After başlığı varken kendi hesabımızı
                  * dayatmak, hız sınırına tekrar çarpmak demektir. */

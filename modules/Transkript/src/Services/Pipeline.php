@@ -34,6 +34,7 @@ use Closure;
 use Modules\Transkript\Ai\Ai;
 use Modules\Transkript\Ai\AiHatasi;
 use Modules\Transkript\Ai\Provider;
+use Modules\Transkript\Ai\YedekliSaglayici;
 use Modules\Transkript\Ayarlar;
 use Modules\Transkript\Repositories\AiKullanimRepository;
 use Modules\Transkript\Transcript\Segment;
@@ -282,9 +283,19 @@ final class Pipeline
             try {
                 $yanit = $saglayici->sendJson($mesajlar, $istem->sistem, $sema, $ek);
             } catch (AiHatasi $e) {
-                $this->kaydet($ad, $saglayici->model(), null, $baslangic, 'hata');
+                if ($saglayici instanceof YedekliSaglayici) {
+                    $this->denemeleriKaydet($saglayici);
+                } else {
+                    $this->kaydet($ad, $saglayici->model(), null, $baslangic, 'hata');
+                }
 
                 throw $e;
+            }
+
+            // Zincirde önce düşenler "hata" satırı olur; yanıtı veren adıyla yazılır.
+            if ($saglayici instanceof YedekliSaglayici) {
+                $this->denemeleriKaydet($saglayici);
+                $ad = $saglayici->sonAd();
             }
 
             $durum = 'gecersiz';
@@ -323,6 +334,21 @@ final class Pipeline
             . ' açıklama ya da kod bloğu ekleme.';
     }
 
+    /** Yedek zincirinde düşen sağlayıcılar: token yok, süre ve ad var. */
+    private function denemeleriKaydet(YedekliSaglayici $zincir): void
+    {
+        foreach ($zincir->denemeler() as $d) {
+            $this->kullanim->kaydet([
+                'saglayici'   => $d['ad'],
+                'model'       => $d['model'],
+                'giris_token' => 0,
+                'cikis_token' => 0,
+                'maliyet_usd' => 0.0,
+                'sure_ms'     => $d['sure_ms'],
+            ], 'analiz', $this->analizId, 'hata');
+        }
+    }
+
     /** @param array<string,mixed>|null $yanit */
     private function kaydet(string $saglayici, string $model, ?array $yanit, int|float $baslangic, string $durum): void
     {
@@ -355,24 +381,56 @@ final class Pipeline
     }
 
     /**
-     * config (ai.<aşama>) + .env'den sağlayıcı.
+     * config (ai.<aşama>) + .env'den sağlayıcı. .env'de AI_PROVIDERS ile
+     * birden çok sağlayıcı verildiyse YedekliSaglayici döner (ad "zincir"):
+     * birincil önce, kotası dolarsa sıradaki. Anahtarı tanımlı olmayan
+     * halka atlanır; tek halka kalırsa düz sağlayıcı (eski davranış).
+     *
+     * Aşamanın modeli (config / panel, yoksa AI_MODEL) yalnız birincile
+     * uygulanır; diğerleri kendi <AD>_MODEL'ini ya da varsayılanını
+     * kullanır. Gemini'ye özel ek (thinkingConfig) yalnız Gemini halkasına.
      *
      * @return array{0: Provider, 1: string}
      */
-    private static function saglayiciUret(string $asama): array
+    public static function saglayiciUret(string $asama): array
     {
-        $ayar = (array) Ayarlar::get('ai.' . $asama, []);
-        $ad   = strtolower(trim((string) ($ayar['saglayici'] ?? '')));
-        $ad   = $ad !== '' ? $ad : Ai::provider();
+        $ayar     = (array) Ayarlar::get('ai.' . $asama, []);
+        $zincir   = Ai::zincir();
+        $birincil = strtolower(trim((string) ($ayar['saglayici'] ?? '')));
+        $birincil = $birincil !== '' ? $birincil : $zincir[0];
+        $adlar    = array_values(array_unique([$birincil, ...$zincir]));
 
         $model = trim((string) ($ayar['model'] ?? ''));
-        // AI_MODEL yalnız .env'deki sağlayıcıya aittir; aşama başka sağlayıcıdaysa onun varsayılanı.
-        $model = $model !== '' ? $model : ($ad === Ai::provider() ? trim(Env::get('AI_MODEL')) : '');
+        // AI_MODEL ve paneldeki model .env'deki sağlayıcıya aittir; birincil başkaysa onun varsayılanı.
+        $model = $birincil === Ai::provider() ? ($model !== '' ? $model : trim(Env::get('AI_MODEL'))) : '';
 
-        return [
-            Ai::make($ad, $model, (int) ($ayar['max_token'] ?? 8192), (int) ($ayar['zaman_asimi'] ?? 120)),
-            $ad,
-        ];
+        $maxToken  = (int) ($ayar['max_token'] ?? 8192);
+        $zamanAsim = (int) ($ayar['zaman_asimi'] ?? 120);
+
+        if (count($adlar) === 1) {
+            return [Ai::make($birincil, $model, $maxToken, $zamanAsim), $birincil];
+        }
+
+        $halkalar = [];
+
+        foreach ($adlar as $i => $ad) {
+            if (!Ai::zincirdeKullanilabilir($ad, $i === 0)) {
+                continue;
+            }
+
+            $halkalar[] = [
+                'ad'        => $ad,
+                'saglayici' => Ai::make($ad, $i === 0 ? $model : '', $maxToken, $zamanAsim, $i === 0),
+                'ek'        => $ad === 'gemini' ? (array) ($ayar['gemini_ek'] ?? []) : [],
+            ];
+        }
+
+        return match (count($halkalar)) {
+            // Hiçbirinin anahtarı yok: birincilin Türkçe "anahtar yok" hatası.
+            0       => [Ai::make($birincil, $model, $maxToken, $zamanAsim), $birincil],
+            1       => [$halkalar[0]['saglayici'], $halkalar[0]['ad']],
+            default => [new YedekliSaglayici($halkalar), 'zincir'],
+        };
     }
 
     private static function bilgi(mixed $deger): string

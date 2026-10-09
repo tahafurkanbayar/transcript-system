@@ -91,6 +91,24 @@ $tanimli = static fn (bool $var): string => $var
             <dl class="tk-bilgi__liste">
                 <dt>Yapay zekâ</dt><dd><?= e($durum['saglayici']) ?></dd>
                 <dt>API anahtarı</dt><dd><?= $tanimli($durum['ai_anahtar']) ?></dd>
+                <dt>Yedek sırası</dt><dd>
+                    <?php if (count($durum['zincir']) > 1): ?>
+                        <ol class="tk-zincir">
+                            <?php foreach ($durum['zincir'] as $halka): ?>
+                                <li>
+                                    <strong><?= e($halka['etiket']) ?></strong>
+                                    <?= $tanimli($halka['tanimli']) ?>
+                                    <?php if ($halka['dinlenme_sn'] > 0): ?>
+                                        <span class="cy-pill is-warn" title="Hata verdi; bu süre sona alındı">Dinleniyor · <?= e((string) max(1, (int) ceil($halka['dinlenme_sn'] / 60))) ?> dk</span>
+                                    <?php endif; ?>
+                                    <span class="cy-mono small d-block cy-muted"><?= e($halka['model'] !== '' ? $halka['model'] : '—') ?></span>
+                                </li>
+                            <?php endforeach; ?>
+                        </ol>
+                    <?php else: ?>
+                        <span class="cy-muted small">Yok. Kotası dolunca analiz durur.</span>
+                    <?php endif; ?>
+                </dd>
                 <dt>YouTube Data API</dt><dd><?= $tanimli($durum['yt_anahtar']) ?></dd>
                 <dt>Transcript sırası</dt><dd class="cy-mono"><?= e($durum['transcript'] !== '' ? $durum['transcript'] : '—') ?></dd>
                 <dt>İstem sürümü</dt><dd class="cy-mono"><?= e($durum['istem']) ?></dd>
@@ -103,6 +121,8 @@ $tanimli = static fn (bool $var): string => $var
             <p class="cy-panel__note mb-0">
                 Anahtarlar yalnızca sunucudaki <span class="cy-mono">.env</span> dosyasında durur; burada değeri gösterilmez ve değiştirilemez.
                 Sağlayıcı <span class="cy-mono">AI_PROVIDER</span>, anahtar <span class="cy-mono">GEMINI_API_KEY</span> / <span class="cy-mono">CLAUDE_API_KEY</span>.
+                Yedek: <span class="cy-mono">AI_PROVIDERS=gemini,openrouter,mistral,groq</span> ve her birinin anahtarı
+                (<span class="cy-mono">OPENROUTER_API_KEY</span> …); biri kota ya da hata verirse sıradaki denenir.
             </p>
             <?php if ($durum['kuyruk']['takildi']): ?>
                 <p class="cy-panel__note is-warn mt-2 mb-0">İşçiyi başlatmak için proje klasöründe: <code><?= e(KuyrukDurumu::KOMUT_ELLE) ?></code></p>
