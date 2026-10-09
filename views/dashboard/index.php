@@ -22,6 +22,7 @@ $latestMessages = $latestMessages ?? [];
 $latestUsers    = $latestUsers ?? null;
 $chart          = $chart ?? [];
 $profil         = $profil ?? null;
+$paneller       = $paneller ?? [];
 
 /* ---------------------------------------------------------------------
  *  SELAMLAMA — saate göre + Türkçe uzun tarih (sıfır bağımlılık)
@@ -120,6 +121,11 @@ if (!can('users.view')) {
         <?php endforeach; ?>
     </div>
 <?php endif; ?>
+
+<?php /* Modül bölümleri (DashboardPanels): HTML'i modülün görünümü üretir ve kaçışlar. */ ?>
+<?php foreach ($paneller as $panelHtml): ?>
+    <div class="mb-3"><?= $panelHtml ?></div>
+<?php endforeach; ?>
 
 <?php if ($latestUsers !== null): ?>
     <div class="row g-3">

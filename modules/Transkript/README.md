@@ -17,6 +17,10 @@ isteğiyle:
   yöneticidedir. Editör analiz başlatır ve API anahtarı alır. Starter'da
   editör sayfa ve mesaj yönetiyordu; geri açmak için `Role::ABILITIES`'e
   `pages.*`, `messages.*` ve `mail.view` eklenir.
+- **Kontrol Paneli bölüm kancası** (`app/Core/DashboardPanels.php`, 2026-10-09):
+  modüllerin panele liste bölümü eklediği genel kanca; Transkript yöneticiye
+  "Son analizler"i bununla gösterir. `DashboardController` ve
+  `views/dashboard/index.php`'de birer satır.
 - **Editör ekranda "Analist"** (`Role::LABELS`, 2026-10-09): rol artık içerik
   düzenlemiyor, analiz yapıyor. Rol anahtarı `editor` kaldı; veritabanı ve
   `module.json` değişmedi.

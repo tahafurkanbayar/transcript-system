@@ -3,6 +3,28 @@
 Starter'ın sürüm geçmişi kökteki `CHANGELOG.md`'dedir; bu dosya yalnız
 `modules/Transkript/` içindir. Biçim [Keep a Changelog](https://keepachangelog.com/tr/1.1.0/).
 
+## 0.6.1 (2026-10-09): yönetici Kontrol Paneli
+
+### Eklenenler
+- "Yapay zekâ sağlayıcıları" kartı: kaç sağlayıcı hazır, ilk açılacak
+  olanın saati, bugünkü çağrı sayısı; Transkript ayarlarındaki tabloya gider.
+- "Son analizler" bölümü: son 5 analiz, durum, başlatan, süre.
+- Kuyruk kartı: işçi yokken tarayıcıdan işleme açıksa "Kuyruk tarayıcı
+  üzerinden işleniyor", kapalıysa kırmızı "Kuyruk işçisi çalışmıyor"
+  (eskiden yalnız iş 2 dakikadır bekliyorsa görünüyordu).
+
+### Düzeltilenler
+- Birim testleri liste / rapor görünümünü çizerken kütüphane sorusunu
+  veritabanına soruyordu (yerelde fark edilmedi, CI'da çökerdi); örnek
+  satırlar `kutuphanede` taşıyor.
+
+### Çekirdek
+- `app/Core/DashboardPanels.php`: modüllerin Kontrol Paneli'ne liste bölümü
+  eklediği genel kanca (`DashboardCards`'ın eşi; modüle özel kod yok);
+  `DashboardController` ve `views/dashboard/index.php`'de birer satır.
+- `config/app.php` → `test_sayisi` 341 (CI'daki starter test sayısı; önceki
+  turda eklenen editör testinden beri bir eksikti).
+
 ## 0.6.0 (2026-10-09): kişisel kütüphane, paylaşım, rol modeli
 
 Cowork 5. tur: kayıt açıkken kayıt olan herkes bütün raporları görüyordu.
