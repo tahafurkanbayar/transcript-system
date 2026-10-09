@@ -23,6 +23,15 @@
  *  IP'yi paylaşan (ya da aynı vekilin arkasındaki) bir saldırgan
  *  yöneticiyi dışarıda bırakamaz. Çerez parolayı ASLA atlatmaz; yalnızca
  *  hangi sayaca yazılacağını belirler. Parola değişince geçersizdir.
+ *
+ *  KULLANICI OLARAK OTURUM AÇMA (transcript-system, 2026-10-09)
+ *  Yönetici, parolasını bilmeden bir üyenin ya da analistin gözünden
+ *  paneli gezebilir (Kullanıcılar → "Bu kullanıcı olarak gir"). Oturumda
+ *  üyenin kimliğinin yanında asıl yöneticinin kimliği ve oturum sürümü
+ *  de tutulur; yönetici de her istekte yeniden doğrulanır (pasife
+ *  alındıysa, parolası değiştiyse ya da üye bu arada yönetici yapıldıysa
+ *  oturum kapanır). Yönetici hesabına geçilemez. Üyenin "beni hatırla"
+ *  jetonuna, güvenilen cihaz çerezine ve son giriş bilgisine dokunulmaz.
  * =====================================================================
  */
 
@@ -45,6 +54,13 @@ final class Auth
 
     private const SESSION_KEY     = '_auth_user_id';
     private const SESSION_VERSION = '_auth_ver';
+
+    /** Kullanıcı olarak gezen yöneticinin kimliği ve oturum sürümü (bkz. impersonate). */
+    private const SESSION_IMPERSONATOR         = '_auth_asil_id';
+    private const SESSION_IMPERSONATOR_VERSION = '_auth_asil_ver';
+
+    /** Hesap değişince oturumda kalan anahtarlar; geri kalan her şey kişiye aittir ve silinir. */
+    private const SESSION_SYSTEM_KEYS = ['_fingerprint', '_last_activity', '_created'];
 
     /**
      * "Beni hatırla" çerezi.
@@ -82,6 +98,7 @@ final class Auth
 
     private static ?User $cached = null;
     private static bool  $resolved = false;
+    private static ?User $impersonator = null;
 
     public static function user(): ?User
     {
@@ -121,7 +138,35 @@ final class Auth
             return self::$cached = null;
         }
 
+        if (Session::has(self::SESSION_IMPERSONATOR) && !self::resolveImpersonator($user)) {
+            Logger::security('Kullanıcı olarak gezinme sona erdi: yönetici artık geçerli değil', ['kullanici' => $user->id]);
+
+            self::forget();
+
+            return self::$cached = null;
+        }
+
         return self::$cached = $user;
+    }
+
+    /**
+     * Kullanıcı olarak gezen yönetici HER İSTEKTE yeniden doğrulanır:
+     * hâlâ aktif yönetici mi, parolası değişmedi mi, gezdiği hesap hâlâ
+     * geçilebilir mi (bu arada yönetici yapılmış olabilir)?
+     */
+    private static function resolveImpersonator(User $user): bool
+    {
+        $asil = (new UserRepository(Database::connection()))->find((int) Session::get(self::SESSION_IMPERSONATOR));
+
+        if ($asil === null
+            || (int) Session::get(self::SESSION_IMPERSONATOR_VERSION, -1) !== $asil->oturumSurumu
+            || self::impersonationBlock($asil, $user) !== null) {
+            return false;
+        }
+
+        self::$impersonator = $asil;
+
+        return true;
     }
 
     public static function check(): bool
@@ -142,6 +187,110 @@ final class Auth
     public static function isSelf(int $userId): bool
     {
         return self::id() === $userId;
+    }
+
+    /* =================================================================
+     *  KULLANICI OLARAK OTURUM AÇMA (bkz. sınıf açıklaması)
+     * ============================================================== */
+
+    /** Yönetici başka bir kullanıcı olarak geziyorsa asıl yönetici; değilse null. */
+    public static function impersonator(): ?User
+    {
+        self::user();
+
+        return self::$impersonator;
+    }
+
+    /**
+     * $actor, $target olarak oturum açabilir mi? Açabiliyorsa null; açamıyorsa
+     * HTTP durumu ve Türkçe gerekçe. Veritabanına gitmez (birim testi).
+     *
+     * Yalnız yönetici, yalnız aktif ve yönetici olmayan bir hesaba geçer:
+     * başka bir yöneticinin kimliğiyle yapılan işlem onun adına
+     * kaydedilirdi.
+     *
+     * @return array{durum:int,mesaj:string}|null
+     */
+    public static function impersonationBlock(User $actor, User $target): ?array
+    {
+        return match (true) {
+            !$actor->isAdmin() || !$actor->isActive() => ['durum' => 403, 'mesaj' => 'Başka bir kullanıcı olarak yalnızca yöneticiler oturum açabilir.'],
+            $actor->id === $target->id                 => ['durum' => 409, 'mesaj' => 'Zaten bu hesaptasınız.'],
+            $target->isAdmin()                         => ['durum' => 403, 'mesaj' => 'Yönetici hesaplarıyla oturum açılamaz.'],
+            !$target->isActive()                       => ['durum' => 409, 'mesaj' => 'Yalnızca aktif hesaplarla oturum açılabilir; hesap şu an ' . mb_strtolower($target->statusLabel(), 'UTF-8') . '.'],
+            default                                    => null,
+        };
+    }
+
+    /**
+     * Oturumdaki yönetici bundan sonra $target olarak gezer. Parola
+     * sorulmaz; "beni hatırla", güvenilen cihaz ve son giriş bilgisi
+     * değişmez. Oturumdaki kişisel veri (bildirimler, yarım formlar)
+     * silinir, oturum kimliği ve CSRF anahtarı yenilenir.
+     *
+     * @return array{durum:int,mesaj:string}|null null → geçildi
+     */
+    public static function impersonate(User $target): ?array
+    {
+        $asil = self::user();
+
+        if ($asil === null || self::$impersonator !== null) {
+            return ['durum' => 409, 'mesaj' => 'Önce yönetici hesabınıza dönün.'];
+        }
+
+        $engel = self::impersonationBlock($asil, $target);
+
+        if ($engel !== null) {
+            return $engel;
+        }
+
+        self::switchSession($target);
+        Session::set(self::SESSION_IMPERSONATOR, $asil->id);
+        Session::set(self::SESSION_IMPERSONATOR_VERSION, $asil->oturumSurumu);
+        self::$impersonator = $asil;
+
+        Logger::security('Yönetici başka bir kullanıcı olarak oturum açtı', [
+            'yonetici'  => $asil->id,
+            'kullanici' => $target->id,
+            'rol'       => $target->rol,
+            'ip'        => Ip::client(),
+        ]);
+
+        return null;
+    }
+
+    /**
+     * Kullanıcı olarak gezinmeyi bitirir, yöneticinin kendi oturumuna
+     * döner. Gezinme yoksa null.
+     */
+    public static function stopImpersonating(): ?User
+    {
+        $asil = self::impersonator();
+        $uye  = self::$cached;
+
+        if ($asil === null) {
+            return null;
+        }
+
+        self::switchSession($asil);
+
+        Logger::security('Yönetici kendi hesabına döndü', ['yonetici' => $asil->id, 'kullanici' => $uye?->id]);
+
+        return $asil;
+    }
+
+    /** Hesap değiştirir: kişisel oturum verisi silinir, kimlik ve CSRF anahtarı yenilenir. */
+    private static function switchSession(User $user): void
+    {
+        Session::regenerate();
+        Session::keepOnly(self::SESSION_SYSTEM_KEYS);
+        Session::set(self::SESSION_KEY, $user->id);
+        Session::set(self::SESSION_VERSION, $user->oturumSurumu);
+        Csrf::rotate();
+
+        self::$cached       = $user;
+        self::$resolved     = true;
+        self::$impersonator = null;
     }
 
     /**
@@ -364,12 +513,15 @@ final class Auth
     public static function login(User $user): void
     {
         Session::regenerate();
+        Session::forget(self::SESSION_IMPERSONATOR);
+        Session::forget(self::SESSION_IMPERSONATOR_VERSION);
         Session::set(self::SESSION_KEY, $user->id);
         Session::set(self::SESSION_VERSION, $user->oturumSurumu);
         Csrf::rotate();
 
-        self::$cached   = $user;
-        self::$resolved = true;
+        self::$cached       = $user;
+        self::$resolved     = true;
+        self::$impersonator = null;
     }
 
     /**
@@ -433,7 +585,10 @@ final class Auth
          * yeterli. */
         $current = self::$resolved ? self::$cached?->id : Session::get(self::SESSION_KEY);
 
-        if ((int) $current !== $userId) {
+        /* Kullanıcı olarak gezen yönetici bu cihaza üyenin "beni hatırla"
+         * ya da cihaz çerezini yazmamalı (Hesabım'daki bu işlemler o
+         * sırada zaten kapalı, bkz. Middleware 'kendi-oturumu'). */
+        if ((int) $current !== $userId || Session::has(self::SESSION_IMPERSONATOR)) {
             return;
         }
 
@@ -459,21 +614,27 @@ final class Auth
         /* Oturum YOK EDİLMEDEN ÖNCE: dinleyiciler oturumdaki veriye
          * hâlâ erişebilmeli. */
         if (self::$cached !== null) {
-            Logger::info('Çıkış yapıldı', ['kullanici' => self::$cached->id], 'auth');
+            /* Kullanıcı olarak gezilirken çıkan, bu tarayıcının asıl sahibi
+             * olan YÖNETİCİDİR: onun jetonu iptal edilir. Üyenin kendi
+             * cihazındaki "beni hatırla" oturumu açık kalır. */
+            $kim = self::$impersonator ?? self::$cached;
+
+            Logger::info('Çıkış yapıldı', ['kullanici' => $kim->id] + ($kim !== self::$cached ? ['gezilen' => self::$cached->id] : []), 'auth');
 
             /* Çıkış, "beni hatırla" jetonunu da İPTAL ETMELİDİR.
              * Etmeseydi çıkış yapan kullanıcı bir sonraki istekte
              * çerez sayesinde yeniden içeri alınırdı — ortak
              * bilgisayarda tam bir güvenlik açığı. */
-            self::forgetRemember(self::$cached->id);
+            self::forgetRemember($kim->id);
 
-            Events::dispatch(new UserLoggedOut(self::$cached->id));
+            Events::dispatch(new UserLoggedOut($kim->id));
         }
 
         Session::destroy();
 
-        self::$cached   = null;
-        self::$resolved = true;
+        self::$cached       = null;
+        self::$resolved     = true;
+        self::$impersonator = null;
     }
 
     /* =================================================================
@@ -657,6 +818,10 @@ final class Auth
     {
         Session::forget(self::SESSION_KEY);
         Session::forget(self::SESSION_VERSION);
+        Session::forget(self::SESSION_IMPERSONATOR);
+        Session::forget(self::SESSION_IMPERSONATOR_VERSION);
+
+        self::$impersonator = null;
     }
 
     private static function genericFailure(): string

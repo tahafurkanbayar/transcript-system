@@ -439,6 +439,7 @@ body.cy-app {
 .cy-btn-icon--view:hover   { background: var(--cy-info);    border-color: var(--cy-info); }
 .cy-btn-icon--edit:hover   { background: var(--cy-warning); border-color: var(--cy-warning); }
 .cy-btn-icon--delete:hover { background: var(--cy-danger);  border-color: var(--cy-danger); }
+.cy-btn-icon--as:hover     { background: var(--cy-success); border-color: var(--cy-success); }
 
 .cy-actions { display: inline-flex; gap: .3rem; }
 
@@ -1273,4 +1274,60 @@ html[data-cy-theme="dark"] .cy-site-nav__brand img { background: #eef2f7; border
     html:not([data-cy-theme="light"]) .cy-sidebar__logo,
     html:not([data-cy-theme="light"]) .cy-auth-card__logo { background: #eef2f7; border-color: transparent; }
     html:not([data-cy-theme="light"]) .cy-site-nav__brand img { background: #eef2f7; border-radius: 8px; padding: 3px; }
+}
+
+/* ------------------------------------------------------------------
+ *  KULLANICI OLARAK GEZİNME BANDI (partials/gezinme-bandi.php)
+ * ------------------------------------------------------------------
+ *  Yan menü sabit olduğu için bant üste değil, altta ortada yüzer;
+ *  sayfanın son satırı bandın altında kalmasın diye gövdeye boşluk
+ *  verilir.
+ * ------------------------------------------------------------------ */
+.cy-gezinme {
+    position: fixed;
+    left: 50%;
+    bottom: max(1rem, env(safe-area-inset-bottom));
+    transform: translateX(-50%);
+    z-index: 1085;
+    display: flex;
+    align-items: center;
+    gap: .75rem;
+    width: max-content;
+    max-width: calc(100vw - 2rem);
+    padding: .5rem .5rem .5rem 1rem;
+    border: 1px solid var(--cy-warning);
+    border-radius: 999px;
+    background: var(--cy-warning-soft);
+    color: var(--cy-warning-text);
+    box-shadow: var(--cy-shadow-lg);
+    font-size: .875rem;
+}
+
+.cy-gezinme__metin { display: inline-flex; align-items: center; gap: .5rem; min-width: 0; }
+.cy-gezinme__metin > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.cy-gezinme__dugme {
+    display: inline-flex;
+    align-items: center;
+    gap: .35rem;
+    flex-shrink: 0;
+    min-height: 34px;
+    padding: .3rem .85rem;
+    border: 0;
+    border-radius: 999px;
+    background: var(--cy-warning);
+    color: #fff;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.cy-gezinme__dugme:hover,
+.cy-gezinme__dugme:focus-visible { filter: brightness(.92); }
+
+body:has(.cy-gezinme) { padding-bottom: 4.5rem; }
+
+@media (max-width: 575.98px) {
+    .cy-gezinme { border-radius: var(--cy-radius); flex-wrap: wrap; justify-content: center; padding: .6rem .75rem; }
+    .cy-gezinme__metin > span { white-space: normal; }
+    body:has(.cy-gezinme) { padding-bottom: 7rem; }
 }

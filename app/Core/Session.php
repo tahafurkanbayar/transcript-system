@@ -201,6 +201,17 @@ final class Session
         unset($_SESSION[$key]);
     }
 
+    /**
+     * Verilen anahtarlar dışında oturumdaki her şeyi siler (oturum başka
+     * bir hesaba geçerken: bkz. Auth::impersonate).
+     *
+     * @param array<int,string> $keys
+     */
+    public static function keepOnly(array $keys): void
+    {
+        $_SESSION = array_intersect_key($_SESSION, array_flip($keys));
+    }
+
     public static function pull(string $key, mixed $default = null): mixed
     {
         $value = self::get($key, $default);

@@ -7,6 +7,8 @@
  *    1. Kimse kendi hesabını silemez veya durumunu değiştiremez
  *    2. Kimse kendi rolünü değiştiremez
  *    3. Sistemdeki SON aktif yönetici silinemez / rolü indirilemez / pasife alınamaz
+ *    4. "Bu kullanıcı olarak gir" yalnız yöneticide, yalnız aktif ve
+ *       yönetici olmayan hesaba (Auth::impersonationBlock)
  * =====================================================================
  */
 
@@ -16,6 +18,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Core\Auth;
 use App\Core\Events\Events;
+use App\Core\Flash;
 use App\Core\Mail\Notifier;
 use App\Core\PasswordReset;
 use App\Core\RateLimiter;
@@ -95,6 +98,11 @@ final class UserApiController extends Controller
                 . ' title="Düzenle" aria-label="Düzenle">' . icon('edit', 'cy-icon cy-icon--sm') . '</button>';
         }
 
+        if ($current !== null && Auth::impersonationBlock($current, $user) === null) {
+            $actions .= '<button type="button" class="cy-btn-icon cy-btn-icon--as js-impersonate" data-id="' . $user->id . '"'
+                . ' title="Bu kullanıcı olarak gir" aria-label="Bu kullanıcı olarak gir">' . icon('login', 'cy-icon cy-icon--sm') . '</button>';
+        }
+
         if (Auth::can('users.delete') && !$isSelf) {
             $actions .= '<button type="button" class="cy-btn-icon cy-btn-icon--delete js-delete" data-id="' . $user->id . '"'
                 . ' data-label="' . e($user->fullName()) . '"'
@@ -125,6 +133,7 @@ final class UserApiController extends Controller
             'can_delete' => Auth::can('users.delete') && !Auth::isSelf($user->id) && $this->mayManage($user),
             // E-posta/parola değişirse işlemi yapanın parolası istenir (bkz. save).
             'onay_gerekir' => Auth::isSelf($user->id) || $user->isAdmin(),
+            'can_impersonate' => Auth::user() !== null && Auth::impersonationBlock(Auth::user(), $user) === null,
         ];
 
         if (Auth::can('users.view')) {
@@ -434,6 +443,23 @@ final class UserApiController extends Controller
             $newStatus === 'aktif' ? 'Hesap aktifleştirildi.' : 'Hesap pasifleştirildi.',
             ['id' => $target->id, 'durum' => $newStatus]
         );
+    }
+
+    /* =================================================================
+     *  6) KULLANICI OLARAK OTURUM AÇMA (bkz. Auth::impersonate)
+     * ============================================================== */
+    public function impersonate(Request $request): void
+    {
+        $target = $this->requireUser($request);
+        $engel  = Auth::impersonate($target);
+
+        if ($engel !== null) {
+            Response::error($engel['mesaj'], $engel['durum']);
+        }
+
+        Flash::info($target->fullName() . ' olarak geziyorsunuz. Alttaki banttan yönetici hesabınıza dönebilirsiniz.');
+
+        Response::success($target->fullName() . ' olarak oturum açıldı.', ['yonlendir' => url('panel')]);
     }
 
     private const ADMIN_ONLY = 'Yönetici hesaplarını yalnızca yöneticiler değiştirebilir.';

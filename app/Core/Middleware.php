@@ -38,8 +38,9 @@ final class Middleware
             'csrf'      => self::csrf($request),
             'installed' => self::installed(),
             'bakim'     => self::maintenance(),
+            'kendi-oturumu' => self::ownSession($request),
             default     => throw new \LogicException(sprintf(
-                'Bilinmeyen ara katman: "%s". Geçerli adlar: auth, guest, role:…, can:…, csrf, installed, bakim, api, api.can:…, api.guest',
+                'Bilinmeyen ara katman: "%s". Geçerli adlar: auth, guest, role:…, can:…, csrf, installed, bakim, kendi-oturumu, api, api.can:…, api.guest',
                 $rule
             )),
         };
@@ -50,8 +51,9 @@ final class Middleware
         if (Auth::check()) {
             /* BAKIM MODU girişli kullanıcıyı da kapsar: ayarın açıklaması
              * "siteyi yalnızca yöneticiler görebilir" der. Muaf olmayan
-             * üye panelde 503 görür; yalnızca çıkış yapabilir. */
-            if (Url::current() !== 'cikis') {
+             * üye panelde 503 görür; yalnızca çıkış yapabilir (üye olarak
+             * gezen yönetici de kendi hesabına dönebilir). */
+            if (!in_array(Url::current(), ['cikis', 'oturum/yoneticiye-don'], true)) {
                 self::maintenance();
             }
 
@@ -217,6 +219,28 @@ final class Middleware
         }
 
         throw HttpException::maintenance();
+    }
+
+    /**
+     * "kendi-oturumu": yalnız hesabın sahibi. Kullanıcı olarak gezen
+     * yönetici o hesabın Hesabım işlemlerini (parola, e-posta, API
+     * anahtarı, oturumlar, hesabı silme) yapamaz; bunlar Kullanıcılar
+     * ekranından yönetici olarak yapılır. "auth"tan SONRA yazılır.
+     */
+    private static function ownSession(Request $request): void
+    {
+        if (Auth::impersonator() === null) {
+            return;
+        }
+
+        $mesaj = 'Kullanıcı olarak gezinirken bu hesabın ayarları değiştirilemez. Değişikliği yönetici hesabınıza dönüp Kullanıcılar ekranından yapın.';
+
+        if ($request->isAjax()) {
+            throw HttpException::forbidden($mesaj, context: ['yonetici' => Auth::impersonator()?->id, 'kullanici' => Auth::id()]);
+        }
+
+        Flash::error($mesaj);
+        Response::redirect(url('panel/hesabim'));
     }
 
     /**

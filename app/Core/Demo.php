@@ -92,6 +92,7 @@ final class Demo
         'api/kullanicilar/save'   => 'Demo modunda kullanıcı eklenemez ve düzenlenemez.',
         'api/kullanicilar/delete' => 'Demo modunda kullanıcı silinemez.',
         'api/kullanicilar/status' => 'Demo modunda kullanıcı durumu değiştirilemez.',
+        'api/kullanicilar/oturum-ac' => 'Demo modunda başka bir kullanıcı olarak oturum açılamaz.',
         'api/eposta/gonder'       => 'Demo modunda e-posta gönderilemez.',
         'api/eposta/isle'         => 'Demo modunda e-posta gönderilemez.',
         'api/eposta/tekrar'       => 'Demo modunda e-posta gönderilemez.',

@@ -352,6 +352,7 @@ yüzden bir modül `giris` gibi temel bir adresi ele geçiremez.
 | `csrf` | Sahte istek koruması — veri değiştiren her POST |
 | `can:users.delete` | Yetki zorunlu (`\|` ile VEYA) |
 | `role:admin` | Rol zorunlu |
+| `kendi-oturumu` | Kullanıcı olarak gezen yönetici kullanamaz (Hesabım'daki değişiklikler; `can:`'dan sonra yazılır) |
 | `api` | Bearer anahtarı + hız sınırı |
 | `api.can:urun.view` | API yetkisi |
 | `api.guest` | Anahtarsız ama hız sınırlı |

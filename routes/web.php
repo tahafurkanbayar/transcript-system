@@ -11,6 +11,8 @@
  *      'auth'               → giriş zorunlu
  *      'csrf'               → sahte istek koruması (veri değiştiren her POST)
  *      'can:users.delete'   → belirli yetki zorunlu
+ *      'kendi-oturumu'      → kullanıcı olarak gezen yönetici kullanamaz
+ *                             (Hesabım'daki değişiklikler)
  * =====================================================================
  */
 
@@ -82,6 +84,10 @@ $router->post('parola-sifirla',   PasswordResetController::class, 'reset',      
 // engellemek için (CSRF koruması).
 $router->post('cikis', AuthController::class, 'logout', ['installed', 'auth', 'csrf']);
 
+// Kullanıcı olarak gezen yönetici kendi hesabına döner (bkz. Auth::impersonate).
+// Gezilen hesap üye olduğu için "can:" yoktur; denetleyici gezinme yoksa geri çevirir.
+$router->post('oturum/yoneticiye-don', AuthController::class, 'stopImpersonating', ['installed', 'auth', 'csrf']);
+
 /* ---------------------------------------------------------------------
  *  PANEL SAYFALARI
  * ------------------------------------------------------------------ */
@@ -135,10 +141,10 @@ $router->post('panel/sistem/kurulum-sil',  SystemController::class, 'removeInsta
 $router->post('panel/sistem/demo-kaldir', SystemController::class, 'removeDemo',      ['installed', 'auth', 'csrf', 'can:system.manage']);
 
 $router->get('panel/hesabim',              ProfileController::class, 'index',        ['installed', 'auth', 'can:profile.view']);
-$router->post('panel/hesabim/guncelle',    ProfileController::class, 'update',       ['installed', 'auth', 'csrf', 'can:profile.update']);
-$router->post('panel/hesabim/parola',      ProfileController::class, 'password',     ['installed', 'auth', 'csrf', 'can:profile.update']);
-$router->post('panel/hesabim/avatar',      ProfileController::class, 'uploadAvatar', ['installed', 'auth', 'csrf', 'can:profile.update']);
-$router->post('panel/hesabim/avatar-sil',  ProfileController::class, 'removeAvatar', ['installed', 'auth', 'csrf', 'can:profile.update']);
+$router->post('panel/hesabim/guncelle',    ProfileController::class, 'update',       ['installed', 'auth', 'csrf', 'can:profile.update', 'kendi-oturumu']);
+$router->post('panel/hesabim/parola',      ProfileController::class, 'password',     ['installed', 'auth', 'csrf', 'can:profile.update', 'kendi-oturumu']);
+$router->post('panel/hesabim/avatar',      ProfileController::class, 'uploadAvatar', ['installed', 'auth', 'csrf', 'can:profile.update', 'kendi-oturumu']);
+$router->post('panel/hesabim/avatar-sil',  ProfileController::class, 'removeAvatar', ['installed', 'auth', 'csrf', 'can:profile.update', 'kendi-oturumu']);
 
 /* ---------------------------------------------------------------------
  *  AJAX UÇ NOKTALARI (hepsi POST + CSRF)
@@ -154,6 +160,8 @@ $router->post('api/kullanicilar/fetch',  UserApiController::class, 'fetch',  ['i
 $router->post('api/kullanicilar/save',   UserApiController::class, 'save',   ['installed', 'auth', 'csrf', 'can:users.create|users.update']);
 $router->post('api/kullanicilar/delete', UserApiController::class, 'delete', ['installed', 'auth', 'csrf', 'can:users.delete']);
 $router->post('api/kullanicilar/status', UserApiController::class, 'status', ['installed', 'auth', 'csrf', 'can:users.status']);
+// Yalnız yönetici, yalnız aktif ve yönetici olmayan hesaba (kural Auth::impersonationBlock'ta).
+$router->post('api/kullanicilar/oturum-ac', UserApiController::class, 'impersonate', ['installed', 'auth', 'csrf', 'can:users.view']);
 
 $router->post('api/mesajlar/list',   MessageApiController::class, 'list',     ['installed', 'auth', 'csrf', 'can:messages.view']);
 $router->post('api/mesajlar/fetch',  MessageApiController::class, 'fetch',    ['installed', 'auth', 'csrf', 'can:messages.view']);
@@ -179,12 +187,12 @@ $router->post('api/eposta/sinama',   MailApiController::class, 'test',    ['inst
 $router->post('api/eposta/baglanti', MailApiController::class, 'verify',  ['installed', 'auth', 'csrf', 'can:settings.manage']);
 
 // --- API ANAHTARLARI (Hesabım ekranı) ---
-$router->post('panel/hesabim/api-anahtari',     ProfileController::class, 'createToken',  ['installed', 'auth', 'csrf', 'can:profile.api']);
-$router->post('panel/hesabim/api-anahtari/sil', ProfileController::class, 'revokeToken',  ['installed', 'auth', 'csrf', 'can:profile.api']);
-$router->post('panel/hesabim/oturumlari-kapat', ProfileController::class, 'logoutOthers', ['installed', 'auth', 'csrf', 'can:profile.update']);
-$router->post('panel/hesabim/cihaz/sil',        ProfileController::class, 'revokeSession', ['installed', 'auth', 'csrf', 'can:profile.update']);
-$router->post('panel/hesabim/sil',              ProfileController::class, 'deleteAccount', ['installed', 'auth', 'csrf', 'can:profile.update']);
-$router->post('panel/hesabim/bildirimler',      ProfileController::class, 'notifications', ['installed', 'auth', 'csrf', 'can:profile.update']);
+$router->post('panel/hesabim/api-anahtari',     ProfileController::class, 'createToken',  ['installed', 'auth', 'csrf', 'can:profile.api', 'kendi-oturumu']);
+$router->post('panel/hesabim/api-anahtari/sil', ProfileController::class, 'revokeToken',  ['installed', 'auth', 'csrf', 'can:profile.api', 'kendi-oturumu']);
+$router->post('panel/hesabim/oturumlari-kapat', ProfileController::class, 'logoutOthers', ['installed', 'auth', 'csrf', 'can:profile.update', 'kendi-oturumu']);
+$router->post('panel/hesabim/cihaz/sil',        ProfileController::class, 'revokeSession', ['installed', 'auth', 'csrf', 'can:profile.update', 'kendi-oturumu']);
+$router->post('panel/hesabim/sil',              ProfileController::class, 'deleteAccount', ['installed', 'auth', 'csrf', 'can:profile.update', 'kendi-oturumu']);
+$router->post('panel/hesabim/bildirimler',      ProfileController::class, 'notifications', ['installed', 'auth', 'csrf', 'can:profile.update', 'kendi-oturumu']);
 
 /* ---------------------------------------------------------------------
  *  REST API (dış istemciler) — "Authorization: Bearer cy_…"
