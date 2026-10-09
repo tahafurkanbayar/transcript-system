@@ -20,6 +20,7 @@ declare(strict_types=1);
 
 namespace Modules\Transkript\Services;
 
+use Modules\Transkript\Ayarlar;
 use Modules\Transkript\Repositories\AnalizRepository;
 use Modules\Transkript\Repositories\KaynakRepository;
 use Modules\Transkript\Repositories\SegmentRepository;
@@ -30,6 +31,17 @@ final class RaporVerisi
 {
     public const ONEM_ETIKETI = ['critical' => 'Kritik', 'important' => 'Önemli', 'useful' => 'Faydalı'];
     public const GUVEN_ETIKETI = ['stated_as_fact' => 'Kesin ifade', 'opinion' => 'Görüş', 'speculation' => 'Tahmin'];
+
+    /** technical_information bölümünün başlığı (sayfa ve Markdown). Araç ve
+     *  yöntemlerin yanında kavram ve terimleri de içerir (istem v3). */
+    public const TEKNIK_BASLIK = 'Kavramlar ve teknik bilgiler';
+
+    /** Transcript dilinin adı; listede yoksa kodun büyük harfi. */
+    public const DIL_ADLARI = [
+        'tr' => 'Türkçe', 'en' => 'İngilizce', 'de' => 'Almanca', 'fr' => 'Fransızca', 'es' => 'İspanyolca',
+        'it' => 'İtalyanca', 'pt' => 'Portekizce', 'ru' => 'Rusça', 'ar' => 'Arapça', 'fa' => 'Farsça',
+        'ja' => 'Japonca', 'ko' => 'Korece', 'zh' => 'Çince', 'hi' => 'Hintçe', 'nl' => 'Felemenkçe', 'az' => 'Azerice',
+    ];
 
     public function __construct(private readonly PDO $db)
     {
@@ -62,6 +74,11 @@ final class RaporVerisi
 
         $metin = (new SegmentRepository($this->db))->sonMetin($kaynakId);
 
+        // Eski raporlarda da konu aralıkları çakışmasın (ResultValidator v3 öncesi).
+        if (is_array($rapor) && is_array($rapor['topics'] ?? null)) {
+            $rapor['topics'] = ResultValidator::konulariDuzenle($rapor['topics'], $kaynak['sure_sn'] !== null ? (int) $kaynak['sure_sn'] * 1000 : null);
+        }
+
         return [
             'durum'  => (new KaynakDurumu($this->db))->getir($kaynak),
             'rapor'  => is_array($rapor) ? $rapor : null,
@@ -86,6 +103,25 @@ final class RaporVerisi
     /* =================================================================
      *  GÖRÜNÜM YARDIMCILARI
      * ============================================================== */
+
+    /** "tr" → "Türkçe"; bilinmeyen kod büyük harfle ("SV"). */
+    public static function dilAdi(string $kod): string
+    {
+        $kod = strtolower(substr($kod, 0, 2));
+
+        return self::DIL_ADLARI[$kod] ?? strtoupper($kod);
+    }
+
+    /**
+     * Rapor güncel istem sürümünden eski mi? "v1" < "v3". Sürüm yoksa
+     * (çok eski kayıt) eski sayılır.
+     */
+    public static function eskiIstem(string $surum): bool
+    {
+        $guncel = (int) ltrim((string) Ayarlar::get('ai.istem_surumu', 'v1'), 'v');
+
+        return (int) ltrim($surum, 'v') < $guncel;
+    }
 
     /** "00:09:05" → 545; okunamazsa null */
     public static function saniye(mixed $zaman): ?int

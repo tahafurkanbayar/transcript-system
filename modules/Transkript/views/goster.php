@@ -25,6 +25,7 @@
  */
 
 use App\Core\View;
+use Modules\Transkript\Ayarlar;
 use Modules\Transkript\HataKodlari;
 use Modules\Transkript\Services\DisaAktarim;
 use Modules\Transkript\Services\RaporVerisi;
@@ -80,7 +81,9 @@ $simdiki = (string) ($durum['asama'] ?? 'kaynak');
 $simdiki = $simdiki === 'rapor' ? 'birlestirme' : $simdiki;
 $simdikiSira = array_search($simdiki, $asamaSirasi, true);
 $simdikiSira = $simdikiSira === false ? 0 : $simdikiSira;
-$transcriptDili = ['tr' => 'Türkçe', 'en' => 'İngilizce'];
+$onemliSayisi = $rapor !== null
+    ? count(array_filter((array) ($rapor['important_points'] ?? []), static fn (mixed $n): bool => in_array($n['importance'] ?? '', ['critical', 'important'], true)))
+    : 0;
 $bolumListesi = $rapor !== null ? DisaAktarim::bolumListesi($rapor, $kaynak['sure_sn'] !== null ? (int) $kaynak['sure_sn'] : null) : '';
 $indir = static fn (string $bicim): string => url('panel/transkript/' . $kaynakId . '/indir/' . $bicim);
 ?>
@@ -115,7 +118,7 @@ $indir = static fn (string $bicim): string => url('panel/transkript/' . $kaynakI
                     <span><?= icon('clock', 'cy-icon cy-icon--sm') ?> <?= e(RaporVerisi::sure($kaynak['sure_sn'] !== null ? (int) $kaynak['sure_sn'] : null)) ?></span>
                     <?php if ($veri['transcript'] !== null): ?>
                         <span title="Transcript kaynağı"><?= icon('file', 'cy-icon cy-icon--sm') ?>
-                            <?= e($transcriptDili[$veri['transcript']['dil']] ?? strtoupper($veri['transcript']['dil'])) ?>
+                            <?= e(RaporVerisi::dilAdi((string) $veri['transcript']['dil'])) ?>
                             <?= $veri['transcript']['otomatik_mi'] ? 'otomatik altyazı' : 'altyazı' ?></span>
                     <?php endif; ?>
                     <?php if ($rapor !== null): ?>
@@ -232,7 +235,7 @@ $indir = static fn (string $bicim): string => url('panel/transkript/' . $kaynakI
 
             <?php if ($bolumSayisi('important_points') > 0): ?>
                 <details class="cy-panel mb-3 tk-bolum js-tk-onemli" open>
-                    <summary class="tk-bolum__baslik"><?= icon('alert', 'cy-icon cy-icon--sm') ?> Önemli noktalar <span class="cy-badge cy-badge--count"><?= $bolumSayisi('important_points') ?></span></summary>
+                    <summary class="tk-bolum__baslik"><?= icon('alert', 'cy-icon cy-icon--sm') ?> Önemli noktalar <span class="cy-badge cy-badge--count js-tk-onem-sayac" data-toplam="<?= $bolumSayisi('important_points') ?>" data-suzgecli="<?= $onemliSayisi ?>"><?= $bolumSayisi('important_points') ?></span></summary>
                     <div class="tk-filtre-satiri">
                         <label class="tk-anahtar">
                             <input type="checkbox" class="form-check-input js-tk-onem-filtre"> Yalnız kritik ve önemli
@@ -263,7 +266,7 @@ $indir = static fn (string $bicim): string => url('panel/transkript/' . $kaynakI
 
             <?php if ($bolumSayisi('technical_information') > 0): ?>
                 <details class="cy-panel mb-3 tk-bolum">
-                    <summary class="tk-bolum__baslik"><?= icon('code', 'cy-icon cy-icon--sm') ?> Teknik bilgiler <span class="cy-badge cy-badge--count"><?= $bolumSayisi('technical_information') ?></span></summary>
+                    <summary class="tk-bolum__baslik"><?= icon('code', 'cy-icon cy-icon--sm') ?> <?= e(RaporVerisi::TEKNIK_BASLIK) ?> <span class="cy-badge cy-badge--count"><?= $bolumSayisi('technical_information') ?></span></summary>
                     <?php foreach (RaporVerisi::kategoriyeGore($rapor['technical_information']) as $kategori => $maddeler): ?>
                         <h4 class="tk-kategori"><?= e($kategori) ?></h4>
                         <ul class="tk-liste-madde">
@@ -332,7 +335,8 @@ $indir = static fn (string $bicim): string => url('panel/transkript/' . $kaynakI
                 <summary class="tk-bolum__baslik"><?= icon('file', 'cy-icon cy-icon--sm') ?> Transcript <span class="cy-badge cy-badge--count"><?= (int) $veri['transcript']['segment_sayisi'] ?> satır</span></summary>
                 <div class="cy-input-icon mb-2">
                     <?= icon('search', 'cy-icon cy-icon--sm') ?>
-                    <input type="search" class="form-control js-tk-ara" placeholder="Transcript içinde ara…" aria-label="Transcript içinde ara" maxlength="100" autocomplete="off">
+                    <label class="visually-hidden" for="tk_transcript_ara">Transcript içinde ara</label>
+                    <input type="search" id="tk_transcript_ara" class="form-control js-tk-ara" placeholder="Transcript içinde ara…" aria-label="Transcript içinde ara" maxlength="100" autocomplete="off">
                 </div>
                 <?php if ($youtube): ?>
                     <label class="tk-anahtar mb-2 tk-takip">
@@ -355,7 +359,9 @@ $indir = static fn (string $bicim): string => url('panel/transkript/' . $kaynakI
                             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                             referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
                 </div>
-                <p class="tk-oynatici__not">Zaman damgalarına tıklayınca video o andan oynar.</p>
+                <?php if ($rapor !== null): ?>
+                    <p class="tk-oynatici__not">Zaman damgalarına tıklayınca video o andan oynar.</p>
+                <?php endif; ?>
             </div>
         <?php endif; ?>
 
@@ -367,11 +373,19 @@ $indir = static fn (string $bicim): string => url('panel/transkript/' . $kaynakI
                         <dt>Hazırlandı</dt><dd><?= e(human_date($analiz['bitti_at'] !== null ? (string) $analiz['bitti_at'] : null)) ?></dd>
                         <dt>Model</dt><dd class="cy-mono"><?= e($analiz['model'] !== '' ? $analiz['model'] : '—') ?></dd>
                         <dt>İstem</dt><dd class="cy-mono"><?= e($analiz['prompt_surumu'] !== '' ? $analiz['prompt_surumu'] : '—') ?></dd>
+                        <dt>Transcript</dt><dd><?= $veri['transcript'] !== null ? e(RaporVerisi::dilAdi((string) $veri['transcript']['dil'])) : '—' ?></dd>
                         <dt>Token</dt><dd class="cy-mono"><?= e(number_format($analiz['toplam_token'], 0, ',', '.')) ?></dd>
                         <?php if ($policy->canSeeAllCosts()): ?>
                             <dt>Tahmini maliyet</dt><dd class="cy-mono">$<?= e(number_format($analiz['maliyet_usd'], 4, ',', '.')) ?></dd>
                         <?php endif; ?>
                     </dl>
+                    <?php if (RaporVerisi::eskiIstem($analiz['prompt_surumu'])): ?>
+                        <p class="cy-panel__note is-warn tk-eski-istem">
+                            <?= icon('info', 'cy-icon cy-icon--sm') ?>
+                            Bu rapor eski istemle (<?= e($analiz['prompt_surumu'] !== '' ? $analiz['prompt_surumu'] : 'sürümsüz') ?>) üretildi; güncel istem <?= e((string) Ayarlar::get('ai.istem_surumu', 'v1')) ?>.
+                            <?= $youtube && $policy->canReanalyze() && !$suruyor ? 'Yeniden analizle güncellenebilir.' : '' ?>
+                        </p>
+                    <?php endif; ?>
                     <?php if ($youtube && $policy->canReanalyze() && !$suruyor): ?>
                         <button type="button" class="btn cy-btn cy-btn--ghost cy-btn--sm cy-btn--block js-tk-yeniden"
                                 data-url="<?= e(url('panel/transkript/analiz')) ?>"

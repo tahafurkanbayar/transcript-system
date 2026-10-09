@@ -115,10 +115,16 @@ biçimiyle, tarayıcının `confirm()` kutusu yok):
 **Rapor (`panel/transkript/{kaynak_id}`):** kaynak kartı; analiz sürerken 4
 aşamalı canlı ilerleme (bitince sayfa kendini yeniler); kısa özet; açılır
 bölümler: detaylı özet, konular, önemli noktalar (Kritik / Önemli / Faydalı
-rozeti, "yalnız kritik ve önemli" filtresi), zaman çizelgesi, teknik bilgiler
+rozeti, "yalnız kritik ve önemli" filtresi; açıkken rozet "12 / 14", tercih
+tarayıcıda hatırlanır), zaman çizelgesi, kavramlar ve teknik bilgiler
 (kategoriye göre), fikirler, iddialar (Kesin ifade / Görüş / Tahmin), öneriler,
-transcript (açılınca yüklenir; arama debounce + `seq` yarış koruması,
-Türkçe katlamalı vurgu). Analiz edilemeyen bölümler varsa aralıkları uyarıda.
+transcript (açılınca yüklenir; yüklenemezse "Tekrar dene"; arama en az 2 harf,
+debounce + `seq` yarış koruması, Türkçe katlamalı vurgu). Analiz edilemeyen
+bölümler varsa aralıkları uyarıda. Konular videoyu kesintisiz böler: ilk konu
+00:00'da başlar, her konu bir sonrakinin başında biter, son konu video sonunda
+(`ResultValidator::konulariDuzenle`; eski raporlara da gösterirken uygulanır).
+"Bu rapor" panelinde model, istem ve transcript dili; rapor güncel istemden
+eski bir sürümle üretildiyse not düşülür (yönetici yeniden analiz edebilir).
 
 **Dışa aktarma ve kısayollar** (rakip analizinden; `docs/RAKIP_ANALIZI.md`):
 rapor Markdown (zaman damgaları `youtu.be?t=` bağlantısı, AI metni

@@ -344,8 +344,37 @@
     /* =================================================================
      *  5) ÖNEM FİLTRESİ: "Yalnız kritik ve önemli"
      * ============================================================== */
+    /* Rozet filtreyle değişir ("12 / 14"); tercih tarayıcıda hatırlanır.
+     * localStorage gizli pencerede ya da kapalıyken hata verebilir: o
+     * zaman yalnız hatırlanmaz, filtre yine çalışır. */
+    var ONEM_ANAHTARI = 'transkript.onemFiltresi';
+
+    function onemSuz(kutu) {
+        var $bolum = $(kutu).closest('.js-tk-onemli').toggleClass('is-suzgec', kutu.checked);
+        var sayac  = $bolum.find('.js-tk-onem-sayac')[0];
+
+        if (sayac) {
+            sayac.textContent = kutu.checked
+                ? sayac.getAttribute('data-suzgecli') + ' / ' + sayac.getAttribute('data-toplam')
+                : sayac.getAttribute('data-toplam');
+        }
+    }
+
     $(document).on('change', '.js-tk-onem-filtre', function () {
-        $(this).closest('.js-tk-onemli').toggleClass('is-suzgec', this.checked);
+        onemSuz(this);
+
+        try { window.localStorage.setItem(ONEM_ANAHTARI, this.checked ? '1' : '0'); } catch (e) { /* hatırlanmaz */ }
+    });
+
+    $('.js-tk-onem-filtre').each(function () {
+        var kayitli = null;
+
+        try { kayitli = window.localStorage.getItem(ONEM_ANAHTARI); } catch (e) { /* yok sayılır */ }
+
+        if (kayitli === '1') {
+            this.checked = true;
+            onemSuz(this);
+        }
     });
 
     /* =================================================================
@@ -591,7 +620,19 @@
                 ciz(satirlar, res.kelimeler || []);
                 durumYazi.textContent = res.arama && !satirlar.length ? 'Eşleşme yok.' : res.description;
             }).fail(function () {
-                if (benim === seq) { durumYazi.textContent = 'Transcript yüklenemedi.'; }
+                if (benim !== seq) { return; }
+
+                // Bir sonraki açılışta yeniden denensin; şimdi de elle denenebilir.
+                yuklendi = false;
+                durumYazi.textContent = 'Transcript yüklenemedi. ';
+
+                var tekrar = el('button', 'btn btn-link p-0 align-baseline cy-link js-tk-transcript-tekrar', 'Tekrar dene');
+                tekrar.type = 'button';
+                tekrar.addEventListener('click', function () {
+                    yuklendi = true;
+                    yukle($.trim(aramaKutu.value).length >= 2 ? $.trim(aramaKutu.value) : '');
+                });
+                durumYazi.appendChild(tekrar);
             });
         };
 
@@ -606,9 +647,17 @@
             var q = $.trim(aramaKutu.value);
 
             window.clearTimeout(bekleme);
+
+            // Tek harf aranmaz (FULLTEXT / LIKE anlamsız sonuç verir): istek yok, açıklama var.
+            if (q.length === 1) {
+                seq++;
+                durumYazi.textContent = 'En az 2 harf yazın.';
+                return;
+            }
+
             bekleme = window.setTimeout(function () {
                 yuklendi = true;
-                yukle(q.length >= 2 ? q : '');
+                yukle(q);
             }, 300);
         });
     }
