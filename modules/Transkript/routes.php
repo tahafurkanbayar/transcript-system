@@ -56,6 +56,14 @@ $router->get('panel/transkript/{kaynak_id}/indir/{bicim}', KaynakController::cla
 $router->get('panel/transkript/{kaynak_id}', KaynakController::class, 'goster',
     ['installed', 'auth', 'can:transkript.view']);
 
+// Kayıt yönetimi (Services\KayitYonetimi). Kayda bağlı kural TranskriptPolicy'de:
+// ortak YouTube kaynağını yalnız yönetici siler; süren analizi yönetici ya da başlatan iptal eder.
+$router->post('panel/transkript/{kaynak_id}/sil', KaynakController::class, 'sil',
+    ['installed', 'auth', 'csrf', 'can:transkript.view']);
+
+$router->post('panel/transkript/{kaynak_id}/iptal', KaynakController::class, 'iptal',
+    ['installed', 'auth', 'csrf', 'can:transkript.analyze']);
+
 $router->post('panel/transkript/{kaynak_id}/sohbet', SohbetController::class, 'sor',
     ['installed', 'auth', 'csrf', 'can:transkript.chat']);
 

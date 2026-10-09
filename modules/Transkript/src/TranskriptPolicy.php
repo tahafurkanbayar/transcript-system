@@ -71,6 +71,32 @@ final class TranskriptPolicy
         return $this->can('transkript.chat');
     }
 
+    /**
+     * Kaynağı (analizleri, transcript'i, sohbetleriyle) silmek. YouTube
+     * kaynağı herkes için ortak önbellektir (sahip_id = 0): silinince her
+     * kullanıcı için gider; yalnız yönetici siler. Yüklenen dosyayı
+     * sahibi de silebilir.
+     *
+     * @param array<string,mixed> $kaynak
+     */
+    public function canDeleteSource(array $kaynak): bool
+    {
+        $sahip = (int) ($kaynak['sahip_id'] ?? 0);
+
+        return $this->canViewSource($kaynak) && ($this->isAdmin() || ($sahip > 0 && $this->isUser($sahip)));
+    }
+
+    /**
+     * Süren analizi iptal etmek: yönetici ya da analizi başlatan (analiz
+     * yetkisi hâlâ varsa).
+     *
+     * @param array<string,mixed> $analiz transkript_analizler satırı (kullanici_id)
+     */
+    public function canCancelAnalysis(array $analiz): bool
+    {
+        return $this->isAdmin() || ($this->canAnalyze() && $this->isUser((int) ($analiz['kullanici_id'] ?? 0)));
+    }
+
     /** Herkesin maliyetini ve istatistiğini görmek. */
     public function canSeeAllCosts(): bool
     {

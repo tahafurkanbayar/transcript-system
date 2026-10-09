@@ -177,3 +177,8 @@ a.tk-zaman.is-oynuyor { background: var(--cy-brand); color: #fff; }
 .tk-kuyruk-uyari code { font-size: .8125rem; overflow-wrap: anywhere; }
 .tk-kuyruk-uyari__eylem { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
 .tk-sirada { margin: .25rem 0 .5rem; font-size: .875rem; }
+
+/* Liste: birleşik durum hücresi; rapor: kayıt paneli (silme düğmesi) */
+.tk-durum-hucre { display: flex; flex-direction: column; align-items: flex-start; gap: .25rem; }
+.tk-durum-hucre .tk-mini-ilerleme { width: 100%; }
+.tk-tehlike { color: var(--cy-danger-text); }

@@ -147,6 +147,9 @@ final class KaynakRepository
      *
      * ARAMA başlık ve kanal adında, utf8mb4_unicode_ci ile: turkish_ci'de
      * "ai" "AI"yı bulmaz (README, "Arama neden katlanmış sütunda?").
+     * Video kimliğinde parça da eşleşir ("jNQX" → jNQXAC9IVRw); kimlik
+     * büyük/küçük harfe duyarlıdır (ascii_bin), yalnız kimlik karakterli
+     * sorguda aranır.
      *
      * @param  array{tur?:string,durum?:string,q?:string} $filtre
      * @return array{satirlar: list<array<string,mixed>>, toplam: int}
@@ -179,8 +182,9 @@ final class KaynakRepository
 
         if ($q !== '') {
             $kalip = '%' . Search::escapeLike(mb_substr($q, 0, 100)) . '%';
-            $kosullar[] = '(k.baslik COLLATE utf8mb4_unicode_ci LIKE :q1 OR k.kanal_adi COLLATE utf8mb4_unicode_ci LIKE :q2 OR k.dis_kimlik = :q3)';
-            $parametreler += [':q1' => $kalip, ':q2' => $kalip, ':q3' => $q];
+            $kimlik = preg_match('/^[A-Za-z0-9_-]{2,64}$/', $q) === 1 ? ' OR k.dis_kimlik LIKE :q3' : '';
+            $kosullar[] = '(k.baslik COLLATE utf8mb4_unicode_ci LIKE :q1 OR k.kanal_adi COLLATE utf8mb4_unicode_ci LIKE :q2' . $kimlik . ')';
+            $parametreler += [':q1' => $kalip, ':q2' => $kalip] + ($kimlik !== '' ? [':q3' => $kalip] : []);
         }
 
         $kaynak = 'FROM transkript_kaynaklar k
@@ -192,9 +196,9 @@ final class KaynakRepository
         $toplam = (int) $say->fetchColumn();
 
         $sorgu = $this->db->prepare(
-            "SELECT k.id, k.tur, k.dis_kimlik, k.baslik, k.kanal_adi, k.sure_sn, k.kucuk_resim, k.yayin_tarihi,
+            "SELECT k.id, k.tur, k.dis_kimlik, k.sahip_id, k.baslik, k.kanal_adi, k.sure_sn, k.kucuk_resim, k.yayin_tarihi,
                     k.durum AS kaynak_durumu,
-                    a.id AS analiz_id, a.durum, a.asama, a.ilerleme, a.hata_kodu, a.created_at,
+                    a.id AS analiz_id, a.kullanici_id, a.durum, a.asama, a.ilerleme, a.hata_kodu, a.created_at,
                     (SELECT r.id FROM transkript_analizler r
                       WHERE r.kaynak_id = k.id AND r.guncel_mi = 1 AND r.durum = 'tamamlandi'
                       ORDER BY r.id DESC LIMIT 1) AS rapor_analiz_id
@@ -216,38 +220,63 @@ final class KaynakRepository
     }
 
     /**
-     * Özet kutucukları: bugün açılan analiz, toplam token, tahmini maliyet
-     * ve analiz edilen kaynak sayısı. $kullaniciId verilirse yalnız o
-     * kullanıcının başlattığı analizler (yönetici değilse).
+     * Özet kutucukları. Sayılan şey RAPORDUR, deneme değil (test raporu:
+     * 2 video analiz edilmişken "5 analiz, 4 video" yazıyordu; bekleyen
+     * ve hatalı denemeler de sayılıyordu):
      *
-     * @return array{bugun:int, token:int, maliyet:float, kaynak:int}
+     *   kaynak   raporu hazır (güncel + tamamlanmış analizi olan) video
+     *   bugun    bugün TAMAMLANAN analiz
+     *   suruyor  son analizi süren kaynak · hata  son analizi hatalı kaynak
+     *   token / maliyet  bütün AI çağrıları (başarısız ve silinen kayıtlar dahil:
+     *            para harcandı); yönetici değilse yalnız kendi analizleri
+     *
+     * $kullaniciId verilirse yalnız o kullanıcının başlattığı analizler.
+     *
+     * @return array{bugun:int, token:int, maliyet:float, kaynak:int, suruyor:int, hata:int}
      */
     public function istatistik(?int $kullaniciId): array
     {
         $kendi = $kullaniciId !== null ? ' AND a.kullanici_id = :ben' : '';
         $p     = $kullaniciId !== null ? [':ben' => $kullaniciId] : [];
 
-        $analiz = $this->db->prepare(
-            'SELECT COALESCE(SUM(a.created_at >= CURDATE()), 0) AS bugun, COUNT(DISTINCT a.kaynak_id) AS kaynak
-               FROM transkript_analizler a WHERE 1 = 1' . $kendi
+        $rapor = $this->db->prepare(
+            "SELECT COALESCE(SUM(a.bitti_at >= CURDATE()), 0) AS bugun,
+                    COUNT(DISTINCT CASE WHEN a.guncel_mi = 1 THEN a.kaynak_id END) AS kaynak
+               FROM transkript_analizler a
+              WHERE a.durum = 'tamamlandi'" . $kendi
         );
-        $analiz->execute($p);
-        $a = $analiz->fetch(PDO::FETCH_ASSOC) ?: [];
+        $rapor->execute($p);
+        $r = $rapor->fetch(PDO::FETCH_ASSOC) ?: [];
+
+        // Son analize göre (liste ile aynı kural).
+        $son = $this->db->prepare(
+            "SELECT COALESCE(SUM(a.durum NOT IN ('tamamlandi', 'hata')), 0) AS suruyor,
+                    COALESCE(SUM(a.durum = 'hata'), 0) AS hata
+               FROM transkript_analizler a
+              WHERE a.id IN (SELECT MAX(a2.id) FROM transkript_analizler a2 GROUP BY a2.kaynak_id)" . $kendi
+        );
+        $son->execute($p);
+        $s = $son->fetch(PDO::FETCH_ASSOC) ?: [];
 
         $kullanim = $this->db->prepare(
-            "SELECT COALESCE(SUM(u.giris_token + u.cikis_token), 0) AS token, COALESCE(SUM(u.maliyet_usd), 0) AS maliyet
-               FROM ai_kullanim_kaydi u
-               JOIN transkript_analizler a ON a.id = u.ref_id
-              WHERE u.modul = 'transkript' AND u.ref_tur = 'analiz'" . $kendi
+            $kullaniciId === null
+                ? "SELECT COALESCE(SUM(u.giris_token + u.cikis_token), 0) AS token, COALESCE(SUM(u.maliyet_usd), 0) AS maliyet
+                     FROM ai_kullanim_kaydi u WHERE u.modul = 'transkript'"
+                : "SELECT COALESCE(SUM(u.giris_token + u.cikis_token), 0) AS token, COALESCE(SUM(u.maliyet_usd), 0) AS maliyet
+                     FROM ai_kullanim_kaydi u
+                     JOIN transkript_analizler a ON a.id = u.ref_id
+                    WHERE u.modul = 'transkript' AND u.ref_tur = 'analiz'" . $kendi
         );
         $kullanim->execute($p);
         $u = $kullanim->fetch(PDO::FETCH_ASSOC) ?: [];
 
         return [
-            'bugun'   => (int) ($a['bugun'] ?? 0),
+            'bugun'   => (int) ($r['bugun'] ?? 0),
             'token'   => (int) ($u['token'] ?? 0),
             'maliyet' => round((float) ($u['maliyet'] ?? 0), 4),
-            'kaynak'  => (int) ($a['kaynak'] ?? 0),
+            'kaynak'  => (int) ($r['kaynak'] ?? 0),
+            'suruyor' => (int) ($s['suruyor'] ?? 0),
+            'hata'    => (int) ($s['hata'] ?? 0),
         ];
     }
 

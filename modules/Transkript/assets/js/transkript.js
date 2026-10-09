@@ -19,6 +19,9 @@
  *       assets/js/search.js'ten uyarlandı); oynatıcıyla eş zamanlı satır
  *    8) Oynatıcının anlık zamanı (infoDelivery) → o anki transcript satırı
  *    9) "Kuyruk işçisi çalışmıyor" uyarısı ve "Şimdi işle" (yönetici)
+ *   10) Kayıt: iptal ve silme. Onaylar panelin pencere biçimiyle
+ *       (views/_parcalar/onay-penceresi.php); tarayıcının confirm()
+ *       kutusu kullanılmaz.
  * ===================================================================== */
 (function ($) {
     'use strict';
@@ -38,6 +41,57 @@
         if (metin !== undefined && metin !== null) { dugum.textContent = String(metin); }
 
         return dugum;
+    }
+
+    /* Onay penceresi (#tk_onay). ayar: { metin, baslik, dugme, tehlike }.
+     * "Devam" yalnız onay düğmesine basılıp pencere kapanınca çağrılır;
+     * pencere yoksa işlem yapılmaz (onaysız silme olmasın). */
+    function onayla(ayar, devam) {
+        var kutu = document.getElementById('tk_onay');
+
+        if (!kutu || !window.bootstrap || !window.bootstrap.Modal) {
+            return;
+        }
+
+        var evet = kutu.querySelector('.js-tk-onay-evet');
+        var onaylandi = false;
+
+        kutu.querySelector('.js-tk-onay-baslik').textContent = ayar.baslik || 'Emin misiniz?';
+        kutu.querySelector('.js-tk-onay-metin').textContent = ayar.metin || '';
+        evet.textContent = ayar.dugme || 'Devam et';
+        evet.className = 'btn cy-btn cy-btn--sm js-tk-onay-evet ' + (ayar.tehlike ? 'cy-btn--danger' : 'cy-btn--primary');
+
+        var pencere = window.bootstrap.Modal.getOrCreateInstance(kutu);
+
+        evet.onclick = function () {
+            onaylandi = true;
+            pencere.hide();
+        };
+
+        $(kutu).off('hidden.bs.modal.tk').one('hidden.bs.modal.tk', function () {
+            evet.onclick = null;
+
+            if (onaylandi) { devam(); }
+        });
+
+        pencere.show();
+    }
+
+    /* Düğmenin data-onay-* öznitelikleri → onay; data-onay yoksa doğrudan devam. */
+    function dugmeOnayi(dugme, devam) {
+        var metin = dugme.getAttribute('data-onay');
+
+        if (!metin) {
+            devam();
+            return;
+        }
+
+        onayla({
+            metin: metin,
+            baslik: dugme.getAttribute('data-onay-baslik'),
+            dugme: dugme.getAttribute('data-onay-dugme'),
+            tehlike: dugme.getAttribute('data-onay-tehlike') === '1'
+        }, devam);
     }
 
     /* İlerleme yanıtındaki kuyruk_takili → "Kuyruk işçisi çalışmıyor" uyarısı. */
@@ -116,9 +170,11 @@
                         var yenile = el('button', 'btn cy-btn cy-btn--ghost cy-btn--sm', 'Yeniden Analiz Et');
                         yenile.type = 'button';
                         yenile.addEventListener('click', function () {
-                            if (window.confirm('Bu video yeniden analiz edilecek (AI çağrısı yapılır). Devam edilsin mi?')) {
-                                gonder(true);
-                            }
+                            onayla({
+                                baslik: 'Yeniden analiz et',
+                                metin: 'Bu video yeniden analiz edilecek; yapay zekâ çağrısı yapılır. Yeni rapor hazır olana kadar mevcut rapor görünmeye devam eder.',
+                                dugme: 'Evet, yeniden analiz et'
+                            }, function () { gonder(true); });
                         });
                         eylemler.push(yenile);
                     }
@@ -182,13 +238,18 @@
                     if (!bitti) { return; }
 
                     $tr.removeAttr('data-ilerleme');
+                    $tr.find('.js-tk-iptal').remove();
 
                     var $durum  = $tr.find('.js-tk-durum').removeClass('is-info is-ok is-danger');
-                    var $hucre  = $tr.find('.js-tk-analiz').empty();
+                    var $hucre  = $tr.find('.tk-durum-hucre');
+
+                    $hucre.find('.tk-mini-ilerleme').remove();
 
                     if (d.durum === 'tamamlandi') {
                         $durum.addClass('is-ok').text('Tamamlandı');
-                        $hucre.append($('<a class="cy-link">').attr('href', $tr.find('.tk-kaynak').attr('href')).text('Hazır'));
+                        $hucre.append($('<a class="cy-link small">').attr('href', $tr.find('.tk-kaynak').attr('href')).text('Rapor hazır'));
+                    } else if (d.hata && d.hata.kod === 'iptal_edildi') {
+                        $durum.text('İptal edildi');
                     } else {
                         $durum.addClass('is-danger').text('Hata');
                         $hucre.append($('<small class="tk-hata-metni">').text(d.hata ? d.hata.mesaj : d.etiket));
@@ -291,26 +352,66 @@
      *  6) YENİDEN ANALİZ / YENİDEN DENE (rapor sayfası)
      * ============================================================== */
     $(document).on('click', '.js-tk-yeniden', function () {
-        var $b   = $(this);
-        var soru = $b.attr('data-confirm-metin');
+        var $b = $(this);
 
-        if (soru && !window.confirm(soru)) {
-            return;
-        }
+        dugmeOnayi(this, function () {
+            $b.prop('disabled', true);
 
-        $b.prop('disabled', true);
+            $.ajax({
+                url: $b.attr('data-url'),
+                method: 'POST',
+                dataType: 'json',
+                data: { url: $b.attr('data-video'), yeniden: $b.attr('data-yeniden') === '1' ? 1 : 0, csrf_token: CY.token() }
+            }).done(function (res) {
+                CY.notify(res.description, 'success');
+                window.setTimeout(function () { window.location.href = res.adres; }, 600);
+            }).fail(function (xhr) {
+                CY.ajaxError(xhr, 'Analiz başlatılamadı.');
+                $b.prop('disabled', false);
+            });
+        });
+    });
 
-        $.ajax({
-            url: $b.attr('data-url'),
-            method: 'POST',
-            dataType: 'json',
-            data: { url: $b.attr('data-video'), yeniden: $b.attr('data-yeniden') === '1' ? 1 : 0, csrf_token: CY.token() }
-        }).done(function (res) {
-            CY.notify(res.description, 'success');
-            window.setTimeout(function () { window.location.href = res.adres; }, 600);
-        }).fail(function (xhr) {
-            CY.ajaxError(xhr, 'Analiz başlatılamadı.');
-            $b.prop('disabled', false);
+    /* =================================================================
+     *  10) KAYIT: iptal ve silme (liste satırı ve rapor sayfası)
+     * ============================================================== */
+    function kayitIstegi(dugme, hata, bitti) {
+        var $b = $(dugme);
+
+        dugmeOnayi(dugme, function () {
+            $b.prop('disabled', true);
+
+            $.ajax({
+                url: $b.attr('data-url'),
+                method: 'POST',
+                dataType: 'json',
+                data: { csrf_token: CY.token() }
+            }).done(function (res) {
+                CY.notify(res.description, 'success');
+                bitti($b, res);
+            }).fail(function (xhr) {
+                CY.ajaxError(xhr, hata);
+                $b.prop('disabled', false);
+            });
+        });
+    }
+
+    $(document).on('click', '.js-tk-iptal', function () {
+        kayitIstegi(this, 'Analiz iptal edilemedi.', function () {
+            window.setTimeout(function () { window.location.reload(); }, 600);
+        });
+    });
+
+    $(document).on('click', '.js-tk-sil', function () {
+        kayitIstegi(this, 'Kayıt silinemedi.', function ($b, res) {
+            var $tr = $b.closest('tr');
+
+            // Listede satır kalkar; rapor sayfasından listeye dönülür.
+            if ($tr.length) {
+                $tr.fadeOut(200, function () { $tr.remove(); });
+            } else {
+                window.setTimeout(function () { window.location.href = res.adres; }, 600);
+            }
         });
     });
 

@@ -99,13 +99,14 @@ final class AnalizRepository
             }
         }
 
-        $this->db->prepare($sql . ' WHERE id = :id')->execute($parametreler);
+        // Bitmiş (iptal edilmiş, hata almış) analiz geç gelen bir işle canlanmasın.
+        $this->db->prepare($sql . " WHERE id = :id AND durum NOT IN ('tamamlandi', 'hata')")->execute($parametreler);
     }
 
     /** Yalnız ilerleme yüzdesi (parçalar bittikçe). */
     public function ilerlemeYaz(int $id, int $ilerleme): void
     {
-        $this->db->prepare('UPDATE transkript_analizler SET ilerleme = GREATEST(ilerleme, :ilerleme) WHERE id = :id')
+        $this->db->prepare("UPDATE transkript_analizler SET ilerleme = GREATEST(ilerleme, :ilerleme) WHERE id = :id AND durum NOT IN ('tamamlandi', 'hata')")
             ->execute([':ilerleme' => max(0, min(100, $ilerleme)), ':id' => $id]);
     }
 
@@ -161,16 +162,22 @@ final class AnalizRepository
     /**
      * Kalıcı hata: analiz biter, kullanıcı hata koduna karşılık gelen
      * mesajı görür. Aşama kilidi bırakılır ("kaynak:calisiyor" → "kaynak"):
-     * hangi aşamada durduğu okunur kalır.
+     * hangi aşamada durduğu okunur kalır. İlk hata kodu korunur (iptal
+     * edilmiş analize geç gelen iş hatası "iptal edildi"yi ezmez).
+     *
+     * @return bool true → analiz bu çağrıyla bitti
      */
-    public function hataylaBitir(int $id, string $kod): void
+    public function hataylaBitir(int $id, string $kod): bool
     {
-        $this->db->prepare(
+        $statement = $this->db->prepare(
             "UPDATE transkript_analizler
                 SET durum = 'hata', hata_kodu = :kod, bitti_at = NOW(),
                     asama = SUBSTRING_INDEX(asama, ':', 1)
-              WHERE id = :id AND durum <> 'tamamlandi'"
-        )->execute([':kod' => mb_substr($kod, 0, 50), ':id' => $id]);
+              WHERE id = :id AND durum NOT IN ('tamamlandi', 'hata')"
+        );
+        $statement->execute([':kod' => mb_substr($kod, 0, 50), ':id' => $id]);
+
+        return $statement->rowCount() === 1;
     }
 
     /* =================================================================
@@ -284,9 +291,20 @@ final class AnalizRepository
      * @param array<string,mixed>             $rapor  sonuc_json olarak saklanır
      * @param list<array<string,mixed>>       $ogeler transkript_analiz_ogeleri satırları
      * @param array{token:int,maliyet:float}  $toplam
+     * @return bool false → analiz bu arada bitmiş (iptal / hata); hiçbir şey yazılmadı
      */
-    public function raporuYaz(int $analizId, int $kaynakId, array $rapor, string $kisaOzet, string $detayliOzet, array $ogeler, array $toplam): void
+    public function raporuYaz(int $analizId, int $kaynakId, array $rapor, string $kisaOzet, string $detayliOzet, array $ogeler, array $toplam): bool
     {
+        /* Satır kilitlenir (çağıran işlem içindedir): iptal ile rapor aynı
+         * anda gelirse biri bekler. İptal edilmiş analize rapor yazılsaydı
+         * önceki güncel rapor da güncellikten düşerdi. */
+        $durum = $this->db->prepare('SELECT durum FROM transkript_analizler WHERE id = :analiz FOR UPDATE');
+        $durum->execute([':analiz' => $analizId]);
+
+        if (in_array($durum->fetchColumn(), [false, 'hata'], true)) {
+            return false;
+        }
+
         $this->db->prepare('DELETE FROM transkript_analiz_ogeleri WHERE analiz_id = :analiz')->execute([':analiz' => $analizId]);
 
         $ekle = $this->db->prepare(
@@ -327,6 +345,8 @@ final class AnalizRepository
             ':maliyet' => $toplam['maliyet'],
             ':analiz'  => $analizId,
         ]);
+
+        return true;
     }
 
     /* =================================================================
