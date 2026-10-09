@@ -440,6 +440,30 @@ test('Geçersiz Bearer anahtarı 401 döner ve oturum çerezi üretmez', functio
     return stripos($r['basliklar'], 'Set-Cookie:') === false ? true : 'Set-Cookie gönderildi';
 });
 
+/* Bilinmeyen adres ve yanlış yöntem router'dan gelir, API kapıcısına
+ * uğramaz; yine de API zarfıyla dönmeli (transcript-system, cowork 6. tur K1). */
+foreach ([
+    ['api/v1/yok-yer-' . bin2hex(random_bytes(2)), 'GET', 404, 'bulunamadi'],
+    ['api/v1/sayfalar', 'DELETE', 405, 'gecersiz_yontem'],
+] as [$apiYol, $apiYontem, $apiKod, $apiHata]) {
+    foreach (['başlıksız' => [], 'Bearer başlıklı' => ['Authorization: Bearer cy_gecersiz000000000000']] as $durum => $basliklar) {
+        test("$apiYontem $apiYol ($durum) $apiKod + API zarfı (error.code=$apiHata)", function () use ($base, $apiYol, $apiYontem, $apiKod, $apiHata, $basliklar): bool|string {
+            $r = (new Istemci($base))->istek($apiYol, $apiYontem, [], $basliklar);
+            $j = json_decode($r['govde'], true);
+
+            if ($r['kod'] !== $apiKod) {
+                return 'HTTP ' . $r['kod'];
+            }
+
+            if (!is_array($j) || ($j['success'] ?? null) !== false || ($j['error']['code'] ?? null) !== $apiHata || !isset($j['error']['message'])) {
+                return 'zarf: ' . substr($r['govde'], 0, 120);
+            }
+
+            return isset($j['type']) || isset($j['description']) ? 'panel zarfı alanları var' : true;
+        });
+    }
+}
+
 test('api/v1/sayfalar (anahtarsız uç) JSON döner', function () use ($base): bool|string {
     $r = (new Istemci($base))->istek('api/v1/sayfalar');
     $j = json_decode($r['govde'], true);

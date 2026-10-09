@@ -157,11 +157,46 @@ final class ErrorHandler
             }
         }
 
+        /* /api/v1 altındaki her hata API zarfıyla döner:
+         * {"success":false,"error":{"code","message"}}. Bilinmeyen adres
+         * (404) ve yanlış yöntem (405) router'dan gelir, API kapıcısına
+         * (ApiGuard) hiç uğramaz; eskiden panelin AJAX zarfıyla
+         * ({"type":"danger","description"}) ya da HTML olarak dönüyordu. */
+        if (self::isApiRequest()) {
+            self::respondApi($e, $status, $wire);
+        }
+
         if (self::wantsJson()) {
             self::respondJson($e, $status, $wire, $http);
         }
 
         self::respondHtml($e, $http, $status);
+    }
+
+    /** İstek REST API'ye mi (api/v1/…)? Adres çözülemezse hayır. */
+    private static function isApiRequest(): bool
+    {
+        try {
+            $yol = Url::current();
+        } catch (Throwable) {
+            return false;
+        }
+
+        return $yol === 'api/v1' || str_starts_with($yol, 'api/v1/');
+    }
+
+    /**
+     * API hata zarfı (ApiResponse::error). Kod durumdan gelir: 404
+     * "bulunamadi", 405 "gecersiz_yontem", 401 "yetkisiz"…; sunucu
+     * hatasında ayrıntı yok (hata ayıklama açıkken de), yalnız genel mesaj.
+     */
+    private static function respondApi(Throwable $e, int $status, int $wire): never
+    {
+        $mesaj = $e instanceof HttpException
+            ? $e->getMessage()
+            : ($status >= 500 ? 'Beklenmeyen bir hata oluştu. Lütfen daha sonra tekrar deneyin.' : 'İstek işlenemedi.');
+
+        \App\Core\Api\ApiResponse::error($mesaj, $wire);
     }
 
     /* =================================================================
