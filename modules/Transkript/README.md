@@ -79,6 +79,8 @@ Panel: `panel/transkript` (liste), `panel/transkript/{kaynak_id}` (rapor),
 `panel/transkript/{kaynak_id}/transkript` (okuma + arama JSON'u),
 `panel/transkript/varlik/{dosya}` (modülün JS / CSS'i),
 `panel/transkript/{kaynak_id}/indir/{bicim}` (rapor.md, transkript.txt / .srt / .vtt),
+`panel/transkript/{kaynak_id}/sil` ve `…/iptal` (POST, kayıt yönetimi),
+`panel/transkript/kuyruk/isle` (POST, yönetici; "Şimdi işle"),
 `panel/transkript/{kaynak_id}/sohbet` (POST, sonraki aşama).
 
 API (`Authorization: Bearer cy_…`): hazır olanlar `analiz`, `kaynaklar`
@@ -93,10 +95,22 @@ aşamalarda (501). Ayrıntı ve erişim matrisi: `tests/transkript.php`.
 edilmiş video girilirse sayfa değişmeden "Bu video daha önce analiz edildi
 [Sonuçları Gör] [Yeniden Analiz Et]" uyarısı (yeniden analiz yalnız
 `transkript.admin`); yeni analizde rapor sayfasına geçilir. Özet kutucukları
-(bugünkü analiz, video, token, tahmini maliyet; yönetici herkesinkini, diğerleri
-kendininkini görür). Sunucu taraflı sayfalı tablo: arama (başlık / kanal /
-video kimliği) ve durum filtresi; telefonda tablo karta döner. Süren analizin
-satırı 3 sn'de bir güncellenir.
+raporları sayar, denemeleri değil: raporu hazır video (altında "2 sürüyor ·
+1 hata"), bugün tamamlanan analiz, token, tahmini maliyet (yönetici herkesinkini,
+diğerleri kendininkini görür; silinen kayıtların harcaması token ve maliyette
+kalır). Sunucu taraflı sayfalı tablo: Kaynak · Süre · Durum (rozet + ilerleme
+ya da "Rapor hazır") · Tarih · İşlemler; arama başlık, kanal ve video
+kimliğinin bir parçasında ("jNQX"), durum filtresi; telefonda tablo karta
+döner. Süren analizin satırı 3 sn'de bir güncellenir.
+
+**Kayıt yönetimi** (`Services/KayitYonetimi`, onaylar panelin pencere
+biçimiyle, tarayıcının `confirm()` kutusu yok):
+
+| Eylem | Kim | Ne olur |
+|---|---|---|
+| Yeniden dene | analiz yetkisi (`transkript.analyze`), son analiz hatalıysa | yeni analiz açılır; transcript yeniden kullanılır |
+| İptal | yönetici ya da analizi başlatan | analiz `iptal_edildi` koduyla biter, bekleyen işleri silinir; çalışan iş sonucunu yazamaz |
+| Sil | ortak YouTube kaydında yalnız yönetici; yüklenen dosyada sahibi | kaynak, analizler, transcript, sohbetler (CASCADE) ve bekleyen işler tek işlemde; AI kullanım kayıtları kalır |
 
 **Rapor (`panel/transkript/{kaynak_id}`):** kaynak kartı; analiz sürerken 4
 aşamalı canlı ilerleme (bitince sayfa kendini yeniler); kısa özet; açılır

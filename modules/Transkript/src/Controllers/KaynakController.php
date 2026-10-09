@@ -37,6 +37,7 @@ use Modules\Transkript\Services\AnalizReddedildi;
 use Modules\Transkript\Services\Cleaner;
 use Modules\Transkript\Services\DisaAktarim;
 use Modules\Transkript\Services\KaynakDurumu;
+use Modules\Transkript\Services\KayitYonetimi;
 use Modules\Transkript\Services\KuyrukDurumu;
 use Modules\Transkript\Services\RaporVerisi;
 use Modules\Transkript\Services\Search;
@@ -96,6 +97,7 @@ final class KaynakController extends Controller
             'veri'   => $veri,
             'policy' => new TranskriptPolicy(Auth::user()),
             'kuyruk' => (new KuyrukDurumu($this->db))->getir(),
+            'surenAnaliz' => (new KaynakRepository($this->db))->suregelenAnaliz((int) $kaynak['id']),
             // Gömülü oynatıcının postMessage hedefi: bu sayfanın kökeni.
             'origin' => ($adres['scheme'] ?? 'http') . '://' . ($adres['host'] ?? 'localhost') . (isset($adres['port']) ? ':' . $adres['port'] : ''),
         ]);
@@ -241,6 +243,59 @@ final class KaynakController extends Controller
         $durum = (new KaynakDurumu($this->db))->getir($this->gorulebilirKaynak($kaynak_id));
 
         Response::success($durum['etiket'], $durum);
+    }
+
+    /**
+     * POST panel/transkript/{kaynak_id}/sil — kaynak, analizleri, transcript'i
+     * ve bekleyen kuyruk işleri (Services\KayitYonetimi). Ortak YouTube
+     * kaynağını yalnız yönetici siler (TranskriptPolicy::canDeleteSource);
+     * harcanan AI maliyeti kayıtlarda kalır.
+     */
+    public function sil(Request $request, string $kaynak_id): void
+    {
+        $kaynak = $this->gorulebilirKaynak($kaynak_id);
+
+        if (!(new TranskriptPolicy(Auth::user()))->canDeleteSource($kaynak)) {
+            Response::error('Bu kaydı silme yetkiniz yok. Ortak videoları yalnızca yöneticiler silebilir.', 403);
+        }
+
+        $sonuc = (new KayitYonetimi($this->db))->sil($kaynak);
+
+        Logger::info('Transkript kaydı silindi', [
+            'kaynak' => (int) $kaynak['id'], 'video' => (string) $kaynak['dis_kimlik'],
+            'analiz' => $sonuc['analiz'], 'is' => $sonuc['is'], 'kullanici' => Auth::id(),
+        ], 'transkript');
+
+        Response::success('Kayıt silindi.', ['adres' => url('panel/transkript')]);
+    }
+
+    /**
+     * POST panel/transkript/{kaynak_id}/iptal — kaynağın süren analizini
+     * durdurur: analiz "iptal edildi" hatasıyla biter, bekleyen işleri
+     * silinir. Yönetici ya da analizi başlatan (canCancelAnalysis).
+     */
+    public function iptal(Request $request, string $kaynak_id): void
+    {
+        $kaynak = $this->gorulebilirKaynak($kaynak_id);
+        $analiz = (new KaynakRepository($this->db))->suregelenAnaliz((int) $kaynak['id']);
+
+        if ($analiz === null) {
+            Response::error('Bu kaynağın süren bir analizi yok.', 409);
+        }
+
+        if (!(new TranskriptPolicy(Auth::user()))->canCancelAnalysis($analiz)) {
+            Response::error('Bu analizi yalnızca başlatan kişi ya da bir yönetici iptal edebilir.', 403);
+        }
+
+        $iptal = (new KayitYonetimi($this->db))->iptal((int) $analiz['id']);
+
+        if ($iptal) {
+            Logger::info('Analiz iptal edildi', ['analiz' => (int) $analiz['id'], 'kaynak' => (int) $kaynak['id'], 'kullanici' => Auth::id()], 'transkript');
+        }
+
+        Response::success($iptal ? 'Analiz iptal edildi.' : 'Analiz bu arada bitti; iptal edilecek bir şey kalmadı.', [
+            'adres' => url('panel/transkript/' . (int) $kaynak['id']),
+        ]);
     }
 
     /**

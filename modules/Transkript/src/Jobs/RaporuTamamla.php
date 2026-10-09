@@ -34,8 +34,10 @@ final class RaporuTamamla extends TranskriptIsi
         $toplam = $this->aiKullanim()->analizToplami($this->analizId);
         $ogeler = Pipeline::ogeler($rapor);
 
-        $this->birlikte(function () use ($analiz, $rapor, $ogeler, $toplam): void {
-            $this->analizler()->raporuYaz(
+        $yazildi = false;
+
+        $this->birlikte(function () use ($analiz, $rapor, $ogeler, $toplam, &$yazildi): void {
+            $yazildi = $this->analizler()->raporuYaz(
                 $this->analizId,
                 (int) $analiz['kaynak_id'],
                 $rapor,
@@ -45,6 +47,12 @@ final class RaporuTamamla extends TranskriptIsi
                 $toplam,
             );
         });
+
+        if (!$yazildi) {
+            Logger::info('Analiz bu arada bitmiş (iptal); rapor yazılmadı', ['analiz' => $this->analizId], 'transkript');
+
+            return;
+        }
 
         $sayi = $this->analizler()->parcaSayilari($this->analizId);
 

@@ -15,7 +15,7 @@
  *  @var array{satirlar:list<array<string,mixed>>,toplam:int}      $liste
  *  @var int                                                       $sayfa
  *  @var int                                                       $boyut
- *  @var array{bugun:int,token:int,maliyet:float,kaynak:int}       $istatistik
+ *  @var array{bugun:int,token:int,maliyet:float,kaynak:int,suruyor:int,hata:int} $istatistik
  *  @var bool                                                      $hepsi  istatistik herkesin mi
  *  @var array<string,mixed>                                       $kuyruk KuyrukDurumu::getir()
  * =====================================================================
@@ -34,6 +34,7 @@ $durumAdi = [
     'analiz_ediliyor'     => ['Analiz ediliyor', 'is-info'],
     'tamamlandi'          => ['Tamamlandı', 'is-ok'],
     'hata'                => ['Hata', 'is-danger'],
+    'iptal'               => ['İptal edildi', ''],
 ];
 $filtreli = $filtre['q'] !== '' || $filtre['durum'] !== '';
 $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format((float) $n, $basamak, ',', '.');
@@ -79,19 +80,25 @@ $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format(
 
 <div class="cy-stats mb-3" style="--cy-stats-lg: 4; --cy-stats-md: 2">
     <div class="cy-stat">
-        <span class="cy-stat__icon cy-stat__icon--brand"><?= icon('calendar') ?></span>
+        <span class="cy-stat__icon cy-stat__icon--success"><?= icon('files') ?></span>
         <span>
-            <span class="cy-stat__label">Bugünkü analiz</span>
-            <span class="cy-stat__value"><?= e($sayi($istatistik['bugun'])) ?></span>
-            <span class="cy-stat__hint"><?= $hepsi ? 'bütün kullanıcılar' : 'sizin başlattıklarınız' ?></span>
+            <span class="cy-stat__label">Raporu hazır video</span>
+            <span class="cy-stat__value"><?= e($sayi($istatistik['kaynak'])) ?></span>
+            <span class="cy-stat__hint"><?php
+                $durumlar = array_filter([
+                    $istatistik['suruyor'] > 0 ? $sayi($istatistik['suruyor']) . ' sürüyor' : '',
+                    $istatistik['hata'] > 0 ? $sayi($istatistik['hata']) . ' hata' : '',
+                ]);
+                echo e($durumlar !== [] ? implode(' · ', $durumlar) : 'aynı video ikinci kez ödenmez');
+            ?></span>
         </span>
     </div>
     <div class="cy-stat">
-        <span class="cy-stat__icon cy-stat__icon--success"><?= icon('files') ?></span>
+        <span class="cy-stat__icon cy-stat__icon--brand"><?= icon('calendar') ?></span>
         <span>
-            <span class="cy-stat__label">Analiz edilen video</span>
-            <span class="cy-stat__value"><?= e($sayi($istatistik['kaynak'])) ?></span>
-            <span class="cy-stat__hint">aynı video ikinci kez ödenmez</span>
+            <span class="cy-stat__label">Bugün tamamlanan</span>
+            <span class="cy-stat__value"><?= e($sayi($istatistik['bugun'])) ?></span>
+            <span class="cy-stat__hint"><?= $hepsi ? 'bütün kullanıcılar' : 'sizin başlattıklarınız' ?></span>
         </span>
     </div>
     <div class="cy-stat">
@@ -148,21 +155,23 @@ $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format(
                 <thead>
                     <tr>
                         <th scope="col" data-kart="ana">Kaynak</th>
-                        <th scope="col">Tür</th>
                         <th scope="col">Süre</th>
                         <th scope="col">Durum</th>
-                        <th scope="col">AI analizi</th>
                         <th scope="col">Tarih</th>
+                        <th scope="col" class="text-end" data-kart="islem"><span class="visually-hidden">İşlemler</span></th>
                     </tr>
                 </thead>
                 <tbody>
                     <?php foreach ($liste['satirlar'] as $satir): ?>
                         <?php
-                        $rapor   = url('panel/transkript/' . (int) $satir['id']);
+                        $kaynakId = (int) $satir['id'];
+                        $rapor   = url('panel/transkript/' . $kaynakId);
                         $durum   = (string) $satir['durum'];
                         $suruyor = !in_array($durum, ['tamamlandi', 'hata'], true);
-                        [$durumMetni, $durumRengi] = $durumAdi[$durum] ?? [$durum, ''];
+                        $iptal   = $durum === 'hata' && $satir['hata_kodu'] === 'iptal_edildi';
+                        [$durumMetni, $durumRengi] = $durumAdi[$iptal ? 'iptal' : $durum] ?? [$durum, ''];
                         $resim   = (string) ($satir['kucuk_resim'] ?? '');
+                        $adi     = (string) ($satir['baslik'] ?: $satir['dis_kimlik']);
                         ?>
                         <tr<?= $suruyor ? ' data-ilerleme="' . e(url('panel/transkript/ilerleme/' . (int) $satir['id'])) . '"' : '' ?>>
                             <td>
@@ -173,31 +182,58 @@ $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format(
                                         <span class="tk-kaynak__resim tk-kaynak__resim--bos"><?= icon('file', 'cy-icon cy-icon--sm') ?></span>
                                     <?php endif; ?>
                                     <span class="tk-kaynak__metin">
-                                        <strong><?= e((string) ($satir['baslik'] ?: $satir['dis_kimlik'])) ?></strong>
-                                        <small><?= e((string) ($satir['kanal_adi'] ?? '')) ?></small>
+                                        <strong><?= e($adi) ?></strong>
+                                        <small>
+                                            <?php if ($satir['tur'] !== 'youtube'): ?><span class="cy-chip"><?= e($turAdi[$satir['tur']] ?? (string) $satir['tur']) ?></span> <?php endif; ?>
+                                            <?= e((string) ($satir['kanal_adi'] ?? '')) ?>
+                                        </small>
                                     </span>
                                 </a>
                             </td>
-                            <td><?= e($turAdi[$satir['tur']] ?? (string) $satir['tur']) ?></td>
                             <td><span class="cy-mono"><?= e(RaporVerisi::sure($satir['sure_sn'] !== null ? (int) $satir['sure_sn'] : null)) ?></span></td>
-                            <td>
-                                <span class="cy-pill <?= e($durumRengi) ?> js-tk-durum"<?= $durum === 'hata' ? ' title="' . e(HataKodlari::mesaj($satir['hata_kodu'])) . '"' : '' ?>><?= e($durumMetni) ?></span>
-                            </td>
                             <td class="js-tk-analiz">
-                                <?php if ($suruyor): ?>
-                                    <span class="tk-mini-ilerleme">
-                                        <span class="cy-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="<?= (int) $satir['ilerleme'] ?>" aria-label="Analiz ilerlemesi">
-                                            <span class="cy-progress__bar js-tk-cubuk" style="width: <?= (int) $satir['ilerleme'] ?>%"></span>
+                                <span class="tk-durum-hucre">
+                                    <span class="cy-pill <?= e($durumRengi) ?> js-tk-durum"><?= e($durumMetni) ?></span>
+                                    <?php if ($suruyor): ?>
+                                        <span class="tk-mini-ilerleme">
+                                            <span class="cy-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="<?= (int) $satir['ilerleme'] ?>" aria-label="Analiz ilerlemesi">
+                                                <span class="cy-progress__bar js-tk-cubuk" style="width: <?= (int) $satir['ilerleme'] ?>%"></span>
+                                            </span>
+                                            <small class="js-tk-etiket">%<?= (int) $satir['ilerleme'] ?></small>
                                         </span>
-                                        <small class="js-tk-etiket">%<?= (int) $satir['ilerleme'] ?></small>
-                                    </span>
-                                <?php elseif ($satir['rapor_analiz_id'] !== null): ?>
-                                    <a class="cy-link" href="<?= e($rapor) ?>"><?= icon('check', 'cy-icon cy-icon--sm') ?> Hazır</a>
-                                <?php else: ?>
-                                    <small class="tk-hata-metni"><?= e(HataKodlari::mesaj($satir['hata_kodu'])) ?></small>
-                                <?php endif; ?>
+                                    <?php elseif ($satir['rapor_analiz_id'] !== null): ?>
+                                        <?php if ($durum === 'hata'): ?>
+                                            <small class="cy-muted">Son deneme: <?= e(HataKodlari::mesaj($satir['hata_kodu'])) ?> Önceki rapor duruyor.</small>
+                                        <?php else: ?>
+                                            <a class="cy-link small" href="<?= e($rapor) ?>"><?= icon('check', 'cy-icon cy-icon--sm') ?> Rapor hazır</a>
+                                        <?php endif; ?>
+                                    <?php elseif (!$iptal): ?>
+                                        <small class="tk-hata-metni"><?= e(HataKodlari::mesaj($satir['hata_kodu'])) ?></small>
+                                    <?php endif; ?>
+                                </span>
                             </td>
                             <td><small title="<?= e((string) $satir['created_at']) ?>"><?= e(human_date((string) $satir['created_at'])) ?></small></td>
+                            <td class="text-end">
+                                <div class="cy-row-actions">
+                                    <?php if ($durum === 'hata' && $satir['tur'] === 'youtube' && $policy->canAnalyze()): ?>
+                                        <button type="button" class="cy-btn-icon js-tk-yeniden" title="Yeniden dene" aria-label="<?= e($adi) ?>: yeniden dene"
+                                                data-url="<?= e(url('panel/transkript/analiz')) ?>"
+                                                data-video="<?= e('https://www.youtube.com/watch?v=' . $satir['dis_kimlik']) ?>" data-yeniden="0"><?= icon('refresh', 'cy-icon cy-icon--sm') ?></button>
+                                    <?php endif; ?>
+                                    <?php if ($suruyor && $policy->canCancelAnalysis($satir)): ?>
+                                        <button type="button" class="cy-btn-icon js-tk-iptal" title="Analizi iptal et" aria-label="<?= e($adi) ?>: analizi iptal et"
+                                                data-url="<?= e(url('panel/transkript/' . $kaynakId . '/iptal')) ?>"
+                                                data-onay="“<?= e($adi) ?>” analizi durdurulacak. Bitmiş bölümler korunmaz; daha sonra yeniden başlatabilirsiniz."
+                                                data-onay-baslik="Analizi iptal et" data-onay-dugme="Evet, iptal et" data-onay-tehlike="1"><?= icon('x-circle', 'cy-icon cy-icon--sm') ?></button>
+                                    <?php endif; ?>
+                                    <?php if ($policy->canDeleteSource($satir)): ?>
+                                        <button type="button" class="cy-btn-icon cy-btn-icon--danger js-tk-sil" title="Sil" aria-label="<?= e($adi) ?>: sil"
+                                                data-url="<?= e(url('panel/transkript/' . $kaynakId . '/sil')) ?>"
+                                                data-onay="“<?= e($adi) ?>” kalıcı olarak silinecek: raporlar, transcript ve bekleyen işler. Video herkes için ortak; yeniden analiz yapay zekâ çağrısı gerektirir."
+                                                data-onay-baslik="Kaydı sil" data-onay-dugme="Evet, sil" data-onay-tehlike="1"><?= icon('trash', 'cy-icon cy-icon--sm') ?></button>
+                                    <?php endif; ?>
+                                </div>
+                            </td>
                         </tr>
                     <?php endforeach; ?>
                 </tbody>
@@ -216,5 +252,7 @@ $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format(
         </footer>
     <?php endif; ?>
 </section>
+
+<?php View::partial('Transkript::_parcalar/onay-penceresi'); ?>
 
 <script src="<?= e(Varliklar::adres('transkript.js')) ?>" defer></script>

@@ -66,6 +66,7 @@ use Modules\Transkript\Kaynak\KaynakHatasi;
 use Modules\Transkript\Kaynak\UrlParser;
 use Modules\Transkript\Kaynak\YoutubeMetadata;
 use Modules\Transkript\Repositories\AiKullanimRepository;
+use Modules\Transkript\Repositories\AnalizRepository;
 use Modules\Transkript\Repositories\KaynakRepository;
 use Modules\Transkript\Services\AnalizBaslatici;
 use Modules\Transkript\Services\AnalizReddedildi;
@@ -75,6 +76,7 @@ use Modules\Transkript\Services\GecersizSonuc;
 use Modules\Transkript\Services\Istem;
 use Modules\Transkript\Services\Cleaner;
 use Modules\Transkript\Services\KaynakDurumu;
+use Modules\Transkript\Services\KayitYonetimi;
 use Modules\Transkript\Services\KuyrukDurumu;
 use Modules\Transkript\Services\Parca;
 use Modules\Transkript\Services\Pipeline;
@@ -210,6 +212,8 @@ $beklenen = [
     'GET panel/transkript/{kaynak_id}/transkript'            => 'UEY',
     'GET panel/transkript/{kaynak_id}/indir/{bicim}'         => 'UEY',
     'GET panel/transkript/{kaynak_id}'                       => 'UEY',
+    'POST panel/transkript/{kaynak_id}/sil'                  => 'UEY',
+    'POST panel/transkript/{kaynak_id}/iptal'                => 'EY',
     'POST panel/transkript/{kaynak_id}/sohbet'               => 'UEY',
     'POST api/v1/transkript/analiz'                          => 'EY',
     'POST api/v1/transkript/dosya'                           => 'EY',
@@ -1719,6 +1723,55 @@ $yerelAcik = KuyrukDurumu::paneldenIslenebilir();
 App\Core\Config::set('app.env', $eskiOrtam);
 Ayarlar::forget();
 dogrula('"Şimdi işle": yayında kapalı, ayarla açılır; geliştirme ortamında açık', $yayinKapali && $yayinAyarla && $yerelAcik);
+
+/* ---------------------------------------------------------------- */
+echo "\nKayıt yönetimi (sil, iptal, sayaçlar, onay penceresi)\n";
+
+$pM = new TranskriptPolicy(null);
+$pU = new TranskriptPolicy($uye);
+$pE = new TranskriptPolicy($editor);
+$pY = new TranskriptPolicy($yonetici);
+$ortak = ['sahip_id' => 0];
+dogrula('Ortak YouTube kaydını yalnız yönetici siler (editör, üye, misafir silemez)',
+    $pY->canDeleteSource($ortak) && !$pE->canDeleteSource($ortak) && !$pU->canDeleteSource($ortak) && !$pM->canDeleteSource($ortak));
+dogrula('Yüklenen dosyayı sahibi ve yönetici siler, başkası silemez',
+    $pU->canDeleteSource(['sahip_id' => $uye->id]) && $pY->canDeleteSource(['sahip_id' => $uye->id]) && !$pE->canDeleteSource(['sahip_id' => $uye->id]));
+dogrula('Süren analizi başlatan editör ve yönetici iptal eder; başka editör ve üye edemez',
+    $pE->canCancelAnalysis(['kullanici_id' => $editor->id]) && $pY->canCancelAnalysis(['kullanici_id' => $editor->id])
+    && !$pE->canCancelAnalysis(['kullanici_id' => $yonetici->id]) && !$pU->canCancelAnalysis(['kullanici_id' => $uye->id]) && !$pM->canCancelAnalysis(['kullanici_id' => 0]));
+
+$kuyrukSatirlari = [
+    ['id' => 1, 'veri' => '{"analiz_id":1}'],
+    ['id' => 2, 'veri' => '{"analiz_id":12,"parca":3}'],
+    ['id' => 3, 'veri' => '{"analiz_id":13}'],
+    ['id' => 4, 'veri' => 'bozuk'],
+    ['id' => 5, 'veri' => '{"analiz_id":"12"}'],
+];
+dogrula('Bekleyen işler yükteki analiz_id ile seçilir ("1" "12"yi yakalamaz, bozuk yük atlanır)',
+    KayitYonetimi::isleriSec($kuyrukSatirlari, [12]) === [2, 5] && KayitYonetimi::isleriSec($kuyrukSatirlari, [1]) === [1] && KayitYonetimi::isleriSec($kuyrukSatirlari, []) === []);
+dogrula('İptal mesajı Türkçe ve kalıcı (yeniden denenmez)', HataKodlari::mesaj('iptal_edildi') === 'Analiz iptal edildi.');
+
+$guardPdo = new KayitPdo();
+$guardRepo = new AnalizRepository($guardPdo);
+$guardRepo->ilerle(5, 'analiz_ediliyor', 'parca', 40);
+$guardRepo->ilerlemeYaz(5, 50);
+$guardRepo->hataylaBitir(5, 'iptal_edildi');
+$bitmisKorunur = array_filter($guardPdo->sorgular, static fn (string $s): bool => str_contains($s, "durum NOT IN ('tamamlandi', 'hata')"));
+dogrula('Bitmiş (iptal edilmiş) analiz geç gelen işle canlanmaz: ilerle, ilerlemeYaz, hataylaBitir yalnız sürende',
+    count($bitmisKorunur) === 3, implode(' | ', array_map(static fn (string $s): string => preg_replace('/\s+/', ' ', mb_substr($s, 0, 90)), $guardPdo->sorgular)));
+$raporPdo = new KayitPdo();
+$raporYazildi = (new AnalizRepository($raporPdo))->raporuYaz(5, 1, ['summary' => 'x'], 'x', '', [], ['token' => 1, 'maliyet' => 0.0]);
+dogrula('raporuYaz önce satırı kilitler (FOR UPDATE); analiz yoksa / iptalse hiçbir şey yazmaz',
+    $raporYazildi === false && str_contains($raporPdo->sorgular[0] ?? '', 'FOR UPDATE') && count($raporPdo->sorgular) === 1);
+
+// Yorumlar atılarak bakılır (açıklamada "confirm()" geçer).
+$listeJs = (string) preg_replace(['#/\*.*?\*/#s', '#^\s*//.*$#m'], '', (string) file_get_contents(MODUL_YOLU . '/assets/js/transkript.js'));
+dogrula('transkript.js tarayıcının confirm() kutusunu kullanmaz; onay penceresi bootstrap.Modal ile',
+    !preg_match('/\bconfirm\s*\(/', $listeJs) && str_contains($listeJs, 'bootstrap.Modal.getOrCreateInstance'));
+$listeGorunum = (string) file_get_contents(MODUL_YOLU . '/views/index.php');
+dogrula('Liste: TÜR sütunu yok (YouTube dışı tür rozet), durum tek sütun, işlemler sütunu',
+    !str_contains($listeGorunum, '>Tür</th>') && !str_contains($listeGorunum, '>AI analizi</th>') && str_contains($listeGorunum, 'data-kart="islem"')
+    && str_contains($listeGorunum, 'js-tk-sil') && str_contains($listeGorunum, 'js-tk-iptal'));
 
 Logger::useDirectory(null);
 Setting::flush();

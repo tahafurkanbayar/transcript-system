@@ -29,6 +29,7 @@ final class HataKodlari
         'ai_ayar_eksik'         => 'Yapay zekâ ayarı eksik (anahtar ya da model). Yöneticinize bildirin.',
         'ai_kota_doldu'         => 'Yapay zekâ servisinin günlük kullanım kotası doldu. Yarın yeniden deneyin ya da yöneticinize bildirin.',
         'ai_yanit_gecersiz'     => 'Yapay zekâ geçerli bir rapor üretemedi. Biraz sonra yeniden deneyin.',
+        'iptal_edildi'          => 'Analiz iptal edildi.',
         'beklenmeyen_hata'      => 'Beklenmeyen bir hata oluştu; ayrıntı kayda geçti.',
     ];
 

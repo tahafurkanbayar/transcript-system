@@ -20,6 +20,7 @@
  *  @var Modules\Transkript\TranskriptPolicy $policy
  *  @var string                              $origin  gömülü oynatıcı için
  *  @var array<string,mixed>                 $kuyruk  KuyrukDurumu::getir()
+ *  @var array<string,mixed>|null            $surenAnaliz iptal düğmesi için (kullanici_id)
  * =====================================================================
  */
 
@@ -162,7 +163,12 @@ $indir = static fn (string $bicim): string => url('panel/transkript/' . $kaynakI
             <p class="cy-panel__note mb-0">Sayfayı kapatabilirsiniz; analiz arka planda sürer.<?= $rapor !== null ? ' Yeni rapor hazır olana kadar aşağıda önceki rapor görünür.' : '' ?></p>
         </section>
 
-        <?php if ($durum['durum'] === 'hata'): ?>
+        <?php if ($durum['durum'] === 'hata' && ($durum['hata']['kod'] ?? null) === 'iptal_edildi'): ?>
+            <div class="cy-panel mb-3 tk-uyari" role="status">
+                <strong><?= icon('x-circle', 'cy-icon cy-icon--sm') ?> <?= $rapor !== null ? 'Son analiz iptal edildi.' : 'Analiz iptal edildi.' ?></strong>
+                <?php if ($rapor !== null): ?><span>Aşağıdaki rapor önceki başarılı analizden.</span><?php endif; ?>
+            </div>
+        <?php elseif ($durum['durum'] === 'hata'): ?>
             <div class="cy-panel cy-panel--warn mb-3 tk-uyari" role="alert">
                 <strong><?= icon('alert', 'cy-icon cy-icon--sm') ?> <?= $rapor !== null ? 'Son analiz tamamlanamadı.' : 'Analiz tamamlanamadı.' ?></strong>
                 <span><?= e(HataKodlari::mesaj($durum['hata']['kod'] ?? null)) ?></span>
@@ -371,7 +377,8 @@ $indir = static fn (string $bicim): string => url('panel/transkript/' . $kaynakI
                                 data-url="<?= e(url('panel/transkript/analiz')) ?>"
                                 data-video="<?= e('https://www.youtube.com/watch?v=' . $videoId) ?>"
                                 data-yeniden="1"
-                                data-confirm-metin="Bu video yeniden analiz edilecek (AI çağrısı yapılır). Devam edilsin mi?">
+                                data-onay="Bu video yeniden analiz edilecek; yapay zekâ çağrısı yapılır. Yeni rapor hazır olana kadar bu rapor görünmeye devam eder."
+                                data-onay-baslik="Yeniden analiz et" data-onay-dugme="Evet, yeniden analiz et">
                             <?= icon('refresh', 'cy-icon cy-icon--sm') ?> Yeniden analiz et
                         </button>
                     <?php endif; ?>
@@ -409,8 +416,40 @@ $indir = static fn (string $bicim): string => url('panel/transkript/' . $kaynakI
                     <?php endif; ?>
                 </section>
             <?php endif; ?>
+
+            <?php
+            $iptalEdebilir = $surenAnaliz !== null && $policy->canCancelAnalysis($surenAnaliz);
+            $silebilir     = $policy->canDeleteSource($kaynak);
+            $adi           = (string) ($kaynak['baslik'] ?: $videoId);
+            ?>
+            <?php if ($iptalEdebilir || $silebilir): ?>
+                <!-- KAYIT: iptal ve silme (TranskriptPolicy; onay penceresiyle) -->
+                <section class="cy-panel tk-kayit">
+                    <h3 class="cy-panel__title mb-2"><?= icon('settings', 'cy-icon cy-icon--sm') ?> Kayıt</h3>
+                    <div class="tk-disa__liste">
+                        <?php if ($iptalEdebilir): ?>
+                            <button type="button" class="btn cy-btn cy-btn--ghost cy-btn--sm js-tk-iptal"
+                                    data-url="<?= e(url('panel/transkript/' . $kaynakId . '/iptal')) ?>"
+                                    data-onay="Süren analiz durdurulacak. Bitmiş bölümler korunmaz; daha sonra yeniden başlatabilirsiniz."
+                                    data-onay-baslik="Analizi iptal et" data-onay-dugme="Evet, iptal et" data-onay-tehlike="1">
+                                <?= icon('x-circle', 'cy-icon cy-icon--sm') ?> Analizi iptal et
+                            </button>
+                        <?php endif; ?>
+                        <?php if ($silebilir): ?>
+                            <button type="button" class="btn cy-btn cy-btn--ghost cy-btn--sm tk-tehlike js-tk-sil"
+                                    data-url="<?= e(url('panel/transkript/' . $kaynakId . '/sil')) ?>"
+                                    data-onay="“<?= e($adi) ?>” kalıcı olarak silinecek: raporlar, transcript ve bekleyen işler. Video herkes için ortak; yeniden analiz yapay zekâ çağrısı gerektirir."
+                                    data-onay-baslik="Kaydı sil" data-onay-dugme="Evet, sil" data-onay-tehlike="1">
+                                <?= icon('trash', 'cy-icon cy-icon--sm') ?> Kaydı sil
+                            </button>
+                        <?php endif; ?>
+                    </div>
+                </section>
+            <?php endif; ?>
         </div>
     </aside>
 </div>
+
+<?php View::partial('Transkript::_parcalar/onay-penceresi'); ?>
 
 <script src="<?= e(Varliklar::adres('transkript.js')) ?>" defer></script>
