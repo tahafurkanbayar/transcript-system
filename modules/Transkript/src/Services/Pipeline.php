@@ -331,9 +331,27 @@ final class Pipeline
             'model'       => $model,
             'giris_token' => (int) ($yanit['usage']['input_tokens'] ?? 0),
             'cikis_token' => (int) ($yanit['usage']['output_tokens'] ?? 0),
-            'maliyet_usd' => (float) ($yanit['cost'] ?? 0.0),
+            'maliyet_usd' => self::maliyet($yanit),
             'sure_ms'     => (int) ((hrtime(true) - $baslangic) / 1_000_000),
         ], 'analiz', $this->analizId, $durum);
+    }
+
+    /**
+     * Tahmini maliyet: panelde / config'te 1M token fiyatı girildiyse
+     * onunla, yoksa sağlayıcının fiyat tablosundan (yanıttaki "cost").
+     *
+     * @param array<string,mixed>|null $yanit
+     */
+    public static function maliyet(?array $yanit): float
+    {
+        $giris = (float) Ayarlar::get('ai.fiyat.giris', 0.0);
+        $cikis = (float) Ayarlar::get('ai.fiyat.cikis', 0.0);
+
+        if ($yanit === null || ($giris <= 0 && $cikis <= 0)) {
+            return (float) ($yanit['cost'] ?? 0.0);
+        }
+
+        return round(((int) ($yanit['usage']['input_tokens'] ?? 0) * $giris + (int) ($yanit['usage']['output_tokens'] ?? 0) * $cikis) / 1_000_000, 8);
     }
 
     /**

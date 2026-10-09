@@ -185,3 +185,6 @@ a.tk-zaman.is-oynuyor { background: var(--cy-brand); color: #fff; }
 
 /* Rapor: eski istem notu */
 .tk-eski-istem { margin: 0 0 .75rem; font-size: .8125rem; }
+
+/* Liste: sağa yaslı üst satır (yönetici ayarları) */
+.tk-ust--sag { display: flex; justify-content: flex-end; }

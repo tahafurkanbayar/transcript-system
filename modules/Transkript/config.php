@@ -131,6 +131,10 @@ return [
 
         // Onarım isteğinde modele geri verilen bozuk yanıtın en çok uzunluğu.
         'onarim_en_cok_karakter' => 6000,
+
+        // Maliyet tahmini için 1M token fiyatı (USD). 0: sağlayıcının kodda
+        // duran fiyat tablosu (PRICING). Panelden de değiştirilebilir.
+        'fiyat' => ['giris' => 0.0, 'cikis' => 0.0],
     ],
 
     /* -----------------------------------------------------------------
