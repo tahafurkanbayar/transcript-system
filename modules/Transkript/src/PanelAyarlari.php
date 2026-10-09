@@ -105,7 +105,7 @@ final class PanelAyarlari
         'saatlik_sinir' => [
             'yol' => ['analiz.saatlik_sinir'], 'tur' => 'tamsayi', 'en_az' => 0, 'en_cok' => 10000, 'birim' => 'analiz',
             'etiket' => 'Kullanıcı başına saatlik analiz',
-            'aciklama' => 'Kısa sürede çok istek gelmesini önler; yöneticiler muaf. 0 = sınır yok.',
+            'aciklama' => 'Kısa sürede çok istek gelmesini önler; günlük sınırdan küçük olmalı (yoksa hiç devreye girmez). Yöneticiler muaf. 0 = sınır yok.',
         ],
         'gunluk_token_tavani' => [
             'yol' => ['analiz.gunluk_token_tavani'], 'tur' => 'tamsayi', 'en_az' => 0, 'en_cok' => 1000000000, 'birim' => 'token',
@@ -256,6 +256,32 @@ final class PanelAyarlari
         }
 
         return [];
+    }
+
+    /**
+     * Kaydı engellemeyen ama yöneticinin bilmesi gereken tutarsızlıklar
+     * (kayıttan sonra uyarı olarak gösterilir). Boş alan varsayılanıyla
+     * değerlendirilir.
+     *
+     * @param  array<string,string> $girdi alan => ham değer
+     * @return list<string>
+     */
+    public static function uyarilar(array $girdi): array
+    {
+        $deger = static fn (string $alan): int => trim((string) ($girdi[$alan] ?? '')) !== ''
+            ? (int) $girdi[$alan]
+            : (int) Ayarlar::varsayilan(self::ALANLAR[$alan]['yol'][0], 0);
+
+        $saatlik = $deger('saatlik_sinir');
+        $gunluk  = $deger('gunluk_sinir');
+        $uyarilar = [];
+
+        // Cowork 6. tur K3: saatlik 20, günlük 10 iken saatlik sınır hiç devreye girmiyordu.
+        if ($saatlik > 0 && $gunluk > 0 && $saatlik >= $gunluk) {
+            $uyarilar[] = sprintf('Saatlik sınır (%d) günlük sınırdan (%d) küçük değil; saatlik sınır hiç devreye girmez. Günlükten küçük bir sayı yazın (ör. %d) ya da 0 ile kapatın.', $saatlik, $gunluk, max(1, intdiv($gunluk, 2)));
+        }
+
+        return $uyarilar;
     }
 
     /** Türkçe hata ya da null. */

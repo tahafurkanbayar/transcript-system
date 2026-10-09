@@ -2308,6 +2308,13 @@ $ayarYaz([]);
 dogrula('Panelden ana sayfa seçimi: genel → false, tanıtım → true, boş → config (true)',
     $genel === false && $tanitim === true && Ayarlar::get('anasayfa.tanitim') === true
     && PanelAyarlari::dogrula('ana_sayfa', 'baska') === 'Listeden bir seçenek seçin.' && PanelAyarlari::dogrula('ana_sayfa', 'genel') === null);
+dogrula('K3: saatlik sınırın varsayılanı 5 (günlük 10); saatlik ≥ günlük kaydedilince uyarı, 0 ya da küçükse uyarı yok',
+    Ayarlar::varsayilan('analiz.saatlik_sinir') === 5 && Ayarlar::varsayilan('analiz.gunluk_sinir') === 10
+    && PanelAyarlari::uyarilar(['saatlik_sinir' => '', 'gunluk_sinir' => '']) === []
+    && count(PanelAyarlari::uyarilar(['saatlik_sinir' => '20', 'gunluk_sinir' => ''])) === 1
+    && str_contains(PanelAyarlari::uyarilar(['saatlik_sinir' => '20', 'gunluk_sinir' => '10'])[0] ?? '', 'hiç devreye girmez')
+    && PanelAyarlari::uyarilar(['saatlik_sinir' => '0', 'gunluk_sinir' => '10']) === []
+    && PanelAyarlari::uyarilar(['saatlik_sinir' => '20', 'gunluk_sinir' => '0']) === []);
 
 /* ---------------------------------------------------------------- */
 echo "\nRol testi (editör ve üye): sayaçlar, hata metni, iptal, vaat\n";

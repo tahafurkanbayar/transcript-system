@@ -187,7 +187,8 @@ return [
      *                       TranskriptPolicy::canAnalyze okur.
      * -------------------------------------------------------------- */
     'analiz' => [
-        'saatlik_sinir'         => 20,
+        // Günlük sınırdan küçük olmalı; büyükse hiç devreye girmez (cowork 6. tur K3).
+        'saatlik_sinir'         => 5,
         'gunluk_sinir'          => 10,
         'yonetici_muaf'         => true,
         'gunluk_token_tavani'   => 0,

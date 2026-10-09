@@ -65,6 +65,10 @@ final class AyarController extends Controller
 
         Logger::info('Transkript ayarları kaydedildi', ['kullanici' => Auth::id(), 'dolu' => array_keys(array_filter($girdi, static fn (string $d): bool => $d !== ''))], 'transkript');
         Flash::success('Transkript ayarları kaydedildi. Yeni analizlere uygulanır.');
+
+        foreach (PanelAyarlari::uyarilar($girdi) as $uyari) {
+            Flash::warning($uyari);
+        }
         Response::redirect(url('panel/transkript/ayarlar'));
     }
 

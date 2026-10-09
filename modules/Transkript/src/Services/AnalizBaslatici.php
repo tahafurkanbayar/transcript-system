@@ -292,7 +292,7 @@ final class AnalizBaslatici
 
     private function sinirKontrolu(): void
     {
-        $sinir = (int) Ayarlar::get('analiz.saatlik_sinir', 20);
+        $sinir = (int) Ayarlar::get('analiz.saatlik_sinir', 5);
 
         if ($sinir <= 0 || ((bool) Ayarlar::get('analiz.yonetici_muaf', true) && (new TranskriptPolicy($this->user))->isAdmin())) {
             return;
@@ -382,7 +382,7 @@ final class AnalizBaslatici
         $policy  = new TranskriptPolicy($this->user);
         $muaf    = (bool) Ayarlar::get('analiz.yonetici_muaf', true) && $policy->isAdmin();
         $gunlukSinir  = $muaf ? 0 : max(0, (int) Ayarlar::get('analiz.gunluk_sinir', 10));
-        $saatlikSinir = $muaf ? 0 : max(0, (int) Ayarlar::get('analiz.saatlik_sinir', 20));
+        $saatlikSinir = $muaf ? 0 : max(0, (int) Ayarlar::get('analiz.saatlik_sinir', 5));
         $gunluk  = 0;
         $saatlik = 0;
 
