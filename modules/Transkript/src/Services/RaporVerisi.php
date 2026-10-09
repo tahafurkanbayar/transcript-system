@@ -24,6 +24,7 @@ use Modules\Transkript\Ayarlar;
 use Modules\Transkript\Repositories\AnalizRepository;
 use Modules\Transkript\Repositories\KaynakRepository;
 use Modules\Transkript\Repositories\SegmentRepository;
+use Modules\Transkript\TranskriptPolicy;
 use Modules\Transkript\Zaman;
 use PDO;
 
@@ -43,7 +44,8 @@ final class RaporVerisi
         'ja' => 'Japonca', 'ko' => 'Korece', 'zh' => 'Çince', 'hi' => 'Hintçe', 'nl' => 'Felemenkçe', 'az' => 'Azerice',
     ];
 
-    public function __construct(private readonly PDO $db)
+    /** $policy: bakanın hakları; iç hata nedeni yalnız yetkiliye (KaynakDurumu). */
+    public function __construct(private readonly PDO $db, private readonly ?TranskriptPolicy $policy = null)
     {
     }
 
@@ -80,7 +82,7 @@ final class RaporVerisi
         }
 
         return [
-            'durum'  => (new KaynakDurumu($this->db))->getir($kaynak),
+            'durum'  => (new KaynakDurumu($this->db, $this->policy))->getir($kaynak),
             'rapor'  => is_array($rapor) ? $rapor : null,
             'analiz' => $analiz === null ? null : [
                 'id'            => (int) $analiz['id'],

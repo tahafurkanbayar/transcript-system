@@ -59,6 +59,7 @@ use Modules\Transkript\Http\HttpIstemci;
 use Modules\Transkript\Http\HttpYanit;
 use Modules\Transkript\Ayarlar;
 use Modules\Transkript\Controllers\AnasayfaController;
+use Modules\Transkript\Controllers\KaynakController;
 use Modules\Transkript\HataKodlari;
 use Modules\Transkript\Jobs\AnalizBirlestir;
 use Modules\Transkript\Jobs\KaynakBilgisiAl;
@@ -2105,6 +2106,129 @@ $ayarYaz([]);
 dogrula('Panelden ana sayfa seçimi: genel → false, tanıtım → true, boş → config (true)',
     $genel === false && $tanitim === true && Ayarlar::get('anasayfa.tanitim') === true
     && PanelAyarlari::dogrula('ana_sayfa', 'baska') === 'Listeden bir seçenek seçin.' && PanelAyarlari::dogrula('ana_sayfa', 'genel') === null);
+
+/* ---------------------------------------------------------------- */
+echo "\nRol testi (editör ve üye): sayaçlar, hata metni, iptal, vaat\n";
+
+$rY  = new User(id: 1, ad: 'Y', soyad: 'Y', kullaniciAdi: 'y', eposta: 'y@ornek.com', rol: Role::ADMIN);
+$rE1 = new User(id: 2, ad: 'A', soyad: 'A', kullaniciAdi: 'a', eposta: 'a@ornek.com', rol: Role::EDITOR);
+$rE2 = new User(id: 6, ad: 'B', soyad: 'B', kullaniciAdi: 'b', eposta: 'b@ornek.com', rol: Role::EDITOR);
+$rU  = new User(id: 3, ad: 'U', soyad: 'U', kullaniciAdi: 'u', eposta: 'u@ornek.com', rol: Role::MEMBER);
+[$prY, $prE1, $prE2, $prU] = array_map(static fn (User $u): TranskriptPolicy => new TranskriptPolicy($u), [$rY, $rE1, $rE2, $rU]);
+$analizA = ['kullanici_id' => $rE1->id];
+
+dogrula('İptal: editör A\'nın süren analizini editör B iptal edemez; A ve yönetici eder, üye edemez',
+    $prE1->canCancelAnalysis($analizA) && $prY->canCancelAnalysis($analizA) && !$prE2->canCancelAnalysis($analizA) && !$prU->canCancelAnalysis($analizA));
+$kaynakKodu = (string) file_get_contents(MODUL_YOLU . '/src/Controllers/KaynakController.php');
+preg_match('#function iptal\(.*?\n    }\n#s', $kaynakKodu, $iptalGovde);
+dogrula('İptal ucu sahipliği iptalden ÖNCE sorar (403, iş silinmez)',
+    isset($iptalGovde[0]) && strpos($iptalGovde[0], 'canCancelAnalysis') < strpos($iptalGovde[0], '->iptal(') && str_contains($iptalGovde[0], '403'));
+
+dogrula('Hata ayrıntısı (kota, servis) yalnız yöneticiye ve analizi başlatana',
+    $prY->canSeeErrorDetail($analizA) && $prE1->canSeeErrorDetail($analizA) && !$prE2->canSeeErrorDetail($analizA)
+    && !$prU->canSeeErrorDetail($analizA) && !(new TranskriptPolicy(null))->canSeeErrorDetail(['kullanici_id' => 0]));
+dogrula('İç hata yetkisize genel metin ve genel kod; videodan gelen neden herkese açık',
+    HataKodlari::gorunenMesaj('ai_kota_doldu', false) === 'Bu video için rapor hazırlanamadı.'
+    && HataKodlari::gorunenKod('ai_kota_doldu', false) === 'rapor_hazirlanamadi'
+    && HataKodlari::gorunenMesaj('ai_kota_doldu', true) === HataKodlari::mesaj('ai_kota_doldu')
+    && HataKodlari::gorunenMesaj('transkript_bulunamadi', false) === HataKodlari::mesaj('transkript_bulunamadi')
+    && HataKodlari::gorunenKod('gizli_video', false) === 'gizli_video'
+    && HataKodlari::gorunenMesaj(null, false) === '' && HataKodlari::gorunenKod('', false) === null);
+$icHatalar = ['rate_limit', 'ai_api_hatasi', 'ai_ayar_eksik', 'ai_kota_doldu', 'ai_yanit_gecersiz', 'transkript_api_hatasi', 'saglayici_yok', 'metadata_hatasi', 'beklenmeyen_hata'];
+dogrula('Kota, servis ve ayar kodlarının hiçbiri herkese açık değil',
+    array_filter($icHatalar, static fn (string $k): bool => HataKodlari::herkeseAcik($k)) === []);
+dogrula('İlerleme etiketi de aynı kurala uyar (policy\'siz çağrı ayrıntılı)',
+    KaynakDurumu::etiket(['durum' => 'hata', 'hata_kodu' => 'ai_kota_doldu'], false) === HataKodlari::GENEL
+    && str_contains(KaynakDurumu::etiket(['durum' => 'hata', 'hata_kodu' => 'ai_kota_doldu']), 'kota'));
+
+$sayacPdo = new KayitPdo();
+(new KaynakRepository($sayacPdo))->gorunenIstatistik(4);
+$uyeSorgu = $sayacPdo->sorgular;
+$sayacPdo->sorgular = [];
+(new KaynakRepository($sayacPdo))->gorunenIstatistik(4, true);
+$editorSorgu = $sayacPdo->sorgular;
+dogrula('Yönetici dışı sayaç: görünür kayıtlar, bugün = farklı video; token yalnız istenirse ve yalnız kendi analizleri',
+    str_contains($uyeSorgu[0] ?? '', 'COUNT(DISTINCT CASE WHEN a.bitti_at >= CURDATE() THEN a.kaynak_id END)')
+    && str_contains($uyeSorgu[0] ?? '', 'k.sahip_id IN (0, :ben)') && count($uyeSorgu) === 2
+    && count($editorSorgu) === 3 && str_contains($editorSorgu[2] ?? '', 'a.kullanici_id = :ben'));
+$panelKodu = (string) file_get_contents(MODUL_YOLU . '/events.php') . $kaynakKodu;
+dogrula('Sayaç rol adına değil yetkiye bağlı: yönetici dışında herkes gorunenIstatistik (editör dahil)',
+    !str_contains($panelKodu, 'istatistik($user->id)') && !str_contains($panelKodu, 'istatistik($user?->id)')
+    && substr_count($panelKodu, 'gorunenIstatistik(') === 2);
+
+dogrula('Liste süzgeci: analiz başlatamayanın varsayılanı "hazir", "hepsi" süzgeçsiz; analiz başlatanın varsayılanı süzgeçsiz',
+    KaynakController::listeDurumu('', false) === 'hazir' && KaynakController::listeDurumu('hepsi', false) === ''
+    && KaynakController::listeDurumu('hata', false) === 'hata' && KaynakController::listeDurumu('', true) === ''
+    && KaynakController::listeDurumu('bozuk', true) === '' && KaynakController::listeDurumu('suruyor', true) === 'suruyor');
+
+$satirHata = [
+    'id' => 24, 'tur' => 'youtube', 'dis_kimlik' => 'abcdefghijk', 'sahip_id' => 0, 'baslik' => 'Hatalı video', 'kanal_adi' => 'Kanal',
+    'sure_sn' => 600, 'kucuk_resim' => null, 'yayin_tarihi' => null, 'kaynak_durumu' => 'normal', 'analiz_id' => 30, 'kullanici_id' => 1,
+    'durum' => 'hata', 'asama' => 'parca', 'ilerleme' => 40, 'hata_kodu' => 'ai_kota_doldu', 'created_at' => '2026-10-09 18:00:00', 'rapor_analiz_id' => null,
+];
+$listeCiz = static fn (TranskriptPolicy $p, string $durum): string => App\Core\View::capture('Transkript::index', [
+    'policy' => $p, 'filtre' => ['q' => '', 'durum' => $durum], 'varsayilanDurum' => KaynakController::listeDurumu('', $p->canAnalyze()),
+    'liste' => ['satirlar' => [$satirHata], 'toplam' => 1], 'sayfa' => 1, 'boyut' => 10,
+    'istatistik' => ['bugun' => 3, 'kaynak' => 3, 'suruyor' => 0, 'hata' => 1, 'token' => 0, 'maliyet' => 0.0],
+    'hepsi' => $p->canSeeAllCosts(), 'maliyetli' => $p->canAnalyze(), 'onUrl' => '', 'kuyruk' => ['takildi' => false],
+]);
+$uyeHepsi  = $listeCiz($prU, '');
+$uyeHazir  = $listeCiz($prU, 'hazir');
+$edListe   = $listeCiz($prE2, '');
+$yonListe  = $listeCiz($prY, '');
+dogrula('Liste: kota metnini yönetici görür; üye ve başlatmayan editör genel metni',
+    str_contains($yonListe, 'kotası doldu') && !str_contains($uyeHepsi, 'kotası doldu') && str_contains($uyeHepsi, HataKodlari::GENEL)
+    && !str_contains($edListe, 'kotası doldu') && str_contains($edListe, HataKodlari::GENEL));
+dogrula('Liste: üyede "Raporu hazır" seçili gelir, "Tüm durumlar" hepsi değerini taşır; analiz başlatanda boş değer',
+    str_contains($uyeHazir, '<option value="hazir" selected>') && str_contains($uyeHazir, '<option value="hepsi">Tüm durumlar')
+    && str_contains($yonListe, '<option value="" selected>Tüm durumlar'));
+dogrula('Kartlar: üyede hata sayısı ve token kartı yok; editörde "Token kullanımınız"; yönetici "Toplam token" ve analiz sayısı',
+    !str_contains($uyeHepsi, '1 hata') && !str_contains($uyeHepsi, 'Token kullanımınız') && !str_contains($uyeHepsi, 'Toplam token')
+    && str_contains($uyeHepsi, 'Bugün hazırlanan rapor') && str_contains($uyeHepsi, 'yeniden analiz sayılmaz')
+    && str_contains($edListe, '1 hata') && str_contains($edListe, 'Token kullanımınız') && !str_contains($edListe, 'Toplam token')
+    && str_contains($yonListe, 'Toplam token') && str_contains($yonListe, 'Bugün tamamlanan analiz'));
+dogrula('Liste boşken üyeye "kutuya yapıştırın" denmez',
+    str_contains(App\Core\View::capture('Transkript::index', [
+        'policy' => $prU, 'filtre' => ['q' => '', 'durum' => 'hazir'], 'varsayilanDurum' => 'hazir',
+        'liste' => ['satirlar' => [], 'toplam' => 0], 'sayfa' => 1, 'boyut' => 10,
+        'istatistik' => ['bugun' => 0, 'kaynak' => 0, 'suruyor' => 0, 'hata' => 0, 'token' => 0, 'maliyet' => 0.0],
+        'hepsi' => false, 'maliyetli' => false, 'onUrl' => '', 'kuyruk' => ['takildi' => false],
+    ]), 'Henüz hazır rapor yok.'));
+
+$vaatCiz = static fn (bool $girisli, bool $analiz, bool $api): string => App\Core\View::capture('Transkript::anasayfa', [
+    'girisli' => $girisli, 'analizEdebilir' => $girisli && $analiz, 'analizVaadi' => $analiz, 'apiAcik' => $api, 'kayitAcik' => true,
+    'sure' => ['sayi' => 3, 'birim' => 'saat'], 'sss' => AnasayfaController::sss(180, 10, true, $analiz),
+]);
+$misafirOkur   = $vaatCiz(false, false, false);
+$uyeOkur       = $vaatCiz(true, false, false);
+$misafirAnaliz = $vaatCiz(false, true, true);
+dogrula('Ana sayfa: kayıt olan üye analiz başlatamıyorsa "bağlantıyı yapıştırın" vaadi yok',
+    mb_stripos(strip_tags($misafirOkur), 'bağlantıyı yapıştırın') === false && mb_stripos(strip_tags($uyeOkur), 'bağlantıyı yapıştırın') === false
+    && str_contains($misafirAnaliz, 'Bağlantıyı yapıştırın, gerisi bize kalsın') && str_contains($misafirOkur, 'Raporu okuyun'));
+dogrula('Ana sayfa: API yetkisi yoksa anahtar bağlantısı yerine iletişim; varsa giriş',
+    preg_match('#href="[^"]*/iletisim">\s*API erişimi için bize yazın#u', $misafirOkur) === 1
+    && !str_contains($misafirOkur, 'Giriş yapıp anahtar alın') && !str_contains($uyeOkur, 'API anahtarı alın')
+    && str_contains($misafirAnaliz, 'Giriş yapıp anahtar alın'));
+$okurSss = AnasayfaController::sss(180, 10, true, false);
+dogrula('SSS: analiz başlatamayana video girme sorusu ve günlük analiz sınırı yok',
+    !in_array('Aynı videoyu tekrar girersem ne olur?', array_column($okurSss, 'soru'), true)
+    && !str_contains(implode(' ', array_column($okurSss, 'cevap')), 'günde 10')
+    && in_array('Aynı videoyu tekrar girersem ne olur?', array_column(AnasayfaController::sss(180, 10), 'soru'), true));
+dogrula('Misafire vaat, kayıt olunca açılacak üye hesabının yetkisinden (tek tanım: rol yetkileri)',
+    AnasayfaController::yapabilir(null, 'transkript.analyze') === Role::can(Role::MEMBER, 'transkript.analyze')
+    && AnasayfaController::yapabilir(null, 'profile.api') === Role::can(Role::MEMBER, 'profile.api')
+    && AnasayfaController::yapabilir($rE1, 'profile.api') && !AnasayfaController::yapabilir($rU, 'profile.api'));
+
+// Cowork'ün tarayıcıda doğrulayamadığı iki çekirdek noktası (kaynak denetimi; canlı deneme ayrıca yapıldı).
+$profilKodu = (string) file_get_contents(CY_BASE . '/app/Http/Controllers/ProfileController.php');
+preg_match('#function revokeOwned\(.*?\n    }\n#s', (string) file_get_contents(CY_BASE . '/app/Core/Api/ApiToken.php'), $revokeGovde);
+dogrula('Çekirdek: Hesabım\'dan anahtar silme sahiplik koşullu (başkasının anahtar_id\'si silinmez)',
+    preg_match('#function revokeToken\(.*?ApiToken::revokeOwned\(\$user->id, \$id\)#s', $profilKodu) === 1
+    && str_contains($revokeGovde[0] ?? '', 'WHERE id = :id AND kullanici_id = :kullanici'));
+$kullaniciJs = (string) file_get_contents(CY_BASE . '/assets/js/users.js');
+dogrula('Çekirdek: yönetici kullanıcı ayrıntısında "Hakkımda" metin olarak basılır (.text / .val, .html yok)',
+    str_contains($kullaniciJs, "\$('#detail_bio').text(data.hakkinda") && str_contains($kullaniciJs, "\$('#hakkinda').val(data.hakkinda")
+    && !preg_match('/\.html\(|innerHTML/', $kullaniciJs));
 
 Setting::flush();
 Ayarlar::forget();

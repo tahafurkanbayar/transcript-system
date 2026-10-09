@@ -258,42 +258,34 @@ final class KaynakRepository
         $son->execute($p);
         $s = $son->fetch(PDO::FETCH_ASSOC) ?: [];
 
-        $kullanim = $this->db->prepare(
-            $kullaniciId === null
-                ? "SELECT COALESCE(SUM(u.giris_token + u.cikis_token), 0) AS token, COALESCE(SUM(u.maliyet_usd), 0) AS maliyet
-                     FROM ai_kullanim_kaydi u WHERE u.modul = 'transkript'"
-                : "SELECT COALESCE(SUM(u.giris_token + u.cikis_token), 0) AS token, COALESCE(SUM(u.maliyet_usd), 0) AS maliyet
-                     FROM ai_kullanim_kaydi u
-                     JOIN transkript_analizler a ON a.id = u.ref_id
-                    WHERE u.modul = 'transkript' AND u.ref_tur = 'analiz'" . $kendi
-        );
-        $kullanim->execute($p);
-        $u = $kullanim->fetch(PDO::FETCH_ASSOC) ?: [];
-
         return [
             'bugun'   => (int) ($r['bugun'] ?? 0),
-            'token'   => (int) ($u['token'] ?? 0),
-            'maliyet' => round((float) ($u['maliyet'] ?? 0), 4),
             'kaynak'  => (int) ($r['kaynak'] ?? 0),
             'suruyor' => (int) ($s['suruyor'] ?? 0),
             'hata'    => (int) ($s['hata'] ?? 0),
-        ];
+        ] + $this->kullanim($kullaniciId);
     }
 
     /**
-     * Analiz başlatamayan kullanıcının (üye) kutucukları: GÖREBİLDİĞİ
+     * Yönetici olmayanın kutucukları (editör de üye de): GÖREBİLDİĞİ
      * raporlar, yani ortak YouTube kayıtları (sahip_id = 0) ve kendi
-     * dosyaları. Liste de aynı kuralla süzülür; üye listede 2 rapor görüp
-     * kutucukta "0" okumaz. Token ve maliyet üyeye gösterilmez (0 döner).
+     * dosyaları. Liste de aynı kuralla süzülür; kimse listede 3 rapor
+     * görüp kutucukta "0" okumaz (rol testi: editör kendi başlattığını
+     * sayıyordu).
+     *
+     *   bugun  bugün raporu hazırlanan FARKLI video; aynı videonun
+     *          yeniden analizi ikinci kez sayılmaz
+     *   token / maliyet  $kendiKullanimi ise kendi başlattığı analizlerin
+     *          (analiz yetkisi olan), değilse 0 (gösterilmez)
      *
      * @return array{bugun:int, token:int, maliyet:float, kaynak:int, suruyor:int, hata:int}
      */
-    public function gorunenIstatistik(int $kullaniciId): array
+    public function gorunenIstatistik(int $kullaniciId, bool $kendiKullanimi = false): array
     {
         $p = [':ben' => $kullaniciId];
 
         $rapor = $this->db->prepare(
-            "SELECT COALESCE(SUM(a.bitti_at >= CURDATE()), 0) AS bugun,
+            "SELECT COUNT(DISTINCT CASE WHEN a.bitti_at >= CURDATE() THEN a.kaynak_id END) AS bugun,
                     COUNT(DISTINCT CASE WHEN a.guncel_mi = 1 THEN a.kaynak_id END) AS kaynak
                FROM transkript_analizler a
                JOIN transkript_kaynaklar k ON k.id = a.kaynak_id
@@ -315,12 +307,34 @@ final class KaynakRepository
 
         return [
             'bugun'   => (int) ($r['bugun'] ?? 0),
-            'token'   => 0,
-            'maliyet' => 0.0,
             'kaynak'  => (int) ($r['kaynak'] ?? 0),
             'suruyor' => (int) ($s['suruyor'] ?? 0),
             'hata'    => (int) ($s['hata'] ?? 0),
-        ];
+        ] + ($kendiKullanimi ? $this->kullanim($kullaniciId) : ['token' => 0, 'maliyet' => 0.0]);
+    }
+
+    /**
+     * Harcanan token ve tahmini maliyet: bütün AI çağrıları (başarısız ve
+     * silinen kayıtlar dahil: para harcandı) ya da yalnız $kullaniciId'nin
+     * başlattığı analizlerinki.
+     *
+     * @return array{token:int, maliyet:float}
+     */
+    private function kullanim(?int $kullaniciId): array
+    {
+        $kullanim = $this->db->prepare(
+            $kullaniciId === null
+                ? "SELECT COALESCE(SUM(u.giris_token + u.cikis_token), 0) AS token, COALESCE(SUM(u.maliyet_usd), 0) AS maliyet
+                     FROM ai_kullanim_kaydi u WHERE u.modul = 'transkript'"
+                : "SELECT COALESCE(SUM(u.giris_token + u.cikis_token), 0) AS token, COALESCE(SUM(u.maliyet_usd), 0) AS maliyet
+                     FROM ai_kullanim_kaydi u
+                     JOIN transkript_analizler a ON a.id = u.ref_id
+                    WHERE u.modul = 'transkript' AND u.ref_tur = 'analiz' AND a.kullanici_id = :ben"
+        );
+        $kullanim->execute($kullaniciId === null ? [] : [':ben' => $kullaniciId]);
+        $u = $kullanim->fetch(PDO::FETCH_ASSOC) ?: [];
+
+        return ['token' => (int) ($u['token'] ?? 0), 'maliyet' => round((float) ($u['maliyet'] ?? 0), 4)];
     }
 
     /**

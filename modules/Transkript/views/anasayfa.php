@@ -17,7 +17,9 @@
  *  vitrinin bütün sekmeleri alt alta açıktır, bölümler zaten görünür.
  *
  *  @var bool  $girisli
- *  @var bool  $analizEdebilir
+ *  @var bool  $analizEdebilir  girişli ve analiz başlatabilir: form
+ *  @var bool  $analizVaadi     "bağlantıyı yapıştırın" denebilir mi (misafirde: yeni üye hesabı)
+ *  @var bool  $apiAcik         API anahtarı alabilir mi (profile.api; misafirde: yeni üye hesabı)
  *  @var bool  $kayitAcik
  *  @var array{sayi:int,birim:string}|null $sure
  *  @var list<array{soru:string,cevap:string}> $sss
@@ -28,6 +30,9 @@ use App\Core\Setting;
 use Modules\Transkript\Varliklar;
 
 $siteAdi = Setting::get('site_adi', 'Transkript');
+// Eski çağrılarla (testler) uyum: verilmezse önceki davranış.
+$analizVaadi = $analizVaadi ?? $analizEdebilir;
+$apiAcik     = $apiAcik ?? true;
 
 /* Analiz formu GET ile panel/transkript?url=… açar (liste kutuyu doldurur).
  * Temiz adres kapalıysa eylem "?r=…" taşır; GET formu sorguyu sildiği
@@ -64,7 +69,9 @@ $eylemler = static function (string $yer) use ($girisli, $analizEdebilir, $kayit
 };
 
 $adimlar = [
-    ['link',  'Bağlantıyı yapıştırın', 'YouTube bağlantısı ya da kısa adresi yeter. Oynatma listesi ve kanal bağlantısı ayırt edilir; var olmayan video daha başlamadan reddedilir.'],
+    $analizVaadi
+        ? ['link', 'Bağlantıyı yapıştırın', 'YouTube bağlantısı ya da kısa adresi yeter. Oynatma listesi ve kanal bağlantısı ayırt edilir; var olmayan video daha başlamadan reddedilir.']
+        : ['link', 'Bağlantı eklenir', 'Analiz edilecek videonun YouTube bağlantısı ya da kısa adresi eklenir. Oynatma listesi ve kanal bağlantısı ayırt edilir; var olmayan video daha başlamadan reddedilir.'],
     ['file',  'Transcript çıkarılır', 'Videonun altyazısı zaman damgalarıyla okunur, temizlenir ve aranabilir hâle gelir. Görüntü ya da ses indirilmez.'],
     ['zap',   'Bölüm bölüm analiz', 'Uzun video 8–10 dakikalık, birbirine bağlanan parçalara ayrılır; her parça ayrı incelenir, sonra tek raporda birleşir.'],
     ['check', 'Rapor hazır', 'Özet, önemli noktalar, konular ve iddialar tek sayfada. Bir maddeye tıklayın, video o saniyeden oynasın.'],
@@ -117,9 +124,15 @@ $kimler = [
                 </h1>
 
                 <p class="tka-hero__giris">
-                    YouTube bağlantısını yapıştırın: <?= e($siteAdi) ?>, videonun zaman damgalı dökümünü çıkarır ve
-                    yapay zekâyla Türkçe bir rapora dönüştürür. Özet, önemli noktalar, konular, kavramlar ve
-                    iddialar; maddeler videodaki saniyesine bağlı.
+                    <?php if ($analizVaadi): ?>
+                        YouTube bağlantısını yapıştırın: <?= e($siteAdi) ?>, videonun zaman damgalı dökümünü çıkarır ve
+                        yapay zekâyla Türkçe bir rapora dönüştürür. Özet, önemli noktalar, konular, kavramlar ve
+                        iddialar; maddeler videodaki saniyesine bağlı.
+                    <?php else: ?>
+                        <?= e($siteAdi) ?>, YouTube videolarının zaman damgalı dökümünü çıkarır ve yapay zekâyla Türkçe
+                        bir rapora dönüştürür. Analiz edilmiş videoların raporunu okuyun, transcript'te arayın, dört
+                        biçimde indirin; maddeler videodaki saniyesine bağlı.
+                    <?php endif; ?>
                 </p>
 
                 <?php $eylemler('ust'); ?>
@@ -235,7 +248,9 @@ $kimler = [
             <header class="tka-bas" data-tka-belir>
                 <span class="tka-ust-baslik">Nasıl çalışır?</span>
                 <h2 id="tka-nasil-baslik">Bağlantıdan rapora dört adım</h2>
-                <p>Siz başka işinize bakarken analiz arka planda ilerler. Sayfayı kapatsanız da kaldığı yerden sürer.</p>
+                <p><?= $analizVaadi
+                    ? 'Siz başka işinize bakarken analiz arka planda ilerler. Sayfayı kapatsanız da kaldığı yerden sürer.'
+                    : 'Analiz arka planda ilerler; rapor hazır olunca listede görünür.' ?></p>
             </header>
 
             <ol class="tka-adimlar" data-tka-belir>
@@ -423,12 +438,20 @@ $kimler = [
                 <article class="tka-kart" data-tka-belir data-tka-isik>
                     <span class="tka-kart__simge"><?= icon('code') ?></span>
                     <h3>Geliştiriciler için API</h3>
-                    <p>Anahtarla analiz başlatın; raporu ve transcript'i JSON olarak alın, kendi uygulamanıza bağlayın.</p>
-                    <code class="tka-kod" aria-hidden="true">GET /api/v1/transkript/kaynaklar/42/ozet</code>
-                    <?php /* Anahtarlar Hesabım → API Anahtarları'nda (profile.api). */ ?>
-                    <a class="tka-kart__baglanti" href="<?= e(url($girisli ? 'panel/hesabim' : 'giris')) ?>">
-                        <?= $girisli ? 'API anahtarı alın' : 'Giriş yapıp anahtar alın' ?> <?= icon('chevron', 'cy-icon cy-icon--sm') ?>
-                    </a>
+                    <?php /* Anahtarlar Hesabım → API Anahtarları'nda; o bölüm de bu yetkiye (profile.api) bakar. */ ?>
+                    <?php if ($apiAcik): ?>
+                        <p><?= $analizVaadi ? 'Anahtarla analiz başlatın; raporu' : 'Raporu' ?> ve transcript'i JSON olarak alın, kendi uygulamanıza bağlayın.</p>
+                        <code class="tka-kod" aria-hidden="true">GET /api/v1/transkript/kaynaklar/42/ozet</code>
+                        <a class="tka-kart__baglanti" href="<?= e(url($girisli ? 'panel/hesabim' : 'giris')) ?>">
+                            <?= $girisli ? 'API anahtarı alın' : 'Giriş yapıp anahtar alın' ?> <?= icon('chevron', 'cy-icon cy-icon--sm') ?>
+                        </a>
+                    <?php else: ?>
+                        <p>Raporu ve transcript'i JSON olarak alın, kendi uygulamanıza bağlayın. API erişimi yönetici onayıyla açılır.</p>
+                        <code class="tka-kod" aria-hidden="true">GET /api/v1/transkript/kaynaklar/42/ozet</code>
+                        <a class="tka-kart__baglanti" href="<?= e(url('iletisim')) ?>">
+                            API erişimi için bize yazın <?= icon('chevron', 'cy-icon cy-icon--sm') ?>
+                        </a>
+                    <?php endif; ?>
                 </article>
             </div>
         </div>
@@ -481,7 +504,9 @@ $kimler = [
             <div class="tka-son__kutu" data-tka-belir>
                 <span class="tka-son__isik" aria-hidden="true"></span>
                 <h2 id="tka-son-baslik">Bir saatlik videoya bir saat ayırmayın.</h2>
-                <p>Bağlantıyı yapıştırın, gerisi bize kalsın. Rapor hazır olunca sizi bekliyor olacak.</p>
+                <p><?= $analizVaadi
+                    ? 'Bağlantıyı yapıştırın, gerisi bize kalsın. Rapor hazır olunca sizi bekliyor olacak.'
+                    : 'Raporu okuyun, aradığınız cümleyi transcript\'te bulun, videoyu tam o saniyeden açın.' ?></p>
                 <?php $eylemler('alt'); ?>
             </div>
         </div>

@@ -48,20 +48,39 @@ Satır düzeyi (`TranskriptPolicy`): YouTube kaynağı ve analizi herkes için
 ortak cache'tir (`sahip_id = 0`). Yüklenen dosya, sohbet ve kişisel özet
 yalnızca sahibine ve `transkript.admin` yetkisi olana açıktır.
 
-Eylem bazında (canlı denendi: misafir / üye / editör / yönetici, 46 denetim):
+Eylem bazında (canlı denendi: misafir / üye / editör / yönetici; rol testi
+2026-10-09, cowork'ün matrisi + 21 denetim):
 
 | Eylem | Misafir | Üye | Editör | Yönetici |
 |---|:-:|:-:|:-:|:-:|
 | Liste, rapor, ilerleme, transcript, indirme (ortak YouTube kaydı) | giriş sayfası | ✓ | ✓ | ✓ |
+| Listenin varsayılan süzgeci | | Raporu hazır | Tüm durumlar | Tüm durumlar |
 | Başkasının yüklediği dosya kaydı | giriş sayfası | 404 | 404 (kendi: ✓) | ✓ |
 | Analiz başlat (önbellekteyse AI'a gidilmez) | 401 | 403 | ✓ | ✓ |
+| Hatalı analizi yeniden dene | 401 | 403 | ✓ | ✓ |
 | Yeniden analiz (`yeniden=1`) | 401 | 403 | 403 | ✓ |
-| Süren analizi iptal | 401 | 403 | kendi başlattığı | ✓ |
+| Süren analizi iptal | 401 | 403 | kendi başlattığı (başkasınınki 403) | ✓ |
 | Sil | 401 | kendi yüklediği | kendi yüklediği | ✓ (ortak kayıt dahil) |
-| "Şimdi işle" (kuyruk) | 401 | 403 | 403 | ✓ |
-| Maliyet sütunları, "bütün kullanıcılar" sayaçları | | kendi | kendi | herkesin |
+| "Şimdi işle" (kuyruk), Transkript ayarları | 401 | 403 | 403 | ✓ |
+| Hatanın iç nedeni (kota, servis, ayar) | | genel metin | kendi başlattığı | ✓ |
+| "Raporu hazır" / "Bugün" sayaçları | | görebildiği (farklı video) | görebildiği (farklı video) | herkesin (analiz sayısı) |
+| Süren / hatalı sayısı (liste, kontrol paneli) | | | ✓ | ✓ |
+| Token / maliyet kartı | | | kendi analizleri | herkesin |
+| API anahtarı (çekirdek `profile.api`) | | | ✓ | ✓ |
 
 CSRF anahtarı olmayan her POST 403'tür.
+
+**Hata metni:** videonun kendisinden gelen neden (altyazı yok, video gizli…)
+herkese söylenir. Kota, servis ve ayar hataları iç işletme bilgisidir:
+yalnız yönetici ve analizi başlatan adıyla görür, ötekiler "Bu video için
+rapor hazırlanamadı." okur; API ve ilerleme JSON'unda kod da
+`rapor_hazirlanamadi` olur (`HataKodlari::gorunenMesaj` / `gorunenKod`).
+
+**Ana sayfa vaadi** yetkiye bağlıdır (`AnasayfaController::yapabilir`):
+"bağlantıyı yapıştırın" yalnız analiz başlatabilene, API kartının anahtar
+bağlantısı yalnız `profile.api` yetkisi olana. Misafir için kayıt formunun
+açtığı üye hesabının yetkisine bakılır; varsayılan kurulumda misafir ve üye
+rapor okumayı anlatan metni ve "API erişimi için bize yazın" bağlantısını görür.
 
 **Kotalar** (`config.php` → `analiz`; yalnız yeni AI işi açan istek sayılır,
 önbellekten dönen sayılmaz): kullanıcı başına saatte `saatlik_sinir` (20) ve

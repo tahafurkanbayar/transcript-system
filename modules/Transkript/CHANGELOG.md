@@ -3,6 +3,26 @@
 Starter'ın sürüm geçmişi kökteki `CHANGELOG.md`'dedir; bu dosya yalnız
 `modules/Transkript/` içindir. Biçim [Keep a Changelog](https://keepachangelog.com/tr/1.1.0/).
 
+## 0.4.1 (2026-10-09): rol testi düzeltmeleri
+
+### Düzeltilenler
+- Editör sayaçları 0 gösteriyordu (yalnız kendi başlattığı analizleri sayıyordu):
+  yönetici dışında her rol görebildiği raporları sayar; rol adına değil yetkiye bağlı.
+- "Bugün" kartı yönetici dışında farklı video sayar (yeniden analiz sayılmaz);
+  yönetici "Bugün tamamlanan analiz" görür.
+- Token / maliyet kartları editörde "Token kullanımınız", "Tahmini maliyetiniz".
+- Kota, servis ve ayar hatası yalnız yöneticiye ve analizi başlatana adıyla;
+  ötekiler "Bu video için rapor hazırlanamadı." (liste, rapor, ilerleme, API).
+- Analiz başlatamayanın listesi varsayılan olarak yalnız hazır raporlar;
+  "Tüm durumlar" seçilince hepsi. Kontrol paneli kartında hata sayısı yok.
+- Ana sayfa yapılamayacak şeyi vaat etmiyor: "bağlantıyı yapıştırın" yalnız
+  analiz başlatabilene, API anahtarı bağlantısı yalnız `profile.api` olana
+  (misafirde kayıt olunca açılacak üye hesabına bakılır).
+
+### Testler
+- İki editör arasında iptal (403), hata metni maskesi, sayaç sorguları, liste
+  süzgeci ve kartlar, ana sayfa vaadi (17 yeni test).
+
 ## 0.4.0 (2026-10-09): yapay zekâ yedek zinciri, üye sayaçları
 
 ### Eklenenler

@@ -56,9 +56,10 @@ final class KaynakController extends Controller
         $policy = new TranskriptPolicy($user);
         $repo   = new KaynakRepository($this->db);
 
+        $varsayilan = self::listeDurumu('', $policy->canAnalyze());
         $filtre = [
             'q'     => mb_substr($request->input('q'), 0, 100),
-            'durum' => in_array($request->input('durum'), KaynakRepository::LISTE_DURUMLARI, true) ? $request->input('durum') : '',
+            'durum' => self::listeDurumu($request->input('durum'), $policy->canAnalyze()),
         ];
         $boyut = max(5, min(50, (int) Setting::get('sistem_sayfa_basina', '10') ?: 10));
         $sayfa = $request->int('sayfa', 1, 100000) ?? 1;
@@ -71,15 +72,16 @@ final class KaynakController extends Controller
             'subtitle'   => 'YouTube videolarından zaman damgalı transcript ve AI analizi.',
             'policy'     => $policy,
             'filtre'     => $filtre,
+            'varsayilanDurum' => $varsayilan,
             'liste'      => $liste,
             'sayfa'      => $sayfa,
             'boyut'      => $boyut,
-            // Analiz başlatamayan (üye) görebildiği raporları sayar; maliyet kartı yok.
-            'istatistik' => match (true) {
-                $policy->canSeeAllCosts() => $repo->istatistik(null),
-                $policy->canAnalyze()     => $repo->istatistik($user?->id),
-                default                   => $repo->gorunenIstatistik((int) $user?->id),
-            },
+            // Yönetici herkesinkini; öteki roller GÖREBİLDİĞİ raporları sayar
+            // (rol listesine değil yetkiye bağlı). Token / maliyet: analiz
+            // başlatan kendi kullanımını görür, üye hiç görmez.
+            'istatistik' => $policy->canSeeAllCosts()
+                ? $repo->istatistik(null)
+                : $repo->gorunenIstatistik((int) $user?->id, $policy->canAnalyze()),
             'hepsi'      => $policy->canSeeAllCosts(),
             'maliyetli'  => $policy->canAnalyze(),
             // panel/transkript?url=… → kutu dolu gelir (yer imi, paylaşım bağlantısı).
@@ -92,7 +94,8 @@ final class KaynakController extends Controller
     public function goster(Request $request, string $kaynak_id): void
     {
         $kaynak = $this->gorulebilirKaynak($kaynak_id);
-        $veri   = (new RaporVerisi($this->db))->getir($kaynak);
+        $policy = new TranskriptPolicy(Auth::user());
+        $veri   = (new RaporVerisi($this->db, $policy))->getir($kaynak);
         $adres  = parse_url(url_full(''));
 
         Varliklar::youtubeIzinleri();
@@ -101,7 +104,7 @@ final class KaynakController extends Controller
             'title'  => trim((string) $kaynak['baslik']) !== '' ? (string) $kaynak['baslik'] : 'Analiz raporu',
             'kaynak' => $kaynak,
             'veri'   => $veri,
-            'policy' => new TranskriptPolicy(Auth::user()),
+            'policy' => $policy,
             'kuyruk' => (new KuyrukDurumu($this->db))->getir(),
             'surenAnaliz' => (new KaynakRepository($this->db))->suregelenAnaliz((int) $kaynak['id']),
             // Gömülü oynatıcının postMessage hedefi: bu sayfanın kökeni.
@@ -162,7 +165,7 @@ final class KaynakController extends Controller
         }
 
         if ($bicim === 'rapor.md') {
-            $veri = (new RaporVerisi($this->db))->getir($kaynak);
+            $veri = (new RaporVerisi($this->db, new TranskriptPolicy(Auth::user())))->getir($kaynak);
 
             if ($veri['rapor'] === null) {
                 throw HttpException::notFound();
@@ -251,7 +254,7 @@ final class KaynakController extends Controller
      */
     public function ilerleme(Request $request, string $kaynak_id): void
     {
-        $durum = (new KaynakDurumu($this->db))->getir($this->gorulebilirKaynak($kaynak_id));
+        $durum = (new KaynakDurumu($this->db, new TranskriptPolicy(Auth::user())))->getir($this->gorulebilirKaynak($kaynak_id));
 
         Response::success($durum['etiket'], $durum);
     }
@@ -349,6 +352,20 @@ final class KaynakController extends Controller
             $islenen === 0 ? 'Sırada çalıştırılacak iş yok.' : $islenen . ' iş çalıştırıldı.' . ($durum['bekleyen'] > 0 ? ' Sırada ' . $durum['bekleyen'] . ' iş daha var.' : ''),
             ['islenen' => $islenen, 'bekleyen' => $durum['bekleyen']]
         );
+    }
+
+    /**
+     * Listenin durum süzgeci. Analiz başlatamayanın süren ve hatalı kayıtla
+     * işi yoktur: varsayılanı "hazir"dır; "Tüm durumlar" seçeneği "hepsi"
+     * gönderir. Analiz başlatanın varsayılanı süzgeçsizdir ('').
+     */
+    public static function listeDurumu(string $girdi, bool $analizEdebilir): string
+    {
+        return match (true) {
+            in_array($girdi, KaynakRepository::LISTE_DURUMLARI, true) => $girdi,
+            $girdi === 'hepsi' => '',
+            default            => $analizEdebilir ? '' : 'hazir',
+        };
     }
 
     /** Üretilen metni indirilecek dosya olarak gönderir (ad ASCII; bkz. DisaAktarim::dosyaAdi). */

@@ -366,6 +366,8 @@ final class AnalizRepository
 
         return [
             'analiz_id' => (int) $analiz['id'],
+            // Hata ayrıntısını kimin göreceği buna bağlı (TranskriptPolicy::canSeeErrorDetail).
+            'kullanici_id' => $analiz['kullanici_id'] !== null ? (int) $analiz['kullanici_id'] : null,
             'durum'     => (string) $analiz['durum'],
             'asama'     => str_contains($asama, ':') ? strstr($asama, ':', true) : $asama,
             'calisiyor' => str_ends_with($asama, self::CALISIYOR),

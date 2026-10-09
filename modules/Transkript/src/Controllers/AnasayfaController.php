@@ -11,6 +11,12 @@
  *  dosya yükleme sonraki aşamada; burada yok). Sayılar ayarlardan gelir:
  *  süre sınırı ve günlük kota değişince sayfa da değişir.
  *
+ *  VAAT YETKİYE BAĞLI (rol testi): "bağlantıyı yapıştırın" yalnız analiz
+ *  başlatabilene, API kartının anahtar bağlantısı yalnız profile.api
+ *  yetkisi olana. Misafir için bakılan, kayıt olunca açılacak ÜYE
+ *  hesabıdır (yapabilir()). Tanım tek yerde: rol yetkileri (Role +
+ *  module.json "yetkiler"); Profilim'in API bölümü de profile.api'ye bakar.
+ *
  *  Hareket assets/js/anasayfa.js'te; JavaScript kapalıyken ya da
  *  "hareketi azalt" tercihinde sayfa durağan ama eksiksizdir.
  * =====================================================================
@@ -26,6 +32,8 @@ use App\Core\Registration;
 use App\Core\Request;
 use App\Http\Controller;
 use App\Http\Controllers\Site\HomeController;
+use App\Models\Role;
+use App\Models\User;
 use Modules\Transkript\Ayarlar;
 use Modules\Transkript\Varliklar;
 
@@ -37,11 +45,13 @@ final class AnasayfaController extends Controller
     public function goster(Request $request): void
     {
         $kullanici = Auth::user();
+        $analiz    = self::yapabilir($kullanici, 'transkript.analyze');
         $enUzunDk  = max(0, (int) Ayarlar::get('analiz.en_uzun_dk', 180));
         $sss       = self::sss(
             $enUzunDk,
             max(0, (int) Ayarlar::get('analiz.gunluk_sinir', 10)),
             in_array('tr', (array) Ayarlar::get('transcript.tercih_diller', ['tr']), true),
+            $analiz,
         );
 
         $this->view('Transkript::anasayfa', [
@@ -49,7 +59,9 @@ final class AnasayfaController extends Controller
             'title'          => self::BASLIK,
             'paylasimGorseli' => Varliklar::adres('paylasim.png'),
             'girisli'        => $kullanici !== null,
-            'analizEdebilir' => $kullanici?->can('transkript.analyze') ?? false,
+            'analizEdebilir' => $kullanici !== null && $analiz,
+            'analizVaadi'    => $analiz,
+            'apiAcik'        => self::yapabilir($kullanici, 'profile.api'),
             'kayitAcik'      => Registration::isOpen(),
             'sure'           => self::sureMetni($enUzunDk),
             'sss'            => $sss,
@@ -85,6 +97,16 @@ final class AnasayfaController extends Controller
     }
 
     /**
+     * Bu ziyaretçi şu işi yapabilir mi? Girişsizse kayıt formunun açtığı
+     * üye hesabına bakılır: sayfa, hesap açınca yapılamayacak bir şeyi
+     * vaat etmesin.
+     */
+    public static function yapabilir(?User $kullanici, string $yetki): bool
+    {
+        return $kullanici !== null ? $kullanici->can($yetki) : Role::can(Role::MEMBER, $yetki);
+    }
+
+    /**
      * Süre sınırı, sayaç için sayı + birim: 180 → [3, 'saat'], 90 → [90, 'dakika'].
      * 0 (sınır yok) → null; sayfa o kutuyu başka bir bilgiyle doldurur.
      *
@@ -103,10 +125,12 @@ final class AnasayfaController extends Controller
 
     /**
      * Sık sorulan sorular: sayfa ve yapısal veri (FAQPage) aynı listeden.
+     * $analiz false ise (analiz başlatamayan) video girmeyle ilgili soru
+     * ve günlük analiz sınırı çıkmaz.
      *
      * @return list<array{soru:string,cevap:string}>
      */
-    public static function sss(int $enUzunDk, int $gunlukSinir, bool $turkceAltyazi = true): array
+    public static function sss(int $enUzunDk, int $gunlukSinir, bool $turkceAltyazi = true, bool $analiz = true): array
     {
         $sinir = [];
 
@@ -115,7 +139,7 @@ final class AnasayfaController extends Controller
             $sinir[] = sprintf('En uzun video %d %s.', $sure['sayi'], $sure['birim']);
         }
 
-        if ($gunlukSinir > 0) {
+        if ($gunlukSinir > 0 && $analiz) {
             $sinir[] = sprintf('Kişi başına günde %d yeni analiz yapılabilir; daha önce analiz edilmiş bir videoyu açmak bu sayıya girmez.', $gunlukSinir);
         }
 
@@ -143,11 +167,14 @@ final class AnasayfaController extends Controller
                 'soru'  => 'Yapay zekâ yanılabilir mi?',
                 'cevap' => 'Evet; bu yüzden maddeler videodaki saniyesine bağlıdır. Zaman damgasına tıklayıp cümleyi kaynağından dinleyebilirsiniz. Yapay zekânın verdiği her zaman damgası transcript\'teki en yakın gerçek satıra çekilir; videoda karşılığı olmayan damga rapora girmez. İddialar ayrı bir bölümde "kesin ifade", "görüş" ya da "tahmin" diye işaretlenir ve doğrulanmamış sayılır.',
             ],
-            [
+        ];
+
+        if ($analiz) {
+            $liste[] = [
                 'soru'  => 'Aynı videoyu tekrar girersem ne olur?',
                 'cevap' => 'Daha önce analiz edilmiş video yeniden yapay zekâya gönderilmez; hazır rapor hemen açılır.',
-            ],
-        ];
+            ];
+        }
 
         if ($sinir !== []) {
             $liste[] = ['soru' => 'Bir sınır var mı?', 'cevap' => implode(' ', $sinir)];

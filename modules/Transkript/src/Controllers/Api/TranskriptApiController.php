@@ -67,7 +67,7 @@ final class TranskriptApiController extends Controller
         $onbellekten = $sonuc['sonuc'] === AnalizBaslatici::ONBELLEKTEN;
 
         ApiResponse::success(
-            (new KaynakDurumu($db))->getir($sonuc['kaynak']),
+            (new KaynakDurumu($db, new TranskriptPolicy(Auth::user())))->getir($sonuc['kaynak']),
             ['onbellekten' => $onbellekten, 'sonuc' => $sonuc['sonuc']],
             $onbellekten ? 200 : 202,
         );
@@ -106,7 +106,8 @@ final class TranskriptApiController extends Controller
             'durum'       => (string) $s['durum'],
             'ilerleme'    => (int) $s['ilerleme'],
             'rapor_hazir' => $s['rapor_analiz_id'] !== null,
-            'hata_kodu'   => $s['hata_kodu'] !== null ? (string) $s['hata_kodu'] : null,
+            // İç hata (kota, servis) yalnız yöneticiye ve başlatana adıyla.
+            'hata_kodu'   => HataKodlari::gorunenKod($s['hata_kodu'] !== null ? (string) $s['hata_kodu'] : null, $policy->canSeeErrorDetail($s)),
             'tarih'       => (string) $s['created_at'],
         ], $liste['satirlar']), $liste['toplam'], $sayfa, $boyut);
     }
@@ -116,7 +117,7 @@ final class TranskriptApiController extends Controller
     {
         $db = Database::connection();
 
-        ApiResponse::success((new KaynakDurumu($db))->getir(self::gorulebilirKaynak($db, $kaynak_id)));
+        ApiResponse::success((new KaynakDurumu($db, new TranskriptPolicy(Auth::user())))->getir(self::gorulebilirKaynak($db, $kaynak_id)));
     }
 
     /**
@@ -125,8 +126,9 @@ final class TranskriptApiController extends Controller
      */
     public function ozet(Request $request, string $kaynak_id): void
     {
-        $db   = Database::connection();
-        $veri = (new RaporVerisi($db))->getir(self::gorulebilirKaynak($db, $kaynak_id));
+        $db     = Database::connection();
+        $policy = new TranskriptPolicy(Auth::user());
+        $veri   = (new RaporVerisi($db, $policy))->getir(self::gorulebilirKaynak($db, $kaynak_id));
 
         if ($veri['rapor'] === null || $veri['analiz'] === null) {
             ApiResponse::error('Bu kaynağın tamamlanmış bir raporu yok.', 404, 'rapor_yok');
@@ -135,7 +137,7 @@ final class TranskriptApiController extends Controller
         $analiz = $veri['analiz'];
 
         // Maliyet yalnız transkript.admin'e (TranskriptPolicy::canSeeAllCosts).
-        if (!(new TranskriptPolicy(Auth::user()))->canSeeAllCosts()) {
+        if (!$policy->canSeeAllCosts()) {
             unset($analiz['maliyet_usd']);
         }
 

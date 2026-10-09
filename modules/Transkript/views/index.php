@@ -12,6 +12,7 @@
  *
  *  @var Modules\Transkript\TranskriptPolicy                     $policy
  *  @var array{q:string,durum:string}                              $filtre
+ *  @var string                                                    $varsayilanDurum  analiz başlatamayana 'hazir'
  *  @var array{satirlar:list<array<string,mixed>>,toplam:int}      $liste
  *  @var int                                                       $sayfa
  *  @var int                                                       $boyut
@@ -37,7 +38,10 @@ $durumAdi = [
     'hata'                => ['Hata', 'is-danger'],
     'iptal'               => ['İptal edildi', ''],
 ];
-$filtreli = $filtre['q'] !== '' || $filtre['durum'] !== '';
+$varsayilanDurum = $varsayilanDurum ?? '';
+$filtreli = $filtre['q'] !== '' || $filtre['durum'] !== $varsayilanDurum;
+// Adreste taşınan durum: varsayılan "hazir" iken "Tüm durumlar" boş değil "hepsi"dir.
+$durumParam = $filtre['durum'] !== '' ? $filtre['durum'] : ($varsayilanDurum !== '' ? 'hepsi' : '');
 $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format((float) $n, $basamak, ',', '.');
 ?>
 <link rel="stylesheet" href="<?= e(Varliklar::adres('transkript.css')) ?>">
@@ -93,35 +97,37 @@ $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format(
             <span class="cy-stat__label">Raporu hazır video</span>
             <span class="cy-stat__value"><?= e($sayi($istatistik['kaynak'])) ?></span>
             <span class="cy-stat__hint"><?php
-                $durumlar = array_filter([
+                // Süren / hatalı sayısı yalnız analiz başlatabilene (yeniden deneyebilir).
+                $durumlar = $maliyetli ? array_filter([
                     $istatistik['suruyor'] > 0 ? $sayi($istatistik['suruyor']) . ' sürüyor' : '',
                     $istatistik['hata'] > 0 ? $sayi($istatistik['hata']) . ' hata' : '',
-                ]);
-                echo e($durumlar !== [] ? implode(' · ', $durumlar) : 'aynı video ikinci kez ödenmez');
+                ]) : [];
+                echo e($durumlar !== [] ? implode(' · ', $durumlar) : ($maliyetli ? 'aynı video ikinci kez ödenmez' : 'okuyabileceğiniz raporlar'));
             ?></span>
         </span>
     </div>
     <div class="cy-stat">
         <span class="cy-stat__icon cy-stat__icon--brand"><?= icon('calendar') ?></span>
         <span>
-            <span class="cy-stat__label">Bugün tamamlanan</span>
+            <?php /* Yönetici analiz sayısını (yeniden analiz dahil), öteki roller farklı videoyu görür. */ ?>
+            <span class="cy-stat__label"><?= $hepsi ? 'Bugün tamamlanan analiz' : 'Bugün hazırlanan rapor' ?></span>
             <span class="cy-stat__value"><?= e($sayi($istatistik['bugun'])) ?></span>
-            <span class="cy-stat__hint"><?= $hepsi ? 'bütün kullanıcılar' : ($maliyetli ? 'sizin başlattıklarınız' : 'görebildiğiniz raporlar') ?></span>
+            <span class="cy-stat__hint"><?= $hepsi ? 'bütün kullanıcılar, yeniden analiz dahil' : 'farklı video; yeniden analiz sayılmaz' ?></span>
         </span>
     </div>
     <?php if ($maliyetli): ?>
     <div class="cy-stat">
         <span class="cy-stat__icon cy-stat__icon--warning"><?= icon('activity') ?></span>
         <span>
-            <span class="cy-stat__label">Toplam token</span>
+            <span class="cy-stat__label"><?= $hepsi ? 'Toplam token' : 'Token kullanımınız' ?></span>
             <span class="cy-stat__value"><?= e($sayi($istatistik['token'])) ?></span>
-            <span class="cy-stat__hint">giriş + çıkış, bütün AI çağrıları</span>
+            <span class="cy-stat__hint"><?= $hepsi ? 'giriş + çıkış, bütün AI çağrıları' : 'giriş + çıkış, sizin başlattığınız analizler' ?></span>
         </span>
     </div>
     <div class="cy-stat">
         <span class="cy-stat__icon cy-stat__icon--danger"><?= icon('server') ?></span>
         <span>
-            <span class="cy-stat__label">Tahmini maliyet</span>
+            <span class="cy-stat__label"><?= $hepsi ? 'Tahmini maliyet' : 'Tahmini maliyetiniz' ?></span>
             <span class="cy-stat__value">$<?= e($sayi($istatistik['maliyet'], 4)) ?></span>
             <span class="cy-stat__hint">ücretli katman fiyatıyla; ücretsiz katmanda 0</span>
         </span>
@@ -139,7 +145,7 @@ $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format(
             </div>
         </div>
         <select class="form-select tk-filtre" name="durum" aria-label="Duruma göre filtrele">
-            <option value="">Tüm durumlar</option>
+            <option value="<?= $varsayilanDurum !== '' ? 'hepsi' : '' ?>"<?= $filtre['durum'] === '' ? ' selected' : '' ?>>Tüm durumlar</option>
             <option value="hazir"<?= $filtre['durum'] === 'hazir' ? ' selected' : '' ?>>Raporu hazır</option>
             <option value="suruyor"<?= $filtre['durum'] === 'suruyor' ? ' selected' : '' ?>>Sürüyor</option>
             <option value="hata"<?= $filtre['durum'] === 'hata' ? ' selected' : '' ?>>Hata</option>
@@ -154,9 +160,11 @@ $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format(
         <div class="cy-empty">
             <span class="cy-empty__icon"><?= icon($filtreli ? 'search' : 'file') ?></span>
             <p class="mb-0">
-                <?= $filtreli
-                    ? 'Bu filtreyle eşleşen analiz yok.'
-                    : 'Henüz analiz yok. Yukarıdaki kutuya bir YouTube bağlantısı yapıştırarak başlayın.' ?>
+                <?= match (true) {
+                    $filtreli                => 'Bu filtreyle eşleşen analiz yok.',
+                    $policy->canAnalyze()    => 'Henüz analiz yok. Yukarıdaki kutuya bir YouTube bağlantısı yapıştırarak başlayın.',
+                    default                  => 'Henüz hazır rapor yok. Analiz edilen videolar burada görünecek.',
+                } ?>
             </p>
         </div>
     <?php else: ?>
@@ -213,12 +221,13 @@ $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format(
                                         </span>
                                     <?php elseif ($satir['rapor_analiz_id'] !== null): ?>
                                         <?php if ($durum === 'hata'): ?>
-                                            <small class="cy-muted">Son deneme: <?= e(HataKodlari::mesaj($satir['hata_kodu'])) ?> Önceki rapor duruyor.</small>
+                                            <small class="cy-muted">Son deneme: <?= e(HataKodlari::gorunenMesaj($satir['hata_kodu'], $policy->canSeeErrorDetail($satir))) ?> Önceki rapor duruyor.</small>
                                         <?php else: ?>
                                             <a class="cy-link small" href="<?= e($rapor) ?>"><?= icon('check', 'cy-icon cy-icon--sm') ?> Rapor hazır</a>
                                         <?php endif; ?>
                                     <?php elseif (!$iptal): ?>
-                                        <small class="tk-hata-metni"><?= e(HataKodlari::mesaj($satir['hata_kodu'])) ?></small>
+                                        <?php /* Kota / servis nedeni yalnız yöneticiye ve başlatana (HataKodlari::gorunenMesaj). */ ?>
+                                        <small class="tk-hata-metni"><?= e(HataKodlari::gorunenMesaj($satir['hata_kodu'], $policy->canSeeErrorDetail($satir))) ?></small>
                                     <?php endif; ?>
                                 </span>
                             </td>
@@ -257,7 +266,7 @@ $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format(
                 'toplam' => $liste['toplam'],
                 'boyut'  => $boyut,
                 'yol'    => 'panel/transkript',
-                'sorgu'  => array_filter(['q' => $filtre['q'], 'durum' => $filtre['durum']], static fn (string $v): bool => $v !== ''),
+                'sorgu'  => array_filter(['q' => $filtre['q'], 'durum' => $durumParam], static fn (string $v): bool => $v !== ''),
             ]); ?>
         </footer>
     <?php endif; ?>

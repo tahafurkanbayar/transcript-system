@@ -7,6 +7,11 @@
  *  ve API aynı kodu ve aynı mesajı kullanır; teknik ayrıntı yalnızca
  *  log'dadır. (9. adımda her kod için "kalıcı mı, yeniden denenir mi"
  *  kararı ve eksik durumlar tamamlanacak.)
+ *
+ *  KİM NEYİ GÖRÜR (rol testi): videonun kendisinden gelen neden (altyazı
+ *  yok, video gizli…) herkese söylenir. Kota, servis ve ayar hataları iç
+ *  işletme bilgisidir; yalnız yönetici ve analizi başlatan görür
+ *  (TranskriptPolicy::canSeeErrorDetail), ötekiler GENEL metni okur.
  * =====================================================================
  */
 
@@ -30,8 +35,44 @@ final class HataKodlari
         'ai_kota_doldu'         => 'Yapay zekâ servisinin günlük kullanım kotası doldu. Yarın yeniden deneyin ya da yöneticinize bildirin.',
         'ai_yanit_gecersiz'     => 'Yapay zekâ geçerli bir rapor üretemedi. Biraz sonra yeniden deneyin.',
         'iptal_edildi'          => 'Analiz iptal edildi.',
+        'rapor_hazirlanamadi'   => self::GENEL,
         'beklenmeyen_hata'      => 'Beklenmeyen bir hata oluştu; ayrıntı kayda geçti.',
     ];
+
+    /** Ayrıntı görme hakkı olmayana gösterilen metin ve kod. */
+    public const GENEL     = 'Bu video için rapor hazırlanamadı.';
+    public const GENEL_KOD = 'rapor_hazirlanamadi';
+
+    /** Videonun kendisinden gelen, herkese söylenebilecek nedenler. */
+    private const HERKESE_ACIK = [
+        'canli_yayin', 'transkript_bulunamadi', 'altyazi_kapali', 'iptal_edildi', 'video_cok_uzun',
+        'gecersiz_url', 'video_bulunamadi', 'gizli_video', 'silinmis_video', 'oynatma_listesi', 'kanal_baglantisi',
+    ];
+
+    public static function herkeseAcik(?string $kod): bool
+    {
+        return $kod !== null && in_array($kod, self::HERKESE_ACIK, true);
+    }
+
+    /** $ayrinti yoksa iç hata (kota, servis, ayar) GENEL metne döner. */
+    public static function gorunenMesaj(?string $kod, bool $ayrinti): string
+    {
+        if ($kod === null || $kod === '') {
+            return '';
+        }
+
+        return $ayrinti || self::herkeseAcik($kod) ? self::mesaj($kod) : self::GENEL;
+    }
+
+    /** API ve ilerleme JSON'u için: iç hata kodu da sızmasın. */
+    public static function gorunenKod(?string $kod, bool $ayrinti): ?string
+    {
+        if ($kod === null || $kod === '') {
+            return null;
+        }
+
+        return $ayrinti || self::herkeseAcik($kod) ? $kod : self::GENEL_KOD;
+    }
 
     public static function mesaj(?string $kod): string
     {
