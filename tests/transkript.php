@@ -38,6 +38,8 @@ require CY_BASE . '/app/bootstrap.php';
 
 use App\Core\Database\Migration;
 use App\Core\Env;
+use App\Core\HomePage;
+use App\Core\Request;
 use App\Core\Log\Logger;
 use App\Core\Modules\Module;
 use App\Core\Modules\Modules;
@@ -54,6 +56,7 @@ use Modules\Transkript\Ai\OpenAiCompatibleProvider;
 use Modules\Transkript\Http\HttpIstemci;
 use Modules\Transkript\Http\HttpYanit;
 use Modules\Transkript\Ayarlar;
+use Modules\Transkript\Controllers\AnasayfaController;
 use Modules\Transkript\HataKodlari;
 use Modules\Transkript\Jobs\AnalizBirlestir;
 use Modules\Transkript\Jobs\KaynakBilgisiAl;
@@ -205,6 +208,7 @@ $rotaTablosu = (static function (): App\Core\Router {
 })()->table();
 
 $beklenen = [
+    'GET transkript/varlik/{dosya}'                          => 'MUEY',
     'GET panel/transkript'                                   => 'UEY',
     'POST panel/transkript/analiz'                           => 'EY',
     'GET panel/transkript/ilerleme/{kaynak_id}'              => 'UEY',
@@ -230,6 +234,9 @@ $beklenen = [
 
 $gercek = [];
 $modulRotalari = [];
+
+/* Girişsiz bilerek açık olanlar: ana sayfanın CSS / JS'i (Varliklar::HERKESE_ACIK). */
+$herkeseAcik = ['GET transkript/varlik/{dosya}'];
 
 foreach ($rotaTablosu as $rota) {
     if (!str_starts_with($rota['controller'], 'Modules\\Transkript\\')) {
@@ -269,7 +276,7 @@ foreach ($modulRotalari as $rota) {
     if ($panel && $rota['verb'] === 'POST' && !in_array('csrf', $mw, true)) {
         $sorunlu[] = $rota['path'] . ' (csrf yok)';
     }
-    if (!$panel && !in_array('api', $mw, true)) {
+    if (!$panel && !in_array('api', $mw, true) && !in_array($rota['verb'] . ' ' . $rota['path'], $herkeseAcik, true)) {
         $sorunlu[] = $rota['path'] . ' (api anahtarı istemiyor)';
     }
 }
@@ -1880,6 +1887,74 @@ dogrula('Model listesi: Gemini\'de yalnız Flash ailesi (map\'te thinkingBudget 
 dogrula('Panel ayarlarında API anahtarı alanı yok (anahtar yalnız .env)',
     !array_filter(array_keys(PanelAyarlari::ALANLAR), static fn (string $a): bool => str_contains($a, 'anahtar') || str_contains($a, 'key')));
 $ayarYaz([]);
+
+/* ---------------------------------------------------------------- */
+echo "\nAna sayfa (çekirdeğin HomePage kancası, tanıtım sayfası)\n";
+
+/** Çiziciyi çalıştırır; [sonuç, basılan çıktı, tampon düzeyi korundu mu]. */
+$anaSayfa = static function (): array {
+    $seviye = ob_get_level();
+    ob_start();
+    $sonuc = HomePage::render(new Request());
+    $cikti = (string) ob_get_clean();
+
+    return [$sonuc, $cikti, ob_get_level() === $seviye];
+};
+
+HomePage::reset();
+[$sonuc, $cikti] = $anaSayfa();
+dogrula('Çizici yoksa genel vitrin (false, çıktı yok)', $sonuc === false && $cikti === '' && HomePage::owner() === null);
+
+HomePage::set('Bir', static function (Request $r): bool { echo 'tanıtım'; return true; });
+HomePage::set('Iki', static function (Request $r): bool { echo 'ikinci'; return true; });
+[$sonuc, $cikti, $duzey] = $anaSayfa();
+dogrula('Çizicinin çıktısı basılır; ilk kayıt kazanır', $sonuc === true && $cikti === 'tanıtım' && HomePage::owner() === 'Bir' && $duzey);
+
+HomePage::reset();
+HomePage::set('Kapali', static function (Request $r): bool { echo 'yarım'; return false; });
+[$sonuc, $cikti, $duzey] = $anaSayfa();
+dogrula('Çizici false dönerse yarım çıktısı atılır', $sonuc === false && $cikti === '' && $duzey);
+
+HomePage::reset();
+HomePage::set('Bozuk', static function (Request $r): bool { ob_start(); echo 'yarım'; throw new RuntimeException('patladı'); });
+[$sonuc, $cikti, $duzey] = $anaSayfa();
+dogrula('Çizici hata verirse genel vitrine düşülür; açık kalan tampon da kapanır', $sonuc === false && $cikti === '' && $duzey);
+HomePage::reset();
+
+dogrula('Süre sınırı sayacı: 180 → 3 saat, 90 → 90 dakika, 150 → 150 dakika, 0 → yok',
+    AnasayfaController::sureMetni(180) === ['sayi' => 3, 'birim' => 'saat'] && AnasayfaController::sureMetni(90) === ['sayi' => 90, 'birim' => 'dakika']
+    && AnasayfaController::sureMetni(150) === ['sayi' => 150, 'birim' => 'dakika'] && AnasayfaController::sureMetni(0) === null);
+$sss = AnasayfaController::sss(180, 10);
+$sinirCevabi = end($sss)['cevap'];
+dogrula('SSS sınırları ayarlardan yazar; sınır yoksa o soru çıkmaz',
+    str_contains($sinirCevabi, 'En uzun video 3 saat.') && str_contains($sinirCevabi, 'günde 10 yeni analiz')
+    && count(AnasayfaController::sss(0, 0)) === count($sss) - 1 && AnasayfaController::sss(0, 0) === array_slice($sss, 0, -1));
+
+$gorunumMetni = mb_strtolower((string) file_get_contents(CY_BASE . '/modules/Transkript/views/anasayfa.php') . implode(' ', array_column($sss, 'cevap')));
+dogrula('Sayfa henüz olmayan özelliği anlatmıyor (sohbet, kişisel özet, dosya yükleme)',
+    !str_contains($gorunumMetni, 'sohbet') && !str_contains($gorunumMetni, 'size özel') && !str_contains($gorunumMetni, 'dosya yükle') && !str_contains($gorunumMetni, 'dosyanızı'));
+$anaJs = (string) file_get_contents(CY_BASE . '/modules/Transkript/assets/js/anasayfa.js');
+$anaJsKod = (string) preg_replace('#/\*.*?\*/|//[^\n]*#s', '', $anaJs);
+dogrula('Ana sayfa betiği metni yalnız textContent ile yazar (innerHTML / eval yok)',
+    !preg_match('/innerHTML|outerHTML|insertAdjacentHTML|document\.write|\beval\(|new Function/', $anaJsKod) && str_contains($anaJsKod, 'textContent'));
+dogrula('Hareketi azalt: betik döngü başlatmaz, CSS animasyonları kapatır',
+    str_contains($anaJsKod, "prefers-reduced-motion: reduce") && str_contains((string) file_get_contents(CY_BASE . '/modules/Transkript/assets/css/anasayfa.css'), '@media (prefers-reduced-motion: reduce)'));
+
+dogrula('Girişsiz sunulan yalnız ana sayfanın iki dosyası; panel betiği panel rotasında',
+    Varliklar::herkeseAcik('anasayfa.css') && Varliklar::herkeseAcik('anasayfa.js') && !Varliklar::herkeseAcik('transkript.js')
+    && !Varliklar::herkeseAcik('transkript.css') && !Varliklar::herkeseAcik('../config.php')
+    && str_contains(Varliklar::adres('anasayfa.js'), 'transkript/varlik/anasayfa.js') && !str_contains(Varliklar::adres('anasayfa.js'), 'panel/')
+    && str_contains(Varliklar::adres('transkript.js'), 'panel/transkript/varlik/transkript.js'));
+
+$ayarYaz(['transkript_ana_sayfa' => 'genel']);
+$genel = Ayarlar::get('anasayfa.tanitim');
+$ayarYaz(['transkript_ana_sayfa' => 'tanitim']);
+$tanitim = Ayarlar::get('anasayfa.tanitim');
+$ayarYaz([]);
+dogrula('Panelden ana sayfa seçimi: genel → false, tanıtım → true, boş → config (true)',
+    $genel === false && $tanitim === true && Ayarlar::get('anasayfa.tanitim') === true
+    && PanelAyarlari::dogrula('ana_sayfa', 'baska') === 'Listeden bir seçenek seçin.' && PanelAyarlari::dogrula('ana_sayfa', 'genel') === null);
+
 Setting::flush();
 Ayarlar::forget();
 

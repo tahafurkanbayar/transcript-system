@@ -3,6 +3,23 @@
 Starter'ın sürüm geçmişi kökteki `CHANGELOG.md`'dedir; bu dosya yalnız
 `modules/Transkript/` içindir. Biçim [Keep a Changelog](https://keepachangelog.com/tr/1.1.0/).
 
+## 0.3.0 (2026-10-09): tanıtım ana sayfası
+
+### Eklenenler
+- **Ana sayfa:** sitenin vitrini Transkript'in tanıtım sayfası
+  (`views/anasayfa.php`): kendi kendine oynayan ürün önizlemesi (bağlantı
+  yazılır → adımlar ilerler → rapor belirir), sayılar, dört adım, sekmeli
+  rapor vitrini, güven kartları, kimler için, SSS (FAQPage), son çağrı.
+  Açık / koyu tema, telefon, "hareketi azalt" ve JavaScript kapalı hâli denendi.
+- Transkript ayarları → **Ana sayfa:** tanıtım sayfası ya da çekirdeğin genel
+  vitrini (`anasayfa.tanitim`).
+- Girişsiz varlık rotası `transkript/varlik/{dosya}` (yalnız ana sayfanın CSS / JS'i).
+
+### Çekirdek
+- `App\Core\HomePage` (yeni, genel kanca) ve `Site\HomeController::index`'te
+  çiziciye soran üç satır. Modüle özel kod yok; çizici yoksa, `false` dönerse
+  ya da hata verirse davranış eskisiyle aynı.
+
 ## 0.2.0 (2026-10-09): test raporu düzeltmeleri
 
 Uçtan uca test raporundaki (`transkript-test-raporu.md`) bulgular; her biri

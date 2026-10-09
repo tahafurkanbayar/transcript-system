@@ -185,4 +185,16 @@ return [
         'en_cok_is'         => 50,
         'panelden_isle'     => false,
     ],
+
+    /* -----------------------------------------------------------------
+     *  ANA SAYFA (events.php → App\Core\HomePage)
+     * -----------------------------------------------------------------
+     *  Açıkken sitenin ana sayfası modülün tanıtım sayfasıdır
+     *  (views/anasayfa.php). Kapalıyken çekirdeğin Panel → Ayarlar →
+     *  Ana Sayfa'dan beslenen genel vitrini görünür. Panelden de
+     *  değiştirilir (Transkript ayarları → Ana sayfa).
+     * -------------------------------------------------------------- */
+    'anasayfa' => [
+        'tanitim' => true,
+    ],
 ];

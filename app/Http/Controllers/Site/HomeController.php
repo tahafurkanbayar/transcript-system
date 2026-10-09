@@ -21,6 +21,7 @@ namespace App\Http\Controllers\Site;
 
 use App\Core\Config;
 use App\Core\Demo;
+use App\Core\HomePage;
 use App\Core\Request;
 use App\Core\Setting;
 use App\Core\Url;
@@ -33,6 +34,12 @@ final class HomeController extends Controller
 {
     public function index(Request $request): void
     {
+        /* Bir modül ana sayfayı üstlendiyse onun sayfası çizilir
+         * (bkz. App\Core\HomePage); çizemezse aşağıdaki genel vitrin. */
+        if (HomePage::render($request)) {
+            return;
+        }
+
         $bolumler = self::sections();
 
         $this->view('site/home', [
