@@ -70,7 +70,9 @@ jobs:
 
     services:
       mysql:
-        image: mysql:8.0
+        # Resmî mysql:8.0 imajı, AWS genel aynasından: Docker Hub'ın anonim çekim
+        # sınırı ("toomanyrequests") işi kod adımına gelmeden düşürüyordu.
+        image: public.ecr.aws/docker/library/mysql:8.0
         env:
           MYSQL_ROOT_PASSWORD: root
         ports:
