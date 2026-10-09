@@ -17,8 +17,7 @@
  *  @var int                                                       $sayfa
  *  @var int                                                       $boyut
  *  @var array{bugun:int,token:int,maliyet:float,kaynak:int,suruyor:int,hata:int} $istatistik
- *  @var bool                                                      $hepsi  istatistik herkesin mi
- *  @var bool                                                      $maliyetli  analiz başlatabilir: token / maliyet kartları
+ *  @var bool                                                      $hepsi  yönetici: herkesin sayıları + token / maliyet kartları
  *  @var array<string,mixed>                                       $kuyruk KuyrukDurumu::getir()
  * =====================================================================
  */
@@ -89,8 +88,8 @@ $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format(
     <p class="cy-panel__note mb-3"><?= icon('info', 'cy-icon cy-icon--sm') ?> Analiz başlatma yetkiniz yok; analiz edilmiş videoların raporlarını görebilirsiniz.</p>
 <?php endif; ?>
 
-<?php $maliyetli = $maliyetli ?? true; ?>
-<div class="cy-stats mb-3" style="--cy-stats-lg: <?= $maliyetli ? 4 : 2 ?>; --cy-stats-md: 2">
+<?php $analizci = $policy->canAnalyze(); ?>
+<div class="cy-stats mb-3" style="--cy-stats-lg: <?= $hepsi ? 4 : 2 ?>; --cy-stats-md: 2">
     <div class="cy-stat">
         <span class="cy-stat__icon cy-stat__icon--success"><?= icon('files') ?></span>
         <span>
@@ -98,11 +97,11 @@ $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format(
             <span class="cy-stat__value"><?= e($sayi($istatistik['kaynak'])) ?></span>
             <span class="cy-stat__hint"><?php
                 // Süren / hatalı sayısı yalnız analiz başlatabilene (yeniden deneyebilir).
-                $durumlar = $maliyetli ? array_filter([
+                $durumlar = $analizci ? array_filter([
                     $istatistik['suruyor'] > 0 ? $sayi($istatistik['suruyor']) . ' sürüyor' : '',
                     $istatistik['hata'] > 0 ? $sayi($istatistik['hata']) . ' hata' : '',
                 ]) : [];
-                echo e($durumlar !== [] ? implode(' · ', $durumlar) : ($maliyetli ? 'aynı video ikinci kez ödenmez' : 'okuyabileceğiniz raporlar'));
+                echo e($durumlar !== [] ? implode(' · ', $durumlar) : ($analizci ? 'aynı video ikinci kez analiz edilmez' : 'okuyabileceğiniz raporlar'));
             ?></span>
         </span>
     </div>
@@ -115,19 +114,20 @@ $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format(
             <span class="cy-stat__hint"><?= $hepsi ? 'bütün kullanıcılar, yeniden analiz dahil' : 'farklı video; yeniden analiz sayılmaz' ?></span>
         </span>
     </div>
-    <?php if ($maliyetli): ?>
+    <?php /* Token ve maliyet yalnız yöneticiye (kullanıcı kararı: üye ve editör görmez). */ ?>
+    <?php if ($hepsi): ?>
     <div class="cy-stat">
         <span class="cy-stat__icon cy-stat__icon--warning"><?= icon('activity') ?></span>
         <span>
-            <span class="cy-stat__label"><?= $hepsi ? 'Toplam token' : 'Token kullanımınız' ?></span>
+            <span class="cy-stat__label">Toplam token</span>
             <span class="cy-stat__value"><?= e($sayi($istatistik['token'])) ?></span>
-            <span class="cy-stat__hint"><?= $hepsi ? 'giriş + çıkış, bütün AI çağrıları' : 'giriş + çıkış, sizin başlattığınız analizler' ?></span>
+            <span class="cy-stat__hint">giriş + çıkış, bütün AI çağrıları</span>
         </span>
     </div>
     <div class="cy-stat">
         <span class="cy-stat__icon cy-stat__icon--danger"><?= icon('server') ?></span>
         <span>
-            <span class="cy-stat__label"><?= $hepsi ? 'Tahmini maliyet' : 'Tahmini maliyetiniz' ?></span>
+            <span class="cy-stat__label">Tahmini maliyet</span>
             <span class="cy-stat__value">$<?= e($sayi($istatistik['maliyet'], 4)) ?></span>
             <span class="cy-stat__hint">ücretli katman fiyatıyla; ücretsiz katmanda 0</span>
         </span>

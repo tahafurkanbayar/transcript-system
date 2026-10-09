@@ -783,6 +783,11 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
     dogrula('Panelin iç API uçları giriş ister (iletişim formu hariç)', $apiGirissiz === [], implode(', ', $apiGirissiz));
     dogrula('Üye yönetim ekranlarına erişemez', !str_contains($gercek['GET panel/kullanicilar'] ?? 'U', 'U') && !str_contains($gercek['GET panel/ayarlar'] ?? 'U', 'U') && !str_contains($gercek['GET panel/sistem'] ?? 'U', 'U'));
     dogrula('Editör kullanıcıları, ayarları ve sistemi yönetemez', !str_contains($gercek['POST api/kullanicilar/save'] ?? 'E', 'E') && !str_contains($gercek['POST panel/ayarlar/{grup}'] ?? 'E', 'E') && !str_contains($gercek['POST panel/sistem/migrate'] ?? 'E', 'E'));
+    // transcript-system kararı (2026-10-09): kişisel veri taşıyan mesajlar, e-posta geçmişi ve sayfalar yalnız yöneticide.
+    dogrula('Editör sayfalara, mesajlara ve e-posta geçmişine giremez',
+        ($gercek['GET panel/sayfalar'] ?? '') === 'Y' && ($gercek['POST api/mesajlar/fetch'] ?? '') === 'Y' && ($gercek['POST api/eposta/fetch'] ?? '') === 'Y'
+        && !Role::can(Role::EDITOR, 'pages.manage') && !Role::can(Role::EDITOR, 'messages.view') && !Role::can(Role::EDITOR, 'mail.view')
+        && Role::can(Role::EDITOR, 'profile.api'));
 
     App\Core\Setting::flush();
     Modules::forget();

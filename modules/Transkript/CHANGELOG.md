@@ -3,6 +3,18 @@
 Starter'ın sürüm geçmişi kökteki `CHANGELOG.md`'dedir; bu dosya yalnız
 `modules/Transkript/` içindir. Biçim [Keep a Changelog](https://keepachangelog.com/tr/1.1.0/).
 
+## 0.4.2 (2026-10-09): editör kapsamı, token yalnız yöneticide
+
+### Değişenler
+- Token sayısı yalnız yöneticiye: rapor kartındaki "Token" satırı, API
+  özetindeki `toplam_token` ve listedeki token / maliyet kartları üye ve
+  editörden kaldırıldı (0.4.1'deki "Token kullanımınız" kartı da).
+
+### Çekirdek
+- `app/Models/Role.php`: editörden `pages.*`, `messages.*` ve `mail.view`
+  kaldırıldı. Sayfalar, iletişim mesajları ve e-posta geçmişi yalnız
+  yöneticide. `tests/rol-matrisi.php`'de 17 satır `EY` → `Y` oldu.
+
 ## 0.4.1 (2026-10-09): rol testi düzeltmeleri
 
 ### Düzeltilenler

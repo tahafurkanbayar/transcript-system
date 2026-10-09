@@ -136,9 +136,9 @@ final class TranskriptApiController extends Controller
 
         $analiz = $veri['analiz'];
 
-        // Maliyet yalnız transkript.admin'e (TranskriptPolicy::canSeeAllCosts).
+        // Token ve maliyet yalnız transkript.admin'e (TranskriptPolicy::canSeeAllCosts).
         if (!$policy->canSeeAllCosts()) {
-            unset($analiz['maliyet_usd']);
+            unset($analiz['toplam_token'], $analiz['maliyet_usd']);
         }
 
         ApiResponse::success([
