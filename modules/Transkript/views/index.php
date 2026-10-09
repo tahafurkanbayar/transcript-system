@@ -17,6 +17,7 @@
  *  @var int                                                       $boyut
  *  @var array{bugun:int,token:int,maliyet:float,kaynak:int,suruyor:int,hata:int} $istatistik
  *  @var bool                                                      $hepsi  istatistik herkesin mi
+ *  @var bool                                                      $maliyetli  analiz başlatabilir: token / maliyet kartları
  *  @var array<string,mixed>                                       $kuyruk KuyrukDurumu::getir()
  * =====================================================================
  */
@@ -84,7 +85,8 @@ $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format(
     <p class="cy-panel__note mb-3"><?= icon('info', 'cy-icon cy-icon--sm') ?> Analiz başlatma yetkiniz yok; analiz edilmiş videoların raporlarını görebilirsiniz.</p>
 <?php endif; ?>
 
-<div class="cy-stats mb-3" style="--cy-stats-lg: 4; --cy-stats-md: 2">
+<?php $maliyetli = $maliyetli ?? true; ?>
+<div class="cy-stats mb-3" style="--cy-stats-lg: <?= $maliyetli ? 4 : 2 ?>; --cy-stats-md: 2">
     <div class="cy-stat">
         <span class="cy-stat__icon cy-stat__icon--success"><?= icon('files') ?></span>
         <span>
@@ -104,9 +106,10 @@ $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format(
         <span>
             <span class="cy-stat__label">Bugün tamamlanan</span>
             <span class="cy-stat__value"><?= e($sayi($istatistik['bugun'])) ?></span>
-            <span class="cy-stat__hint"><?= $hepsi ? 'bütün kullanıcılar' : 'sizin başlattıklarınız' ?></span>
+            <span class="cy-stat__hint"><?= $hepsi ? 'bütün kullanıcılar' : ($maliyetli ? 'sizin başlattıklarınız' : 'görebildiğiniz raporlar') ?></span>
         </span>
     </div>
+    <?php if ($maliyetli): ?>
     <div class="cy-stat">
         <span class="cy-stat__icon cy-stat__icon--warning"><?= icon('activity') ?></span>
         <span>
@@ -123,6 +126,7 @@ $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format(
             <span class="cy-stat__hint">ücretli katman fiyatıyla; ücretsiz katmanda 0</span>
         </span>
     </div>
+    <?php endif; ?>
 </div>
 
 <section class="cy-card">

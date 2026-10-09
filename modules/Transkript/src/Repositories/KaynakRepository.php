@@ -281,6 +281,49 @@ final class KaynakRepository
     }
 
     /**
+     * Analiz başlatamayan kullanıcının (üye) kutucukları: GÖREBİLDİĞİ
+     * raporlar, yani ortak YouTube kayıtları (sahip_id = 0) ve kendi
+     * dosyaları. Liste de aynı kuralla süzülür; üye listede 2 rapor görüp
+     * kutucukta "0" okumaz. Token ve maliyet üyeye gösterilmez (0 döner).
+     *
+     * @return array{bugun:int, token:int, maliyet:float, kaynak:int, suruyor:int, hata:int}
+     */
+    public function gorunenIstatistik(int $kullaniciId): array
+    {
+        $p = [':ben' => $kullaniciId];
+
+        $rapor = $this->db->prepare(
+            "SELECT COALESCE(SUM(a.bitti_at >= CURDATE()), 0) AS bugun,
+                    COUNT(DISTINCT CASE WHEN a.guncel_mi = 1 THEN a.kaynak_id END) AS kaynak
+               FROM transkript_analizler a
+               JOIN transkript_kaynaklar k ON k.id = a.kaynak_id
+              WHERE a.durum = 'tamamlandi' AND k.sahip_id IN (0, :ben)"
+        );
+        $rapor->execute($p);
+        $r = $rapor->fetch(PDO::FETCH_ASSOC) ?: [];
+
+        $son = $this->db->prepare(
+            "SELECT COALESCE(SUM(a.durum NOT IN ('tamamlandi', 'hata')), 0) AS suruyor,
+                    COALESCE(SUM(a.durum = 'hata'), 0) AS hata
+               FROM transkript_analizler a
+               JOIN transkript_kaynaklar k ON k.id = a.kaynak_id
+              WHERE a.id IN (SELECT MAX(a2.id) FROM transkript_analizler a2 GROUP BY a2.kaynak_id)
+                AND k.sahip_id IN (0, :ben)"
+        );
+        $son->execute($p);
+        $s = $son->fetch(PDO::FETCH_ASSOC) ?: [];
+
+        return [
+            'bugun'   => (int) ($r['bugun'] ?? 0),
+            'token'   => 0,
+            'maliyet' => 0.0,
+            'kaynak'  => (int) ($r['kaynak'] ?? 0),
+            'suruyor' => (int) ($s['suruyor'] ?? 0),
+            'hata'    => (int) ($s['hata'] ?? 0),
+        ];
+    }
+
+    /**
      * Bugün harcanan token ve tahmini maliyet (bütün kullanıcılar; kontrol
      * paneli kartı).
      *
