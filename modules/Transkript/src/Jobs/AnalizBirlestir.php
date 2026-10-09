@@ -20,6 +20,7 @@ use App\Core\Log\Logger;
 use App\Core\Queue\Queue;
 use Modules\Transkript\Ai\AiHatasi;
 use Modules\Transkript\Ayarlar;
+use Modules\Transkript\Services\Pipeline;
 use Modules\Transkript\Zaman;
 
 final class AnalizBirlestir extends TranskriptIsi
@@ -56,7 +57,7 @@ final class AnalizBirlestir extends TranskriptIsi
             $sonuclar,
             $bitMs,
             $this->segmentler()->baslangiclar((int) $analiz['metin_id']),
-            $this->baglam($analiz) + ['eksik' => $eksik],
+            $this->baglam($analiz) + ['eksik' => $eksik, 'kelime' => $this->kelimeSayisi((int) $analiz['metin_id'])],
         );
 
         if ($sonuc['uyarilar'] !== []) {
@@ -73,5 +74,17 @@ final class AnalizBirlestir extends TranskriptIsi
             ]);
             Queue::push(new RaporuTamamla($this->analizId));
         });
+    }
+
+    /** Transcript'in toplam kelime sayısı (istemdeki uzunluk kuralı için). */
+    private function kelimeSayisi(int $metinId): int
+    {
+        $toplam = 0;
+
+        foreach ($this->segmentler()->segmentler($metinId) as $segment) {
+            $toplam += Pipeline::kelimeSayisi($segment->metin);
+        }
+
+        return $toplam;
     }
 }

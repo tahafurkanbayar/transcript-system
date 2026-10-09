@@ -151,6 +151,8 @@ final class Pipeline
             'baslik'     => Istem::veri(self::bilgi($baglam['baslik'] ?? null)),
             'kanal'      => Istem::veri(self::bilgi($baglam['kanal'] ?? null)),
             'dil'        => Istem::veri(self::bilgi($baglam['dil'] ?? null)),
+            // v3: bölümün kelime sayısına göre üst sınırlar (eski istemlerde yer tutucu yok).
+            'uzunluk'    => self::parcaUzunlugu(self::kelimeSayisi(implode(' ', array_map(static fn (Segment $b): string => $b->metin, $bloklar)))),
             'sira'       => (int) $parca['sira'],
             'toplam'     => max((int) $parca['sira'], (int) ($baglam['toplam'] ?? 0)),
             'baslangic'  => Zaman::yaz($basMs),
@@ -185,10 +187,14 @@ final class Pipeline
 
         $eksik = array_values(array_filter((array) ($baglam['eksik'] ?? []), 'is_string'));
 
+        $kelime = (int) ($baglam['kelime'] ?? 0);
+
         $kullanici = $istem->kullanici([
             'baslik'       => Istem::veri(self::bilgi($baglam['baslik'] ?? null)),
             'kanal'        => Istem::veri(self::bilgi($baglam['kanal'] ?? null)),
             'sure'         => Zaman::yaz($bitMs),
+            'kelime'       => $kelime,
+            'uzunluk'      => self::raporUzunlugu(intdiv($bitMs, 1000), $kelime),
             'bolum_sayisi' => count($parcaSonuclari),
             'eksik'        => $eksik === [] ? 'yok' : implode(', ', $eksik),
             'bolumler'     => implode("\n", $bolumler),
@@ -196,6 +202,59 @@ final class Pipeline
 
         return $this->jsonIste('reduce', $istem, $kullanici, self::BIRLESTIRME_SEMASI,
             fn (array $veri): array => $this->dogrulayici->birlestirme($veri, $bitMs, $baslangiclar));
+    }
+
+    /* =================================================================
+     *  UZUNLUK KURALI (istem v3)
+     * =================================================================
+     *  v2 her videoya aynı aralıkları istiyordu ("5–10 cümle özet, 3–7
+     *  öneri"); 18 saniyelik tek cümlelik videoya 5 cümle özet ve genel
+     *  geçer öneriler yazıldı. Sınırlar video süresi ve transcript'in
+     *  kelime sayısından hesaplanır, istemde "Uzunluk:" satırına girer.
+     *  Hangisi küçükse o belirler: 10 dakikalık müzik videosundaki 200
+     *  kelime de "kısa" sayılır.
+     * ============================================================== */
+
+    /** Bu süreden (sn) ya da kelimeden az: kısa video. */
+    public const KISA_SN     = 120;
+    public const KISA_KELIME = 300;
+
+    /** Bu süreden (sn) ya da kelimeden az: orta; üstü uzun. */
+    public const ORTA_SN     = 900;
+    public const ORTA_KELIME = 2500;
+
+    public static function raporUzunlugu(int $sureSn, int $kelime): string
+    {
+        $olcu = sprintf('%s, ~%d kelime', Zaman::yaz($sureSn * 1000), $kelime);
+
+        if ($sureSn < self::KISA_SN || $kelime < self::KISA_KELIME) {
+            return 'Video çok kısa (' . $olcu . '). summary 1–2 cümle. detailed_summary boş metin ("") ya da tek kısa paragraf.'
+                . ' topics en fazla 2, important_points en fazla 3, timestamps en fazla 3.'
+                . " technical_information, claims, ideas ve recommendations yalnızca transcript'te açıkça geçen içerik varsa; yoksa boş dizi.";
+        }
+
+        if ($sureSn < self::ORTA_SN || $kelime < self::ORTA_KELIME) {
+            return 'Orta uzunlukta video (' . $olcu . '). summary 3–4 cümle. detailed_summary 2–4 paragraf.'
+                . ' topics 2–6, important_points en fazla 8, timestamps en fazla 10, recommendations en fazla 4.';
+        }
+
+        return 'Uzun video (' . $olcu . '). summary 5–8 cümle. detailed_summary konu başına bir paragraf.'
+            . ' topics 4–12, important_points 5–15, timestamps 6–20, recommendations en fazla 7.';
+    }
+
+    public static function parcaUzunlugu(int $kelime): string
+    {
+        if ($kelime < self::KISA_KELIME) {
+            return 'Bu bölüm çok kısa (~' . $kelime . ' kelime). summary 1–2 cümle; important_points en fazla 2; timestamps en fazla 2;'
+                . ' diğer listeler yalnızca açıkça söylenen içerik varsa, yoksa boş dizi.';
+        }
+
+        return 'Normal bölüm (~' . $kelime . ' kelime). summary 2–4 cümle; important_points 3–7; timestamps 1–4.';
+    }
+
+    public static function kelimeSayisi(string $metin): int
+    {
+        return count(preg_split('/\s+/u', trim($metin), -1, PREG_SPLIT_NO_EMPTY) ?: []);
     }
 
     /* =================================================================
