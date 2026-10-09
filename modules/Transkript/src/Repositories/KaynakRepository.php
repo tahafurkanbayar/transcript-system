@@ -491,6 +491,10 @@ final class KaynakRepository
      * Yöneticinin Kontrol Paneli'ndeki "Son analizler": en yeni analiz
      * çalışmaları, kaynağı ve başlatanıyla (silinmiş kullanıcıda ad boş).
      *
+     * sure_sn: işlem süresi (ilk adımdan bitişe, ertelenen / duran süre
+     * hariç). bekleme_sn: sırada bekleme (oluşturmadan ilk adıma) + ertelenen
+     * ve durup sürdürülene kadar geçen süre (K6).
+     *
      * @return list<array<string,mixed>>
      */
     public function sonAnalizler(int $adet = 5): array
@@ -498,7 +502,8 @@ final class KaynakRepository
         $sorgu = $this->db->prepare(
             "SELECT a.id AS analiz_id, a.kaynak_id, a.durum, a.asama, a.ilerleme, a.hata_kodu, a.kullanici_id,
                     a.created_at, a.basladi_at, a.bitti_at,
-                    TIMESTAMPDIFF(SECOND, COALESCE(a.basladi_at, a.created_at), COALESCE(a.bitti_at, a.updated_at, a.created_at)) AS sure_sn,
+                    GREATEST(0, TIMESTAMPDIFF(SECOND, COALESCE(a.basladi_at, a.created_at), COALESCE(a.bitti_at, a.updated_at, a.created_at)) - CAST(a.bekleme_sn AS SIGNED)) AS sure_sn,
+                    TIMESTAMPDIFF(SECOND, a.created_at, COALESCE(a.basladi_at, a.created_at)) + CAST(a.bekleme_sn AS SIGNED) AS bekleme_sn,
                     k.baslik, k.dis_kimlik, k.tur,
                     TRIM(CONCAT(COALESCE(u.ad, ''), ' ', COALESCE(u.soyad, ''))) AS baslatan, u.kullanici_adi
                FROM transkript_analizler a

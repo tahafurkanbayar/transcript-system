@@ -3,6 +3,43 @@
 Starter'ın sürüm geçmişi kökteki `CHANGELOG.md`'dedir; bu dosya yalnız
 `modules/Transkript/` içindir. Biçim [Keep a Changelog](https://keepachangelog.com/tr/1.1.0/).
 
+## 0.7.0 (2026-10-10): cowork 6. tur (K1–K10)
+
+### Çekirdek
+- **K1** `/api/v1` altında bilinmeyen adres (404) ve yanlış yöntem (405) de API
+  zarfıyla döner: `{"success":false,"error":{"code":"bulunamadi"|"gecersiz_yontem","message"}}`
+  (`ErrorHandler::respondApi`; `Allow` başlığı korunur). `tests/smoke.php` +4.
+- **K5** Girişte kademeli gecikme: sınırdan önceki her hatadan sonra 1, 2, 4, 8 sn
+  (`RateLimiter::gradualDelay`), sonra 15 dk kilit. İkisi de (kullanıcı adı + IP)
+  çiftine bağlı; beklerken gelen deneme sayılmaz. Kısa bekleme kendi mesajıyla.
+- **K8** İletişim sayfasının özeti, kurulumun varsayılan cümlesiyse tanımlı
+  kanallardan üretilir ("Bize ulaşmanın yolları: e-posta ve iletişim formu.");
+  yöneticinin kendi özeti kalır (`ContactController::summary`). `test_sayisi` 361.
+
+### Modül
+- **K2** Sağlayıcı dinlenmeleri önbellekten kalıcı dosyaya taşındı
+  (`DinlenmeDeposu`: `storage/files/transkript-dinlenme.json`). Kök neden: test
+  sırasında "Dinlenmeleri sıfırla" Gemini'nin günlük kota dinlenmesini de siliyordu.
+  Sıfırlama artık günlük kotası dolanları korur; "Günlük kotası dolanları da
+  sıfırla" işaretlenirse siler.
+- **K3** Saatlik sınır varsayılanı 5 (günlük 10); saatlik ≥ günlük kaydedilince uyarı.
+- **K4** Hiç yapay zekâ çağrısı yapılmadan iptal edilen ya da kalıcı hatayla düşen
+  analiz günlük haktan düşmez (`AnalizBaslatici::BUGUN_SAYILAN`).
+- **K6** "Son analizler": "X sürdü" işlem süresi (ertelenen ve durup sürdürülene
+  kadar geçen süre hariç), "Y sırada bekledi" ayrı. Yeni sütun
+  `transkript_analizler.bekleme_sn` (migration `2026_10_09_230015`); eski kayıtlar 0.
+- **K7** Analiz hakkı olmayan üyede "Bugün eklediğiniz" yerine "Sizinle paylaşılan N"
+  kartı (Paylaşılanlar süzgecine gider).
+- **K9** Silinen hesapların kütüphane, sohbet, ilgi alanı ve kişisel özet kayıtları
+  her gece 03:40'ta silinir (`HesapTemizligi`). Aydınlatma metni (veritabanındaki
+  "Gizlilik ve KVKK" sayfası) güncellendi: yapay zekâ sağlayıcılarına ve YouTube'a
+  aktarım, saklama süreleri; adres alanı "[adres]" olarak bekliyor.
+- **K10** Yönetici koruma testleri: kendini silemez / pasife alamaz / rolünü
+  düşüremez (vardı) ve son aktif yönetici silinemez / rolü düşürülemez (yeni;
+  ayrı bağlantıda geçici tabloyla, gerçek hesaplara dokunmadan).
+- Testler: `tests/transkript.php` 367, `tests/transkript-yetki.php` 29,
+  `tests/unit.php` 342 (CI 361), `tests/smoke.php` 31.
+
 ## 0.6.6 (2026-10-09): her sağlayıcının modeli ayarlarda
 
 Kullanıcının isteği: "Ayarlarda yalnız Gemini görünüyor, ama 3 API de burada."

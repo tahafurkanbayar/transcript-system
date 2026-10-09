@@ -42,18 +42,60 @@ final class ContactController extends Controller
     public function show(Request $request, ?Page $sayfa = null): void
     {
         $sayfa ??= (new PageRepository($this->db))->findPublished('iletisim');
+        $kartlar = HomeController::contactCards();
+        $ozet    = self::summary((string) ($sayfa?->ozet ?? ''), $kartlar, Setting::bool('sistem_iletisim_formu', true));
+        $seo     = $sayfa?->aciklamaSeo() ?? Setting::get('site_aciklama');
 
         $this->view('site/contact', [
             'title'      => $sayfa?->baslikSeo() ?? 'İletişim',
-            'ogAciklama' => $sayfa?->aciklamaSeo() ?? Setting::get('site_aciklama'),
+            // Özet kurulumun varsayılan cümlesiyse açıklama da üretilen özettir.
+            'ogAciklama' => $sayfa !== null && $seo === $sayfa->ozet && $ozet !== '' ? $ozet : $seo,
             'sayfa'      => $sayfa,
-            'iletisim'   => HomeController::contactCards(),
+            'ozet'       => $ozet,
+            'iletisim'   => $kartlar,
             // Öteki iç sayfalarla aynı yapısal veri (WebPage + BreadcrumbList).
             'jsonLd'     => $sayfa !== null ? [PageController::structuredData($sayfa)] : [],
             'errors'     => \App\Core\Flash::errors(),
             'old'        => \App\Core\Flash::old(),
             'scripts'    => ['contact.js'],
         ], 'layouts/site');
+    }
+
+    /** Kurulumun İletişim sayfasına yazdığı özet (sayfalar_tablosu migration'ı). */
+    public const VARSAYILAN_OZET = 'Bize ulaşmanın tüm yolları: telefon, e-posta, adres ve iletişim formu.';
+
+    /**
+     * Sayfanın üst metni. Yönetici kendi özetini yazdıysa o; kurulumun
+     * varsayılan cümlesi duruyorsa TANIMLI kanallardan üretilir. Eskiden
+     * yalnız e-posta tanımlıyken "telefon, e-posta, adres ve iletişim
+     * formu" yazıyordu (transcript-system, cowork 6. tur K8).
+     *
+     * @param list<array{etiket:string}> $kartlar HomeController::contactCards()
+     */
+    public static function summary(string $ozet, array $kartlar, bool $form): string
+    {
+        if (trim($ozet) !== self::VARSAYILAN_OZET) {
+            return $ozet;
+        }
+
+        $adlar = ['E-posta' => 'e-posta', 'Telefon' => 'telefon', 'WhatsApp' => 'WhatsApp', 'Adres' => 'adres'];
+        $yollar = [];
+
+        foreach ($kartlar as $kart) {
+            if (isset($adlar[$kart['etiket']])) {
+                $yollar[] = $adlar[$kart['etiket']];
+            }
+        }
+
+        if ($form) {
+            $yollar[] = 'iletişim formu';
+        }
+
+        return match (count($yollar)) {
+            0       => '',
+            1       => 'Bize ulaşmanın yolu: ' . $yollar[0] . '.',
+            default => 'Bize ulaşmanın yolları: ' . implode(', ', array_slice($yollar, 0, -1)) . ' ve ' . end($yollar) . '.',
+        };
     }
 
     public function send(Request $request): void

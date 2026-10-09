@@ -78,6 +78,18 @@ use Throwable;
 
 final class AnalizBaslatici
 {
+    /**
+     * Günlük haktan düşen analizler: kullanıcının bugün başlattıkları.
+     * HİÇ yapay zekâ çağrısı yapılmadan biten (iptal edilen ya da kalıcı
+     * hatayla düşen: video yok, altyazı yok, konuşma yok) analiz sayılmaz
+     * (cowork 6. tur K4). Süren analiz sayılır. kotaKontrolu ve hakDurumu
+     * aynı sorguyu kullanır.
+     */
+    public const BUGUN_SAYILAN = "SELECT COUNT(*) FROM transkript_analizler a
+         WHERE a.kullanici_id = :ben AND a.created_at >= CURDATE()
+           AND NOT (a.durum = 'hata' AND NOT EXISTS (
+               SELECT 1 FROM ai_kullanim_kaydi u WHERE u.modul = 'transkript' AND u.ref_tur = 'analiz' AND u.ref_id = a.id))";
+
     public const BASLATILDI  = 'baslatildi';
     public const SURUYOR     = 'suruyor';
     public const ONBELLEKTEN = 'onbellekten';
@@ -240,7 +252,7 @@ final class AnalizBaslatici
         $bugunku = 0;
 
         if ($sinir > 0) {
-            $sorgu = $this->db->prepare('SELECT COUNT(*) FROM transkript_analizler WHERE kullanici_id = :ben AND created_at >= CURDATE()');
+            $sorgu = $this->db->prepare(self::BUGUN_SAYILAN);
             $sorgu->execute([':ben' => (int) ($this->user?->id ?? 0)]);
             $bugunku = (int) $sorgu->fetchColumn();
         }
@@ -292,7 +304,7 @@ final class AnalizBaslatici
 
     private function sinirKontrolu(): void
     {
-        $sinir = (int) Ayarlar::get('analiz.saatlik_sinir', 20);
+        $sinir = (int) Ayarlar::get('analiz.saatlik_sinir', 5);
 
         if ($sinir <= 0 || ((bool) Ayarlar::get('analiz.yonetici_muaf', true) && (new TranskriptPolicy($this->user))->isAdmin())) {
             return;
@@ -382,12 +394,12 @@ final class AnalizBaslatici
         $policy  = new TranskriptPolicy($this->user);
         $muaf    = (bool) Ayarlar::get('analiz.yonetici_muaf', true) && $policy->isAdmin();
         $gunlukSinir  = $muaf ? 0 : max(0, (int) Ayarlar::get('analiz.gunluk_sinir', 10));
-        $saatlikSinir = $muaf ? 0 : max(0, (int) Ayarlar::get('analiz.saatlik_sinir', 20));
+        $saatlikSinir = $muaf ? 0 : max(0, (int) Ayarlar::get('analiz.saatlik_sinir', 5));
         $gunluk  = 0;
         $saatlik = 0;
 
         if ($gunlukSinir > 0) {
-            $sorgu = $this->db->prepare('SELECT COUNT(*) FROM transkript_analizler WHERE kullanici_id = :ben AND created_at >= CURDATE()');
+            $sorgu = $this->db->prepare(self::BUGUN_SAYILAN);
             $sorgu->execute([':ben' => (int) ($this->user?->id ?? 0)]);
             $gunluk = (int) $sorgu->fetchColumn();
         }

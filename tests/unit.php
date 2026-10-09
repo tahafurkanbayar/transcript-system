@@ -706,6 +706,15 @@ dogrula('Mobil giriş tarayıcı girişiyle aynı kapıdan geçer', str_contains
     && str_contains((string) file_get_contents(CY_BASE . '/app/Http/Controllers/Api/MobileController.php'), 'Auth::verifyCredentials('));
 dogrula('Giriş, bekleyen hesap silmeyi iptal eder', str_contains($auth, 'AccountDeletion::cancel($user->id)'));
 
+/* İletişim sayfasının özeti tanımlı kanallardan (transcript-system, cowork 6. tur K8). */
+$iletisimOzet = static fn (array $etiketler, bool $form, string $ozet = App\Http\Controllers\Site\ContactController::VARSAYILAN_OZET): string
+    => App\Http\Controllers\Site\ContactController::summary($ozet, array_map(static fn (string $e): array => ['etiket' => $e], $etiketler), $form);
+dogrula('İletişim özeti yalnız tanımlı kanalları sayar; yöneticinin kendi özeti olduğu gibi kalır',
+    $iletisimOzet(['E-posta'], true) === 'Bize ulaşmanın yolları: e-posta ve iletişim formu.'
+    && $iletisimOzet(['E-posta', 'Telefon', 'Çalışma Saatleri', 'Adres'], true) === 'Bize ulaşmanın yolları: e-posta, telefon, adres ve iletişim formu.'
+    && $iletisimOzet(['Telefon'], false) === 'Bize ulaşmanın yolu: telefon.' && $iletisimOzet([], false) === ''
+    && $iletisimOzet(['E-posta'], true, 'Bize her gün yazabilirsiniz.') === 'Bize her gün yazabilirsiniz.');
+
 /* Kullanıcı olarak oturum açma (transcript-system): kural veritabanına gitmez. */
 $hesap = static fn (int $id, string $rol, string $durum = 'aktif'): App\Models\User
     => App\Models\User::fromRow(['id' => $id, 'rol' => $rol, 'durum' => $durum]);

@@ -311,6 +311,15 @@ test('Hatalı girişler kilide takılıyor (saat diliminden bağımsız)', funct
         $p     = $c->giris($kimlik, 'yanlis-parola-' . $i);
         $sayfa = $c->istek('giris')['govde'];
 
+        /* Kademeli gecikme (1, 2, 4, 8 sn): bekleyip aynı denemeyi yinele;
+         * beklerken gelen deneme sayılmaz (transcript-system, K5). */
+        if (preg_match('/Lütfen (\d+) saniye bekleyip/u', $sayfa, $gecikme) === 1) {
+            $iz[] = $i . ':bekle' . $gecikme[1];
+            sleep((int) $gecikme[1] + 1);
+            $p     = $c->giris($kimlik, 'yanlis-parola-' . $i);
+            $sayfa = $c->istek('giris')['govde'];
+        }
+
         // Teşhis: kilit geç gelirse hangi denemenin kimlik doğrulamaya ulaşmadığı görünsün.
         $iz[] = $i . ':' . $p['kod'] . (str_contains($sayfa, 'Kalan deneme') ? '/kalan' : '')
               . (str_contains($sayfa, 'Güvenlik doğrulaması') || $p['kod'] === 419 ? '/csrf' : '')
@@ -332,6 +341,13 @@ test('"Kalan deneme hakkı" var olmayan hesapta da gösteriliyor', function () u
     for ($i = 1; $i <= 4; $i++) {
         $c->giris($kimlik, 'x' . $i);
         $sayfa = $c->istek('giris')['govde'];
+
+        // Kademeli gecikme: bekleyip yinele (bkz. önceki test).
+        if (preg_match('/Lütfen (\d+) saniye bekleyip/u', $sayfa, $gecikme) === 1) {
+            sleep((int) $gecikme[1] + 1);
+            $c->giris($kimlik, 'x' . $i);
+            $sayfa = $c->istek('giris')['govde'];
+        }
 
         if (str_contains($sayfa, 'Çok fazla hatalı deneme')) {
             return null; // IP kilidi: test anlamsız
@@ -439,6 +455,30 @@ test('Geçersiz Bearer anahtarı 401 döner ve oturum çerezi üretmez', functio
 
     return stripos($r['basliklar'], 'Set-Cookie:') === false ? true : 'Set-Cookie gönderildi';
 });
+
+/* Bilinmeyen adres ve yanlış yöntem router'dan gelir, API kapıcısına
+ * uğramaz; yine de API zarfıyla dönmeli (transcript-system, cowork 6. tur K1). */
+foreach ([
+    ['api/v1/yok-yer-' . bin2hex(random_bytes(2)), 'GET', 404, 'bulunamadi'],
+    ['api/v1/sayfalar', 'DELETE', 405, 'gecersiz_yontem'],
+] as [$apiYol, $apiYontem, $apiKod, $apiHata]) {
+    foreach (['başlıksız' => [], 'Bearer başlıklı' => ['Authorization: Bearer cy_gecersiz000000000000']] as $durum => $basliklar) {
+        test("$apiYontem $apiYol ($durum) $apiKod + API zarfı (error.code=$apiHata)", function () use ($base, $apiYol, $apiYontem, $apiKod, $apiHata, $basliklar): bool|string {
+            $r = (new Istemci($base))->istek($apiYol, $apiYontem, [], $basliklar);
+            $j = json_decode($r['govde'], true);
+
+            if ($r['kod'] !== $apiKod) {
+                return 'HTTP ' . $r['kod'];
+            }
+
+            if (!is_array($j) || ($j['success'] ?? null) !== false || ($j['error']['code'] ?? null) !== $apiHata || !isset($j['error']['message'])) {
+                return 'zarf: ' . substr($r['govde'], 0, 120);
+            }
+
+            return isset($j['type']) || isset($j['description']) ? 'panel zarfı alanları var' : true;
+        });
+    }
+}
 
 test('api/v1/sayfalar (anahtarsız uç) JSON döner', function () use ($base): bool|string {
     $r = (new Istemci($base))->istek('api/v1/sayfalar');

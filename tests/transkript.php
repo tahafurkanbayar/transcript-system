@@ -54,6 +54,7 @@ use Modules\Transkript\Ai\ClaudeProvider;
 use Modules\Transkript\Ai\GeminiProvider;
 use Modules\Transkript\Ai\HttpProvider;
 use Modules\Transkript\Ai\OpenAiCompatibleProvider;
+use Modules\Transkript\Ai\DinlenmeDeposu;
 use Modules\Transkript\Ai\YedekliSaglayici;
 use Modules\Transkript\Http\HttpIstemci;
 use Modules\Transkript\Http\HttpYanit;
@@ -163,6 +164,11 @@ $bellek->exec("INSERT INTO ayarlar VALUES ('aktif_moduller', '[\"Transkript\"]')
 Setting::load($bellek);
 Modules::forget();
 Modules::boot();
+
+// Testlerin sağlayıcı dinlenmeleri gerçek kayda (storage/files) değil geçici dosyaya yazılır.
+$dinlenmeDosyasi = sys_get_temp_dir() . '/tk-dinlenme-test-' . getmypid() . '.json';
+DinlenmeDeposu::kullan($dinlenmeDosyasi);
+register_shutdown_function(static function () use ($dinlenmeDosyasi): void { @unlink($dinlenmeDosyasi); });
 
 /* ---------------------------------------------------------------- */
 echo "\nTranskriptPolicy (kayıt sahibine bağlı kurallar)\n";
@@ -2083,6 +2089,24 @@ dogrula('Günlük kota sıfırlanması: Pasifik gece yarısı + 1 dk (yaz saati 
     YedekliSaglayici::kotaSifirlanmasinaKadar($utc('2026-10-09 20:00')) === 11 * 3600 + 60
     && YedekliSaglayici::kotaSifirlanmasinaKadar($utc('2026-12-01 07:30')) === 30 * 60 + 60);
 
+/* Cowork 6. tur K2: Türkiye 21:56'da günlük kota → bitiş ertesi gün 10:01 (TR, yaz
+ * saati); kayıt kalıcı dosyada (önbellek değil); "Dinlenmeleri sıfırla" günlük kotayı
+ * kutu işaretlenmedikçe korur. */
+$trSaat = static fn (int $t): string => (new DateTimeImmutable('@' . $t))->setTimezone(new DateTimeZone('Europe/Istanbul'))->format('Y-m-d H:i');
+$kotaAni = $utc('2026-10-09 18:56');   // 21:56 TR
+YedekliSaglayici::dinlendir('test-a', 'kota_doldu', $kotaAni);
+YedekliSaglayici::dinlendir('test-b', 'sunucu');
+$dosyada = (array) json_decode((string) @file_get_contents(DinlenmeDeposu::yol()), true);
+$korunan = YedekliSaglayici::hepsiniSifirla(['test-a', 'test-b']);
+$kotaSonra = YedekliSaglayici::dinlenmeKaydi('test-a');
+$hepsi = YedekliSaglayici::hepsiniSifirla(['test-a', 'test-b'], true);
+dogrula('K2: günlük kota (21:56 TR) ertesi gün 10:01\'e kadar; kayıt kalıcı dosyada; sıfırlama günlük kotayı kutu işaretlenmedikçe korur',
+    $trSaat((int) ($dosyada['test-a']['bitis'] ?? 0)) === '2026-10-10 10:01' && ($dosyada['test-a']['kod'] ?? '') === 'kota_doldu'
+    && isset($dosyada['test-b']) && !str_contains(DinlenmeDeposu::yol(), 'storage' . DIRECTORY_SEPARATOR . 'cache')
+    && $korunan === ['test-b'] && ($kotaSonra['kod'] ?? '') === 'kota_doldu' && YedekliSaglayici::dinlenmeKalan('test-b') === 0
+    && $hepsi === ['test-a', 'test-b'] && YedekliSaglayici::dinlenmeKaydi('test-a') === null);
+$dinlenmeyiSil();
+
 YedekliSaglayici::dinlendir('test-a', 'kota_doldu');
 YedekliSaglayici::dinlendir('test-b', 'model_bulunamadi', null, null, 'm-b');
 $ozet = YedekliSaglayici::ozet([
@@ -2284,6 +2308,13 @@ $ayarYaz([]);
 dogrula('Panelden ana sayfa seçimi: genel → false, tanıtım → true, boş → config (true)',
     $genel === false && $tanitim === true && Ayarlar::get('anasayfa.tanitim') === true
     && PanelAyarlari::dogrula('ana_sayfa', 'baska') === 'Listeden bir seçenek seçin.' && PanelAyarlari::dogrula('ana_sayfa', 'genel') === null);
+dogrula('K3: saatlik sınırın varsayılanı 5 (günlük 10); saatlik ≥ günlük kaydedilince uyarı, 0 ya da küçükse uyarı yok',
+    Ayarlar::varsayilan('analiz.saatlik_sinir') === 5 && Ayarlar::varsayilan('analiz.gunluk_sinir') === 10
+    && PanelAyarlari::uyarilar(['saatlik_sinir' => '', 'gunluk_sinir' => '']) === []
+    && count(PanelAyarlari::uyarilar(['saatlik_sinir' => '20', 'gunluk_sinir' => ''])) === 1
+    && str_contains(PanelAyarlari::uyarilar(['saatlik_sinir' => '20', 'gunluk_sinir' => '10'])[0] ?? '', 'hiç devreye girmez')
+    && PanelAyarlari::uyarilar(['saatlik_sinir' => '0', 'gunluk_sinir' => '10']) === []
+    && PanelAyarlari::uyarilar(['saatlik_sinir' => '20', 'gunluk_sinir' => '0']) === []);
 
 /* ---------------------------------------------------------------- */
 echo "\nRol testi (editör ve üye): sayaçlar, hata metni, iptal, vaat\n";
@@ -2361,9 +2392,11 @@ dogrula('Liste: üyede "Raporu hazır" seçili gelir, "Tüm durumlar" hepsi değ
     str_contains($uyeHazir, '<option value="hazir" selected>') && str_contains($uyeHazir, '<option value="hepsi">Tüm durumlar')
     && str_contains($yonListe, '<option value="" selected>Tüm durumlar'));
 $tokenKarti = static fn (string $html): bool => (bool) preg_match('/Toplam token|Tahmini maliyet|Token kullanımınız/u', $html);
-dogrula('Kartlar: token / maliyet yalnız yöneticide; hata sayısı analiz başlatabilende (editör), üyede yok',
+dogrula('Kartlar: token / maliyet yalnız yöneticide; hata sayısı analiz başlatabilende (editör), üyede yok; analiz hakkı olmayan üyede "Bugün eklediğiniz" yerine "Sizinle paylaşılan" (K7)',
     !str_contains($uyeHepsi, '1 hata') && !$tokenKarti($uyeHepsi)
-    && str_contains($uyeHepsi, 'Bugün eklediğiniz') && str_contains($uyeHepsi, 'Raporlarınız') && str_contains($uyeHepsi, 'kütüphanenize eklenen video')
+    && !str_contains($uyeHepsi, 'Bugün eklediğiniz') && str_contains($uyeHepsi, 'Raporlarınız') && str_contains($uyeHepsi, 'Sizinle paylaşılan')
+    && str_contains($uyeHepsi, 'kapsam=paylasilan')
+    && str_contains($edListe, 'Bugün eklediğiniz') && str_contains($edListe, 'kütüphanenize eklenen video') && !str_contains($edListe, 'Sizinle paylaşılan')
     && str_contains($edListe, '1 hata') && !$tokenKarti($edListe)
     && str_contains($yonListe, 'Toplam token') && str_contains($yonListe, 'Tahmini maliyet') && str_contains($yonListe, 'Bugün tamamlanan analiz'));
 
@@ -2459,7 +2492,8 @@ $ayarSayfasi = App\Core\View::capture('Transkript::ayarlar', [
 ]);
 dogrula('Ayarlar: sağlayıcı tablosu, "Dinlenmeleri sıfırla" (CSRF\'li), son 50 çağrı günlüğü; anahtarsız "Atlandı", hata Türkçe',
     str_contains($ayarSayfasi, 'Yapay zekâ sağlayıcıları') && str_contains($ayarSayfasi, 'Dinlenmeleri sıfırla')
-    && preg_match('#action="[^"]*ayarlar/dinlenme-sifirla">\s*<input type="hidden" name="csrf_token"#', $ayarSayfasi) === 1
+    && preg_match('#action="[^"]*ayarlar/dinlenme-sifirla"[^>]*>\s*<input type="hidden" name="csrf_token"#', $ayarSayfasi) === 1
+    && str_contains($ayarSayfasi, 'name="kota_dahil"') && str_contains($ayarSayfasi, 'kutuyu işaretlemediyseniz o sıfırlanmaz')
     && str_contains($ayarSayfasi, 'Atlandı (anahtar yok)') && str_contains($ayarSayfasi, 'Son 50 yapay zekâ çağrısı')
     && str_contains($ayarSayfasi, 'model yok (404)') && str_contains($ayarSayfasi, 'açılış ') && str_contains($ayarSayfasi, '2.502')
     && preg_match('#href="[^"]*/panel/transkript/27">\#28</a>#', $ayarSayfasi) === 1
@@ -2583,6 +2617,11 @@ dogrula('Başlatma: yetki URL\'den ve veritabanından önce; sonuç her yolda k�
 preg_match('#function devamEt\(.*?\n    }\n#s', $baslaticiKodu, $devamGovde);
 dogrula('Kaldığı yerden devam yalnız başlatana ve yöneticiye (canRetry); başkası kendi analizini açar',
     str_contains($devamGovde[0] ?? '', '$policy->canRetry($son)'));
+
+dogrula('K4: günlük hak sayımı tek sorgu (başlatma + "Bugünkü hakkınız"); çağrısız biten hata / iptal sayılmaz',
+    str_contains(AnalizBaslatici::BUGUN_SAYILAN, "NOT (a.durum = 'hata' AND NOT EXISTS")
+    && str_contains(AnalizBaslatici::BUGUN_SAYILAN, "u.ref_tur = 'analiz' AND u.ref_id = a.id")
+    && substr_count($baslaticiKodu, 'prepare(self::BUGUN_SAYILAN)') === 2 && !str_contains($baslaticiKodu, 'WHERE kullanici_id = :ben AND created_at >= CURDATE()'));
 
 $hakSimdi = (int) strtotime('2026-10-10 14:20:00');
 $hakBos   = AnalizBaslatici::hakKarari(false, 3, 10, 1, 20, $hakSimdi);

@@ -42,7 +42,9 @@ $durumAdi = [
                     <strong><a class="cy-link" href="<?= e(url('panel/transkript/' . (int) $a['kaynak_id'])) ?>"><?= e((string) ($a['baslik'] ?: $a['dis_kimlik'])) ?></a></strong>
                     <small>
                         <?= e($kim) ?> · <?= e(human_date((string) $a['created_at'])) ?>
+                        <?php /* İşlem süresi; sırada / ertelenmiş bekleme ayrı ve soluk (K6). */ ?>
                         <?php if ($bitti && $a['sure_sn'] !== null): ?> · <?= e(RaporVerisi::sure((int) $a['sure_sn'])) ?> sürdü<?php endif; ?>
+                        <?php if ((int) ($a['bekleme_sn'] ?? 0) >= 60): ?> <span class="cy-muted">· <?= e(RaporVerisi::sure((int) $a['bekleme_sn'])) ?> sırada bekledi</span><?php endif; ?>
                         <?php if ($a['durum'] === 'hata' && !$iptal): ?> · <?= e(HataKodlari::gorunenMesaj($a['hata_kodu'], true, true)) ?><?php endif; ?>
                     </small>
                 </span>

@@ -454,6 +454,34 @@ try {
     Ayarlar::forget();
     dogrula('Her rolde liste "Raporu hazır" toplamı = sayaç = Kontrol Paneli kartı = API meta', $fark === [], implode('; ', $fark));
 
+    /* Cowork 6. tur K4: A'nın bugünkü analizleri K1 (tamamlandı), K4 (sürüyor), K5
+     * (hata, hiç yapay zekâ çağrısı yok). K5 haktan düşmez; çağrı kaydı varsa düşer. */
+    $aHak = (new \Modules\Transkript\Services\AnalizBaslatici($db, kullanici('A')))->hakDurumu()['gunluk'];
+    $db->prepare("INSERT INTO ai_kullanim_kaydi (modul, ref_tur, ref_id, saglayici, model, giris_token, cikis_token, maliyet_usd, sure_ms, durum, hata_kodu)
+                  VALUES ('transkript', 'analiz', (SELECT id FROM transkript_analizler WHERE kaynak_id = :k), 'gemini', 'test', 0, 0, 0, 1, 'hata', 'kota_doldu')")
+        ->execute([':k' => $k['K5']]);
+    $aHakCagrili = (new \Modules\Transkript\Services\AnalizBaslatici($db, kullanici('A')))->hakDurumu()['gunluk'];
+    $db->prepare("DELETE FROM ai_kullanim_kaydi WHERE modul = 'transkript' AND ref_tur = 'analiz' AND ref_id = (SELECT id FROM transkript_analizler WHERE kaynak_id = :k)")
+        ->execute([':k' => $k['K5']]);
+    dogrula('K4: yapay zekâ çağrısı yapılmadan hatayla / iptalle biten analiz günlük haktan düşmez; çağrı yapıldıysa düşer',
+        $aHak === 2 && $aHakCagrili === 3, "çağrısız $aHak, çağrılı $aHakCagrili");
+
+    /* K6: "Son analizler" işlem süresini ve beklemeyi ayrı gösterir. K1: 20 dk önce
+     * kuyruğa girdi, 18 dk önce başladı, şimdi bitti, arada 10 dk ertelendi → 8 dk
+     * sürdü, 12 dk bekledi. K5 (hata) 5 dk önce durdu; sürdürülünce 5 dk beklemeye eklenir. */
+    $db->prepare('UPDATE transkript_analizler SET created_at = NOW() - INTERVAL 20 MINUTE, basladi_at = NOW() - INTERVAL 18 MINUTE,
+                  bitti_at = NOW(), bekleme_sn = 600 WHERE kaynak_id = :k')->execute([':k' => $k['K1']]);
+    $sonK1 = array_values(array_filter($repo->sonAnalizler(20), static fn (array $s): bool => (int) $s['kaynak_id'] === $k['K1']))[0] ?? [];
+    $k5Analiz = (int) satir($db, 'SELECT id FROM transkript_analizler WHERE kaynak_id = :k', [':k' => $k['K5']]);
+    $db->prepare('UPDATE transkript_analizler SET bitti_at = NOW() - INTERVAL 5 MINUTE, bekleme_sn = 0 WHERE id = :id')->execute([':id' => $k5Analiz]);
+    $surdu = (new \Modules\Transkript\Repositories\AnalizRepository($db))->devamEttir($k5Analiz, 'analiz_ediliyor');
+    $k5Bekleme = (int) satir($db, 'SELECT bekleme_sn FROM transkript_analizler WHERE id = :id', [':id' => $k5Analiz]);
+    $panel = implode('', DashboardPanels::collect(kullanici('Y')));
+    dogrula('K6: işlem süresi ertelenen / duran süre hariç (8 dk), bekleme ayrı (12 dk); sürdürülen analizin duruşu beklemeye eklenir; panel "sırada bekledi" yazar',
+        abs((int) ($sonK1['sure_sn'] ?? 0) - 480) <= 2 && abs((int) ($sonK1['bekleme_sn'] ?? 0) - 720) <= 2
+        && $surdu && abs($k5Bekleme - 300) <= 2 && str_contains($panel, 'sırada bekledi'),
+        json_encode([$sonK1['sure_sn'] ?? null, $sonK1['bekleme_sn'] ?? null, $surdu, $k5Bekleme]));
+
     $yonetimKartlari = array_column(DashboardCards::collect(kullanici('Y')), 'etiket');
     $analistKartlari = array_column(DashboardCards::collect(kullanici('A')), 'etiket');
     $yonetimBolumu   = implode('', DashboardPanels::collect(kullanici('Y')));
@@ -548,6 +576,83 @@ try {
 
     dogrula('Analist başkasının API anahtarını kendi formundan iptal edemez (anahtar_id IDOR)', $duruyor === 1);
 
+    /* Cowork 6. tur K5: kilit (kullanıcı adı + IP) çiftine bağlı; öncesinde kademeli
+     * gecikme. Geçici bir üyeyle, gerçek giriş kapısından (Auth::verifyCredentials). */
+    $k5Kadi   = 'tk_k5_' . bin2hex(random_bytes(3));
+    $k5Parola = bin2hex(random_bytes(10)) . 'Aa1';
+    $db->prepare("INSERT INTO kullanicilar (ad, soyad, kullanici_adi, eposta, sifre, rol, durum, avatar, telefon, hakkinda)
+                  VALUES ('K5', 'Deneme', :k, :e, :s, 'uye', 'aktif', '', '', '')")
+        ->execute([':k' => $k5Kadi, ':e' => $k5Kadi . '@ornek.test', ':s' => password_hash($k5Parola, PASSWORD_DEFAULT)]);
+    $limiter = new App\Core\RateLimiter($db);
+    $ipDen   = static function (string $ip, string $parola) use ($k5Kadi): array {
+        $_SERVER['REMOTE_ADDR'] = $ip;
+        App\Core\Ip::forget();
+
+        return Auth::verifyCredentials($k5Kadi, $parola, new Request());
+    };
+
+    try {
+        // A IP'si: 5 hatalı deneme (gecikmeyi beklemeden, kayda doğrudan) → kilit.
+        for ($i = 0; $i < 5; $i++) {
+            $limiter->begin($k5Kadi, '203.0.113.10');
+        }
+
+        $aKilitli  = $ipDen('203.0.113.10', $k5Parola);
+        $bGirer    = $ipDen('198.51.100.20', $k5Parola);
+        $limiter->clear($k5Kadi);
+        // Saniye sınırına denk gelmesin diye üç hata: bekleme 4 sn (en az 3 sn kalır).
+        $ilkHata   = $ipDen('198.51.100.30', 'yanlis-parola');
+        $limiter->begin($k5Kadi, '198.51.100.30');
+        $limiter->begin($k5Kadi, '198.51.100.30');
+        $hemen     = $ipDen('198.51.100.30', $k5Parola);
+        $limiter->begin($k5Kadi, '198.51.100.40');
+        $limiter->begin($k5Kadi, '198.51.100.40');
+        $limiter->begin($k5Kadi, '198.51.100.40');
+        $ucHata    = $limiter->lockedFor($k5Kadi, '198.51.100.40');
+    } finally {
+        $limiter->clear($k5Kadi);
+        $db->prepare('DELETE FROM kullanicilar WHERE kullanici_adi = :k')->execute([':k' => $k5Kadi]);
+        unset($_SERVER['REMOTE_ADDR']);
+        App\Core\Ip::forget();
+    }
+
+    dogrula('K5: A IP\'si kilitliyken (doğru parolayla bile) B IP\'si aynı kullanıcı adıyla girer; üç hatadan sonra doğru parola da 4 sn bekler; 1-2-4-8 sn',
+        !$aKilitli['ok'] && str_contains($aKilitli['message'], 'Çok fazla hatalı deneme') && $bGirer['ok']
+        && !$ilkHata['ok'] && !$hemen['ok'] && preg_match('/Lütfen [34] saniye bekleyip/u', $hemen['message']) === 1 && in_array($ucHata, [3, 4], true)
+        && App\Core\RateLimiter::gradualDelay(1, 0) === 1 && App\Core\RateLimiter::gradualDelay(2, 0) === 2
+        && App\Core\RateLimiter::gradualDelay(4, 0) === 8 && App\Core\RateLimiter::gradualDelay(2, 5) === 0 && App\Core\RateLimiter::gradualDelay(0, 0) === 0,
+        json_encode([$aKilitli['message'], $bGirer['ok'], $hemen['message'], $ucHata], JSON_UNESCAPED_UNICODE));
+
+    /* K10: "son aktif yönetici" kuralı. Gerçek hesaplara dokunmamak için ayrı
+     * bir bağlantıda AYNI ADLI GEÇİCİ tablo (yalnız o bağlantı görür, gerçek
+     * kullanicilar tablosunun önüne geçer; bağlantı kapanınca silinir). */
+    $kapi = (int) App\Core\Config::get('db.port', 3306);
+    $ayri = new PDO(
+        sprintf('mysql:host=%s;port=%d;dbname=%s;charset=utf8mb4', App\Core\Database::host((string) App\Core\Config::get('db.host'), $kapi), $kapi, (string) App\Core\Config::get('db.name')),
+        (string) App\Core\Config::get('db.user'),
+        (string) App\Core\Config::get('db.pass'),
+        [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]
+    );
+    // "LIKE kullanicilar" aynı adda olmaz (1066); tanım SHOW CREATE TABLE'dan, yabancı anahtarsız.
+    $tanim = (string) $ayri->query('SHOW CREATE TABLE kullanicilar')->fetchColumn(1);
+    $tanim = (string) preg_replace('/,\s*CONSTRAINT [^\n]+/', '', preg_replace('/^CREATE TABLE/', 'CREATE TEMPORARY TABLE', $tanim));
+    $ayri->exec($tanim);
+    $ayri->exec("INSERT INTO kullanicilar (id, ad, soyad, kullanici_adi, eposta, sifre, rol, durum, avatar, telefon, hakkinda)
+                 VALUES (1, 'Tek', 'Yönetici', 'tek', 'tek@ornek.test', 'x', 'admin', 'aktif', '', '', ''),
+                        (2, 'Pasif', 'Yönetici', 'pasif', 'pasif@ornek.test', 'x', 'admin', 'pasif', '', '', '')");
+    $geciciRepo = new UserRepository($ayri);
+    $sonSil   = $geciciRepo->changeAdminSafely(1, static fn () => $ayri->exec('DELETE FROM kullanicilar WHERE id = 1'));
+    $sonRol   = $geciciRepo->changeAdminSafely(1, static fn () => $ayri->exec("UPDATE kullanicilar SET rol = 'uye' WHERE id = 1"));
+    $tekDurdu = (string) $ayri->query('SELECT CONCAT(rol, \'/\', durum) FROM kullanicilar WHERE id = 1')->fetchColumn();
+    $ayri->exec("UPDATE kullanicilar SET durum = 'aktif' WHERE id = 2");
+    $ikinciVarken = $geciciRepo->changeAdminSafely(1, static fn () => $ayri->exec("UPDATE kullanicilar SET rol = 'uye' WHERE id = 1"));
+    $ayri->exec('DROP TEMPORARY TABLE kullanicilar');
+    $ayri = null;
+    $apiKodu = (string) file_get_contents(CY_BASE . '/app/Http/Controllers/Api/UserApiController.php');
+    dogrula('K10: son aktif yönetici silinemez ve rolü düşürülemez (pasif yönetici sayılmaz); ikinci aktif yönetici varken olur; silme, durum ve rol aynı kapıdan',
+        $sonSil === false && $sonRol === false && $tekDurdu === 'admin/aktif' && $ikinciVarken === true
+        && substr_count($apiKodu, 'changeAdminSafely(') === 3 && str_contains($apiKodu, 'son aktif yönetici'));
+
     // Aydınlatma metni sayfası: yalnız yayındaki bir sayfa (veritabanına sorulur; kayıt yapılmaz).
     $ayarlar  = new App\Http\Controllers\SettingsController();
     $kvkk     = static fn (string $slug): ?string => (fn (): ?string => $this->validateSetting(['anahtar' => 'sistem_kvkk_sayfa', 'tip' => 'metin', 'etiket' => 'Aydınlatma'], $slug))->call($ayarlar);
@@ -555,6 +660,22 @@ try {
     dogrula('Aydınlatma metni alanı var olmayan / yayında olmayan sayfayı kabul etmez (yayındakini eder)',
         $kvkk('olmayan-sayfa-xyz') !== null && $kvkk('../etc') !== null && $kvkk('') === null && ($yayinda === '' || $kvkk($yayinda) === null),
         (string) $kvkk('olmayan-sayfa-xyz'));
+
+    /* Cowork 6. tur K9: silinen hesabın kütüphane, sohbet ve ilgi alanı kayıtları
+     * gece görevinde silinir; var olan hesaplarınkine dokunulmaz. (Test kullanıcıları
+     * 99000x gerçek satırsızdır: onların kütüphane kayıtları da sahipsiz sayılır.) */
+    $gercekOnce = (int) satir($db, 'SELECT COUNT(*) FROM transkript_kutuphane t JOIN kullanicilar u ON u.id = t.kullanici_id');
+    $db->prepare('INSERT INTO transkript_kutuphane (kullanici_id, kaynak_id, ekleme_turu) VALUES (999999, :k, \'onbellek\')')->execute([':k' => $k['K3']]);
+    $db->prepare('INSERT INTO transkript_sohbetler (kaynak_id, kullanici_id, baslik) VALUES (:k, 999999, \'Silinmiş hesabın sohbeti\')')->execute([':k' => $k['K3']]);
+    $db->prepare("INSERT INTO transkript_sohbet_mesajlari (sohbet_id, rol, icerik) VALUES (:s, 'user', 'merhaba')")->execute([':s' => (int) $db->lastInsertId()]);
+    $db->exec("INSERT INTO transkript_ilgi_alanlari (kullanici_id, ilgi, agirlik) VALUES (999999, 'test', 1)");
+    $silinen = (new \Modules\Transkript\Services\HesapTemizligi($db))->temizle();
+    $kalan999 = (int) satir($db, 'SELECT (SELECT COUNT(*) FROM transkript_kutuphane WHERE kullanici_id = 999999) + (SELECT COUNT(*) FROM transkript_sohbetler WHERE kullanici_id = 999999)
+        + (SELECT COUNT(*) FROM transkript_ilgi_alanlari WHERE kullanici_id = 999999)');
+    dogrula('K9: silinen hesabın kütüphane, sohbet (+mesaj) ve ilgi alanı kayıtları temizlenir; var olan hesaplarınki kalır',
+        $kalan999 === 0 && ($silinen['transkript_sohbet_mesajlari'] ?? 0) >= 1 && ($silinen['transkript_ilgi_alanlari'] ?? 0) >= 1
+        && (int) satir($db, 'SELECT COUNT(*) FROM transkript_kutuphane t JOIN kullanicilar u ON u.id = t.kullanici_id') === $gercekOnce,
+        json_encode($silinen));
 } finally {
     temizle($db);
     $db->prepare('DELETE FROM kullanicilar WHERE kullanici_adi = :k')->execute([':k' => DENEME_YONETICI]);

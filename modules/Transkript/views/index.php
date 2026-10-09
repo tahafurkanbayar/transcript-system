@@ -146,15 +146,27 @@ $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format(
             ?></span>
         </span>
     </div>
+    <?php if ($hepsi || $analizci): ?>
     <div class="cy-stat">
         <span class="cy-stat__icon cy-stat__icon--brand"><?= icon('calendar') ?></span>
         <span>
-            <?php /* Yönetici bugün tamamlanan analizleri, öteki roller bugün kütüphanesine eklediğini görür. */ ?>
+            <?php /* Yönetici bugün tamamlanan analizleri, analiz başlatabilen bugün kütüphanesine eklediğini görür. */ ?>
             <span class="cy-stat__label"><?= $hepsi ? 'Bugün tamamlanan analiz' : 'Bugün eklediğiniz' ?></span>
             <span class="cy-stat__value"><?= e($sayi($istatistik['bugun'])) ?></span>
             <span class="cy-stat__hint"><?= $hepsi ? 'bütün kullanıcılar, yeniden analiz dahil' : 'kütüphanenize eklenen video' ?></span>
         </span>
     </div>
+    <?php else: ?>
+    <?php /* Analiz hakkı olmayana "Bugün eklediğiniz 0" anlamsızdı (cowork 6. tur K7): yerine paylaşılanlar. */ ?>
+    <a class="cy-stat tk-stat-baglanti" href="<?= e(url('panel/transkript', ['kapsam' => 'paylasilan'])) ?>">
+        <span class="cy-stat__icon cy-stat__icon--brand"><?= icon('users') ?></span>
+        <span>
+            <span class="cy-stat__label">Sizinle paylaşılan</span>
+            <span class="cy-stat__value"><?= e($sayi($paylasilan)) ?></span>
+            <span class="cy-stat__hint">yöneticinin paylaştığı rapor · göster →</span>
+        </span>
+    </a>
+    <?php endif; ?>
     <?php /* Token ve maliyet yalnız yöneticiye (kullanıcı kararı: üye ve editör görmez). */ ?>
     <?php if ($hepsi): ?>
     <div class="cy-stat">
