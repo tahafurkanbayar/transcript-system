@@ -57,9 +57,14 @@ final class TranskriptAl extends TranskriptIsi
 
         $this->analizler()->ilerle($this->analizId, 'transkript_hazir', null, 15, ['metin_id' => $metinId]);
 
-        $parcalar = Chunker::fromAyarlar()->parcala(
-            Cleaner::fromAyarlar()->hazirla($this->segmentler()->segmentler($metinId))
-        );
+        $segmentler = $this->segmentler()->segmentler($metinId);
+
+        if ($segmentler !== []) {
+            // oEmbed süre vermez; liste ve rapor süreyi transcript'ten bilsin.
+            $this->kaynaklar()->sureYoksaYaz($kaynakId, intdiv(max(array_map(static fn ($s): int => $s->bitisMs, $segmentler)), 1000));
+        }
+
+        $parcalar = Chunker::fromAyarlar()->parcala(Cleaner::fromAyarlar()->hazirla($segmentler));
 
         if ($parcalar === []) {
             throw new TranscriptNotFound('Temizlikten sonra transcript boş kaldı: metin ' . $metinId);

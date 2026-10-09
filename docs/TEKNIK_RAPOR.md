@@ -316,7 +316,7 @@ MVP, bir YouTube URL'sinden zaman damgalı web raporuna kadar olan ana hattı ç
 - [x] **5. Transcript:** Arayüz, `YouTubeTranscriptProvider` (elle ve otomatik altyazı) ve aynı Gemini anahtarıyla çalışan `GeminiVideoProvider` yedeği, temizleyici, parçalayıcı. Harici API ve ASR yalnız iskelet.
 - [x] **6. İşler:** 5 iş sınıfı, ilerleme alanı, `routes/schedule.php` ile worker tetikleme.
 - [x] **7. AI pipeline:** Map ve birleştirme promptları, `ResultValidator`, `ai_kullanim_kaydi`.
-- [ ] **8. Ekranlar:** Liste (`panel/transkript`), ilerleme çubuğu, rapor (kısa özet, detaylı özet, önemli noktalar, zaman çizelgesi, teknik bilgiler, fikirler, iddialar), gömülü oynatıcı.
+- [x] **8. Ekranlar:** Liste (`panel/transkript`), ilerleme çubuğu, rapor (kısa özet, detaylı özet, önemli noktalar, zaman çizelgesi, teknik bilgiler, fikirler, iddialar), gömülü oynatıcı.
 - [ ] **9. Hata yönetimi:** Geçersiz URL, video bulunamadı, gizli video, silinmiş video, transcript bulunamadı, transcript API hatası, ASR hatası, AI API hatası, rate limit, token limiti, zaman aşımı ve JSON parse hatası için anlaşılır Türkçe mesaj + ayrıntılı log.
 - [ ] **10. Test:** Kısa, uzun (3 saat), altyazısız, gizli ve silinmiş birer video ile uçtan uca deneme; `UrlParser`, `Chunker`, `ResultValidator` için starter'ın `tests/` düzeninde test.
 

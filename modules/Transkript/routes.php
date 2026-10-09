@@ -37,6 +37,13 @@ $router->post('panel/transkript/analiz', KaynakController::class, 'analiz',
 $router->get('panel/transkript/ilerleme/{kaynak_id}', KaynakController::class, 'ilerleme',
     ['installed', 'auth', 'can:transkript.view']);
 
+// Modülün JS / CSS dosyaları (modules/ klasörü tarayıcıya kapalı; bkz. Varliklar).
+$router->get('panel/transkript/varlik/{dosya}', KaynakController::class, 'varlik',
+    ['installed', 'auth', 'can:transkript.view']);
+
+$router->get('panel/transkript/{kaynak_id}/transkript', KaynakController::class, 'transkript',
+    ['installed', 'auth', 'can:transkript.view']);
+
 $router->get('panel/transkript/{kaynak_id}', KaynakController::class, 'goster',
     ['installed', 'auth', 'can:transkript.view']);
 
