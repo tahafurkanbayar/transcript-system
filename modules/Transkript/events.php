@@ -225,5 +225,9 @@ if (PHP_SAPI !== 'cli') {
         (new AnasayfaController())->goster($request);
 
         return true;
-    });
+    },
+        // Site Ayarları → Ana Sayfa uyarısı: tanıtım sayfası açıkken o ayarlar etkisiz.
+        static fn (): bool => (bool) Ayarlar::get('anasayfa.tanitim', true),
+        'panel/transkript/ayarlar',
+    );
 }

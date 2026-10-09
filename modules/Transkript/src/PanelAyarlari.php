@@ -44,8 +44,8 @@ final class PanelAyarlari
     public const ALANLAR = [
         'ai_model' => [
             'yol' => ['ai.map.model', 'ai.reduce.model'], 'tur' => 'secim',
-            'etiket' => 'Yapay zekâ modeli',
-            'aciklama' => 'Bölüm analizi ve birleştirmede kullanılır. Boş: .env\'deki AI_MODEL ya da sağlayıcının varsayılanı.',
+            'etiket' => 'Asıl sağlayıcının modeli',
+            'aciklama' => 'Asıl sağlayıcının (ilk sıradaki) modeli; bölüm analizi ve birleştirmede kullanılır. Boş: .env\'deki AI_MODEL ya da varsayılan. Yedek sağlayıcıların modeli .env\'den gelir, aşağıdaki sağlayıcı tablosunda görünür.',
         ],
         'altyazi_dili' => [
             'yol' => ['transcript.tercih_diller'], 'tur' => 'secim',

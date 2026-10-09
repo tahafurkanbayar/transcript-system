@@ -2420,6 +2420,13 @@ dogrula('Ayarlar: sağlayıcı tablosu, "Dinlenmeleri sıfırla" (CSRF\'li), son
     && str_contains($ayarSayfasi, 'model yok (404)') && str_contains($ayarSayfasi, 'açılış ') && str_contains($ayarSayfasi, '2.502')
     && preg_match('#href="[^"]*/panel/transkript/27">\#28</a>#', $ayarSayfasi) === 1
     && str_contains($ayarSayfasi, 'name="tarayici_kuyruk"'));
+dogrula('Ayarlar: "Dinlenmeleri sıfırla" onay ister; günlük kotası dolan sağlayıcıyı açılış saatiyle uyarır',
+    $tablo[0]['kod'] === 'kota_doldu' && str_contains($ayarSayfasi, 'js-tk-form-onay')
+    && str_contains($ayarSayfasi, 'Google Gemini günlük kotası ' . $tablo[0]['acilis'] . ' civarında açılır;')
+    && str_contains($ayarSayfasi, 'id="tk_onay"') && str_contains($ayarSayfasi, 'transkript.js'));
+dogrula('Ayarlar: AI_PROVIDERS örneği gerçek sıradan üretilir (sabit metin yok); model etiketi asıl sağlayıcının adıyla',
+    str_contains($ayarSayfasi, 'AI_PROVIDERS=test-a,test-b,test-c,test-d') && !str_contains($ayarSayfasi, 'gemini,openrouter,mistral,groq')
+    && str_contains($ayarSayfasi, Ai::label() . ' modeli') && str_contains($ayarSayfasi, 'name="uye_analiz"'));
 
 $filtrePdo = new KayitPdo();
 (new KaynakRepository($filtrePdo))->liste(['durum' => 'hata'], 1, 10, null, true);

@@ -29,12 +29,15 @@ namespace App\Http\Controllers;
 
 use App\Core\Exceptions\HttpException;
 use App\Core\Flash;
+use App\Core\HomePage;
 use App\Core\Log\Logger;
 use App\Core\Request;
 use App\Core\Response;
 use App\Core\Setting;
 use App\Core\Uploader;
 use App\Http\Controller;
+use App\Models\Page;
+use App\Repositories\PageRepository;
 use RuntimeException;
 
 final class SettingsController extends Controller
@@ -165,6 +168,15 @@ final class SettingsController extends Controller
             'errors'   => Flash::errors(),
             'old'      => Flash::old(),
             'scripts'  => ['settings.js'],
+            // Aydınlatma metni serbest metin değil, yayındaki sayfalardan seçilir.
+            'yayindakiSayfalar' => $grup === 'sistem'
+                ? array_column(array_map(
+                    static fn (Page $p): array => ['slug' => $p->slug, 'baslik' => $p->baslik],
+                    array_values(array_filter((new PageRepository($this->db))->all(), static fn (Page $p): bool => $p->durum === 'yayin'))
+                ), 'baslik', 'slug')
+                : [],
+            // Ana sayfayı bir modül üstlendiyse "Ana Sayfa" ayarları o an etkisizdir.
+            'anaSayfaSahibi' => $grup === 'anasayfa' ? HomePage::activeOwner() : null,
         ]);
     }
 
@@ -217,6 +229,13 @@ final class SettingsController extends Controller
             $type  = (string) $row['tip'];
             $value = trim($request->string($key));
 
+            /* Düz metin alanlarına HTML etiketi girmez. Çıktıda zaten
+             * kaçışlanıyordu (güvenli), ama ziyaretçi "abc<script>"i
+             * olduğu gibi okuyordu (cowork 5. tur, A1 / A2). */
+            if (in_array($key, self::DUZ_METIN, true)) {
+                $value = trim(strip_tags($value));
+            }
+
             if ($type === 'sifre') {
                 /* PAROLA ALANLARI ekrana asla basılmaz; form her
                  * açıldığında boş gelir. Boş geleni kaydedersek kullanıcı
@@ -266,6 +285,9 @@ final class SettingsController extends Controller
             $values[$key] = $value;
         }
 
+        // Alanlar arası kurallar (SMTP seçiliyse sunucu zorunlu …); alan hatası öncelikli.
+        $errors += $this->crossErrors($grup, $values, $request);
+
         /* Tek bir alan bile geçersizse HİÇBİR ŞEY kaydedilmez: yarım
          * kaydedilmiş bir form, kullanıcının hangi değişikliğin tuttuğunu
          * bilememesi demektir. Girilen değerler forma geri döner
@@ -304,8 +326,103 @@ final class SettingsController extends Controller
 
         Logger::info('Ayarlar güncellendi', ['grup' => $grup, 'degisen' => $degisen], 'app');
 
-        Flash::success($grupAdi . ' ayarları kaydedildi · ' . $degisen . ' değişiklik.');
+        Flash::success($grupAdi . ' ayarları kaydedildi · ' . $degisen . ' değişiklik.'
+            . ($grup === 'eposta' ? ' Sağdaki "Sınama E-postası Gönder" ile ayarı deneyin.' : ''));
+
+        if (mb_strlen((string) ($values['site_aciklama'] ?? ''), 'UTF-8') > 160) {
+            Flash::info('Site açıklaması 160 karakteri aşıyor; arama sonuçlarında kesilerek görünür.');
+        }
+
         Response::redirect(url('panel/ayarlar/' . $grup));
+    }
+
+    /** HTML etiketi temizlenen düz metin ayarları (çıktıları her yerde e() ile basılır). */
+    private const DUZ_METIN = [
+        'site_adi', 'site_marka', 'site_slogan', 'site_aciklama',
+        'iletisim_telefon', 'iletisim_whatsapp', 'iletisim_adres', 'iletisim_saatler', 'iletisim_whatsapp_mesaj',
+        'pwa_ad', 'pwa_kisa_ad', 'pwa_aciklama', 'mail_gonderen_adi',
+    ];
+
+    /** Metin ayarlarının karakter sınırı (en az, en çok); sınır yoksa tipin genel sınırı. */
+    private const UZUNLUK = [
+        'site_adi'           => [2, 60],
+        'site_marka'         => [0, 60],
+        'site_slogan'        => [0, 120],
+        'site_aciklama'      => [0, 300],
+        'iletisim_adres'     => [0, 500],
+        'iletisim_saatler'   => [0, 120],
+        'seo_baslik_sablonu' => [0, 120],
+        'pwa_ad'             => [0, 45],
+        'pwa_kisa_ad'        => [0, 12],
+    ];
+
+    /** Sosyal bağlantı → kabul edilen alan adları (alt alan adları da: tr.linkedin.com). */
+    public const SOSYAL_ALANLAR = [
+        'sosyal_facebook'  => ['facebook.com', 'fb.com'],
+        'sosyal_x'         => ['x.com', 'twitter.com'],
+        'sosyal_instagram' => ['instagram.com'],
+        'sosyal_linkedin'  => ['linkedin.com'],
+        'sosyal_youtube'   => ['youtube.com', 'youtu.be'],
+        'sosyal_pinterest' => ['pinterest.com'],
+        'sosyal_github'    => ['github.com'],
+    ];
+
+    /** Adres, ayarın sosyal ağına mı ait? (https://www.youtube.com/@kanal ✔, https://ornek.com ✘) */
+    public static function sosyalAlanUygun(string $key, string $url): bool
+    {
+        $host = strtolower((string) parse_url($url, PHP_URL_HOST));
+
+        foreach (self::SOSYAL_ALANLAR[$key] ?? [] as $alan) {
+            if ($host === $alan || str_ends_with($host, '.' . $alan)) {
+                return true;
+            }
+        }
+
+        return !isset(self::SOSYAL_ALANLAR[$key]);
+    }
+
+    /** robots.txt ek kuralları bütün siteyi kapatıyor mu ("Disallow: /" tek başına)? */
+    public static function robotsHepsiniKapatir(string $kurallar): bool
+    {
+        return preg_match('#^\s*Disallow:\s*/\s*$#mi', $kurallar) === 1;
+    }
+
+    /**
+     * Grubun alanlar arası kuralları. Tek tek geçerli olan alanlar
+     * birlikte işe yaramaz bir ayar oluşturuyorsa hata (cowork 5. tur).
+     *
+     * @param  array<string,string> $values bu formdan gelen, alan doğrulamasını geçmiş değerler
+     * @return array<string,string> anahtar => Türkçe hata
+     */
+    private function crossErrors(string $grup, array $values, Request $request): array
+    {
+        $deger  = static fn (string $k): string => (string) ($values[$k] ?? Setting::get($k));
+        $errors = [];
+
+        if ($grup === 'eposta' && $deger('mail_surucu') === 'smtp') {
+            $zorunlu = ['mail_host' => 'SMTP sunucusu', 'mail_port' => 'Kapı (port)', 'mail_gonderen' => 'Gönderen adresi'];
+
+            foreach ($zorunlu as $k => $ad) {
+                if (trim($deger($k)) === '') {
+                    $errors[$k] = $ad . ' SMTP seçiliyken zorunludur; boşken hiçbir mektup gitmez.';
+                }
+            }
+        }
+
+        if ($grup === 'iletisim' && trim($deger('iletisim_eposta')) === '' && trim(Setting::get('mail_gonderen')) === '') {
+            $errors['iletisim_eposta'] = 'Yönetici bildirimleri bu adrese gider. Boş bırakılacaksa önce E-posta ayarlarında gönderen adresi tanımlayın.';
+        }
+
+        if ($grup === 'seo' && self::robotsHepsiniKapatir($deger('seo_robots_ek'))
+            && !self::robotsHepsiniKapatir(Setting::get('seo_robots_ek')) && !$request->bool('seo_robots_onay')) {
+            $errors['seo_robots_ek'] = '"Disallow: /" bütün siteyi arama motorlarına kapatır. Eminseniz alttaki onay kutusunu işaretleyip yeniden kaydedin.';
+        }
+
+        if ($grup === 'sistem' && $deger('sistem_kvkk_onay') === '1' && trim($deger('sistem_kvkk_sayfa')) === '') {
+            $errors['sistem_kvkk_sayfa'] = 'Aydınlatma metni onayı açıkken bir sayfa seçin; yoksa formlardaki bağlantı boşa çıkar.';
+        }
+
+        return $errors;
     }
 
     /**
@@ -418,8 +535,51 @@ final class SettingsController extends Controller
         $type  = (string) $row['tip'];
         $label = (string) $row['etiket'];
 
+        /* Karakter sınırı (cowork 5. tur: site adı boş, marka 300,
+         * açıklama 3.000 karakter kaydediliyordu). */
+        if (isset(self::UZUNLUK[$key])) {
+            [$enAz, $enCok] = self::UZUNLUK[$key];
+            $uzunluk = mb_strlen($value, 'UTF-8');
+
+            if ($uzunluk === 0 && $enAz > 0) {
+                return $label . ' boş bırakılamaz.';
+            }
+
+            if ($uzunluk < $enAz) {
+                return sprintf('%s en az %d karakter olmalıdır.', $label, $enAz);
+            }
+
+            if ($uzunluk > $enCok) {
+                return sprintf('%s en fazla %d karakter olabilir (şu an %d).', $label, $enCok, $uzunluk);
+            }
+        }
+
+        if (isset(self::SOSYAL_ALANLAR[$key]) && $value !== '') {
+            if (!self::isHttpUrl($value)) {
+                return $label . ' http:// ya da https:// ile başlayan geçerli bir adres olmalıdır.';
+            }
+
+            return self::sosyalAlanUygun($key, $value)
+                ? null
+                : sprintf('%s alanına yalnız %s adresi girilebilir.', $label, implode(' ya da ', self::SOSYAL_ALANLAR[$key]));
+        }
+
         /* Anahtara özel kurallar — tipten daha sıkıdır. */
         switch ($key) {
+            case 'iletisim_telefon':
+                return preg_match('/^[+0-9 ()-]{0,30}\z/', $value) === 1
+                    ? null
+                    : 'Telefon yalnızca rakam, boşluk, +, - ve parantez içerebilir.';
+
+            case 'seo_baslik_sablonu':
+                if (preg_match('/[\r\n]/', $value)) {
+                    return $label . ' satır sonu içeremez.';
+                }
+
+                return $value === '' || str_contains($value, '%sayfa%')
+                    ? null
+                    : 'Başlık şablonu %sayfa% yer tutucusunu içermeli (örn. %sayfa% · %site%); yoksa her sayfanın başlığı aynı olur.';
+
             case 'sistem_zaman_dilimi':
                 return $value === '' || in_array($value, timezone_identifiers_list(), true)
                     ? null
@@ -465,9 +625,15 @@ final class SettingsController extends Controller
                     : 'Görsel boş, "vitrin", upload/ altındaki bir dosya adı ya da https:// adresi olmalıdır.';
 
             case 'sistem_kvkk_sayfa':
-                return preg_match('/^[a-z0-9-]{0,190}\z/', $value) === 1
+                /* Listeden seçilir; yayında olmayan ya da var olmayan adres
+                 * kayıt ve iletişim formlarındaki bağlantıyı 404'e düşürürdü. */
+                if ($value === '') {
+                    return null;
+                }
+
+                return preg_match('/^[a-z0-9-]{1,190}\z/', $value) === 1 && (new PageRepository($this->db))->findPublished($value) !== null
                     ? null
-                    : 'Sayfanın adresini (slug) yazın, örn. gizlilik-ve-kvkk.';
+                    : 'Yayındaki sayfalardan birini seçin; "' . $value . '" adresinde yayında bir sayfa yok.';
 
             case 'sistem_ip_saklama':
                 return ctype_digit($value) && (int) $value <= 3650
