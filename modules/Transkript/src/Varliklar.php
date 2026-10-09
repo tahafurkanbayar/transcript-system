@@ -36,10 +36,11 @@ final class Varliklar
         'transkript.css' => ['css/transkript.css', 'text/css; charset=utf-8'],
         'anasayfa.js'    => ['js/anasayfa.js', 'application/javascript; charset=utf-8'],
         'anasayfa.css'   => ['css/anasayfa.css', 'text/css; charset=utf-8'],
+        'paylasim.png'   => ['img/paylasim.png', 'image/png'],
     ];
 
     /** Girişsiz sunulanlar (ana sayfa): transkript/varlik/{dosya}. Diğerleri panel rotasından. */
-    private const HERKESE_ACIK = ['anasayfa.js', 'anasayfa.css'];
+    private const HERKESE_ACIK = ['anasayfa.js', 'anasayfa.css', 'paylasim.png'];
 
     private const KLASOR = __DIR__ . '/../assets/';
 

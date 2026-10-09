@@ -31,15 +31,23 @@ use Modules\Transkript\Varliklar;
 
 final class AnasayfaController extends Controller
 {
+    public const BASLIK = 'YouTube videolarını Türkçe rapora dönüştürün';
+
     /** Ana sayfa (HomePage çizicisinden). */
     public function goster(Request $request): void
     {
         $kullanici = Auth::user();
         $enUzunDk  = max(0, (int) Ayarlar::get('analiz.en_uzun_dk', 180));
-        $sss       = self::sss($enUzunDk, max(0, (int) Ayarlar::get('analiz.gunluk_sinir', 10)));
+        $sss       = self::sss(
+            $enUzunDk,
+            max(0, (int) Ayarlar::get('analiz.gunluk_sinir', 10)),
+            in_array('tr', (array) Ayarlar::get('transcript.tercih_diller', ['tr']), true),
+        );
 
         $this->view('Transkript::anasayfa', [
-            'title'          => '',
+            // Sekme başlığı: "<bu> · <site adı>" (Ayarlar → SEO şablonu); 60 karakteri aşmasın.
+            'title'          => self::BASLIK,
+            'paylasimGorseli' => Varliklar::adres('paylasim.png'),
             'girisli'        => $kullanici !== null,
             'analizEdebilir' => $kullanici?->can('transkript.analyze') ?? false,
             'kayitAcik'      => Registration::isOpen(),
@@ -98,7 +106,7 @@ final class AnasayfaController extends Controller
      *
      * @return list<array{soru:string,cevap:string}>
      */
-    public static function sss(int $enUzunDk, int $gunlukSinir): array
+    public static function sss(int $enUzunDk, int $gunlukSinir, bool $turkceAltyazi = true): array
     {
         $sinir = [];
 
@@ -118,7 +126,10 @@ final class AnasayfaController extends Controller
             ],
             [
                 'soru'  => 'Rapor hangi dilde hazırlanır?',
-                'cevap' => 'Rapor her zaman Türkçedir. Video İngilizce ya da başka bir dilde olabilir; transcript ise videonun kendi dilinde kalır, böylece her maddeyi asıl cümlesiyle karşılaştırabilirsiniz.',
+                // Altyazı tercihi (Transkript ayarları): Türkçe altyazı varsa o, yoksa videonun dili.
+                'cevap' => $turkceAltyazi
+                    ? 'Rapor her zaman Türkçedir; video İngilizce ya da başka bir dilde olabilir. Videoda elle hazırlanmış Türkçe altyazı varsa transcript de Türkçe olur; yoksa videonun kendi dilinde kalır, böylece her maddeyi asıl cümlesiyle karşılaştırabilirsiniz.'
+                    : 'Rapor her zaman Türkçedir. Video İngilizce ya da başka bir dilde olabilir; transcript ise videonun kendi dilinde kalır, böylece her maddeyi asıl cümlesiyle karşılaştırabilirsiniz.',
             ],
             [
                 'soru'  => 'Analiz ne kadar sürer?',

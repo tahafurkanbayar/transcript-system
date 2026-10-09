@@ -634,17 +634,13 @@
 }
 
 .tka-yuzen .cy-icon { color: var(--cy-brand-text); }
-/* Yerleri içerik örtülmesin diye seçildi: 1 küçük resmin üstü, 2 pencerenin
- * alt kenarı (konu şeridinin sağı), 3 pencere çubuğunun boş ortası. */
-.tka-yuzen--1 { top: 27%; left: -9%; }
+/* Yerleri içerik örtülmesin diye seçildi: 1 ve 2 pencerenin alt kenarı
+ * (konu şeridinin iki ucu), 3 pencere çubuğunun boş ortası. */
+.tka-yuzen--1 { bottom: -20px; left: 6%; }
 .tka-yuzen--2 { right: 7%; bottom: -20px; animation-delay: -2s; }
 .tka-yuzen--2 .cy-icon { color: var(--cy-success); }
 .tka-yuzen--3 { top: -16px; right: 24%; animation-delay: -4s; }
 .tka-yuzen--3 .cy-icon { color: #f59e0b; }
-
-@media (max-width: 1199.98px) {
-    .tka-yuzen--1 { left: -3%; }
-}
 
 @media (max-width: 991.98px) {
     .tka-yuzen { display: none; }
@@ -761,6 +757,8 @@
     display: grid;
     grid-template-columns: 68px 1fr;
     gap: .2rem 1.1rem;
+    /* Kartlar en uzun karta göre uzar; satırlar esnemesin, başlıklar aynı çizgide kalsın. */
+    align-content: start;
 }
 
 .tka-adim__simge {
@@ -1318,6 +1316,21 @@
 }
 
 .tka-mini-arama__kutu + .tka-mini-arama__sonuc::before { content: "→"; margin-right: .5rem; color: var(--cy-text-muted); }
+
+.tka-kart__baglanti {
+    display: inline-flex;
+    align-items: center;
+    gap: .3rem;
+    margin-top: 1rem;
+    color: var(--cy-brand-text);
+    font-size: .92rem;
+    font-weight: 700;
+    text-decoration: none;
+}
+
+.tka-kart__baglanti:hover { color: var(--cy-brand-text-strong); text-decoration: underline; }
+.tka-kart__baglanti:hover .cy-icon { transform: translateX(3px); }
+.tka-kart__baglanti .cy-icon { transition: transform .25s var(--tka-yumusak); }
 
 .tka-kod {
     display: block;

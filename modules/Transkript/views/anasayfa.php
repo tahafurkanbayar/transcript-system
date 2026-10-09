@@ -108,9 +108,10 @@ $kimler = [
                     <?= icon('chevron', 'cy-icon cy-icon--sm') ?>
                 </a>
 
-                <h1 class="tka-hero__baslik" id="tka-baslik">
-                    <span class="visually-hidden">Uzun videoları</span>
-                    <span class="tka-donen" aria-hidden="true"
+                <?php /* Metin kaynakta BİR kez geçer (arama motoru çift görmesin);
+                         ekran okuyucu dönen kelimeyi değil aria-label'ı okur. */ ?>
+                <h1 class="tka-hero__baslik" id="tka-baslik" aria-label="Uzun videoları dakikalar içinde okuyun.">
+                    <span class="tka-donen"
                           data-tka-donen="<?= e(json_encode(['Uzun videoları', 'Konferansları', 'Ders kayıtlarını', 'Podcast\'leri', 'Röportajları', 'Panelleri'], JSON_UNESCAPED_UNICODE)) ?>">Uzun videoları</span>
                     <span class="tka-vurgu">dakikalar içinde</span> okuyun.
                 </h1>
@@ -424,6 +425,10 @@ $kimler = [
                     <h3>Geliştiriciler için API</h3>
                     <p>Anahtarla analiz başlatın; raporu ve transcript'i JSON olarak alın, kendi uygulamanıza bağlayın.</p>
                     <code class="tka-kod" aria-hidden="true">GET /api/v1/transkript/kaynaklar/42/ozet</code>
+                    <?php /* Anahtarlar Hesabım → API Anahtarları'nda (profile.api). */ ?>
+                    <a class="tka-kart__baglanti" href="<?= e(url($girisli ? 'panel/hesabim' : 'giris')) ?>">
+                        <?= $girisli ? 'API anahtarı alın' : 'Giriş yapıp anahtar alın' ?> <?= icon('chevron', 'cy-icon cy-icon--sm') ?>
+                    </a>
                 </article>
             </div>
         </div>

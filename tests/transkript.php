@@ -2061,11 +2061,41 @@ dogrula('Ana sayfa betiği metni yalnız textContent ile yazar (innerHTML / eval
 dogrula('Hareketi azalt: betik döngü başlatmaz, CSS animasyonları kapatır',
     str_contains($anaJsKod, "prefers-reduced-motion: reduce") && str_contains((string) file_get_contents(CY_BASE . '/modules/Transkript/assets/css/anasayfa.css'), '@media (prefers-reduced-motion: reduce)'));
 
-dogrula('Girişsiz sunulan yalnız ana sayfanın iki dosyası; panel betiği panel rotasında',
+dogrula('Girişsiz sunulan yalnız ana sayfanın dosyaları (CSS, JS); panel betiği panel rotasında',
     Varliklar::herkeseAcik('anasayfa.css') && Varliklar::herkeseAcik('anasayfa.js') && !Varliklar::herkeseAcik('transkript.js')
     && !Varliklar::herkeseAcik('transkript.css') && !Varliklar::herkeseAcik('../config.php')
     && str_contains(Varliklar::adres('anasayfa.js'), 'transkript/varlik/anasayfa.js') && !str_contains(Varliklar::adres('anasayfa.js'), 'panel/')
     && str_contains(Varliklar::adres('transkript.js'), 'panel/transkript/varlik/transkript.js'));
+
+$dilCevabi = static fn (bool $tr): string => (string) (array_values(array_filter(AnasayfaController::sss(180, 10, $tr),
+    static fn (array $s): bool => str_contains($s['soru'], 'dilde')))[0]['cevap'] ?? '');
+dogrula('SSS dil cevabı altyazı ayarına göre: Türkçe tercihinde "Türkçe altyazı varsa", orijinalde "kendi dilinde kalır"',
+    str_contains($dilCevabi(true), 'Türkçe altyazı varsa transcript de Türkçe') && !str_contains($dilCevabi(false), 'Türkçe altyazı varsa')
+    && str_contains($dilCevabi(false), 'videonun kendi dilinde kalır'));
+dogrula('Sekme başlığı "… · Transkript" 60 karakteri aşmıyor', mb_strlen(AnasayfaController::BASLIK . ' · Transkript') <= 60);
+
+$anaCiz = static fn (bool $girisli, bool $analiz, bool $kayit): string => App\Core\View::capture('Transkript::anasayfa', [
+    'girisli' => $girisli, 'analizEdebilir' => $analiz, 'kayitAcik' => $kayit,
+    'sure' => ['sayi' => 3, 'birim' => 'saat'], 'sss' => AnasayfaController::sss(180, 10),
+]);
+$kapali = $anaCiz(false, false, false);
+$acik   = $anaCiz(false, false, true);
+$editor = $anaCiz(true, true, true);
+$uyeAna = $anaCiz(true, false, true);
+preg_match('#<h1[^>]*>(.*?)</h1>#s', $acik, $h1);
+dogrula('Kayıt kapalıyken "Hesap oluşturun" yok, "Giriş yapın" var; açıkken ikisi de',
+    !str_contains($kapali, 'Hesap oluşturun') && !preg_match('#href="[^"]*/kayit"#', $kapali) && str_contains($kapali, 'Giriş yapın')
+    && str_contains($acik, 'Hesap oluşturun') && preg_match('#href="[^"]*/kayit"#', $acik) === 1);
+dogrula('Analiz yetkisi olana iki form (karşılama + son bant); üyeye "Raporlara git", form yok',
+    substr_count($editor, 'class="tka-form"') === 2 && !str_contains($uyeAna, 'class="tka-form"') && str_contains($uyeAna, 'Raporlara git'));
+dogrula('Başlık metni kaynakta bir kez (arama motoru çift görmez); ekran okuyucu için aria-label',
+    substr_count(strip_tags($h1[1] ?? ''), 'Uzun videoları') === 1 && str_contains($acik, 'aria-label="Uzun videoları dakikalar içinde okuyun."')
+    && !str_contains($h1[1] ?? '', 'visually-hidden'));
+dogrula('API kartından anahtar sayfasına yol: girişliye Hesabım, misafire giriş',
+    str_contains($editor, 'API anahtarı alın') && preg_match('#href="[^"]*/panel/hesabim"#', $editor) === 1 && str_contains($acik, 'Giriş yapıp anahtar alın'));
+dogrula('Paylaşım görseli 1200×630 PNG, girişsiz sunulur',
+    Varliklar::herkeseAcik('paylasim.png') && Varliklar::tur('paylasim.png') === 'image/png'
+    && (static function (): bool { $b = @getimagesize((string) Varliklar::yol('paylasim.png')); return is_array($b) && $b[0] === 1200 && $b[1] === 630; })());
 
 $ayarYaz(['transkript_ana_sayfa' => 'genel']);
 $genel = Ayarlar::get('anasayfa.tanitim');
