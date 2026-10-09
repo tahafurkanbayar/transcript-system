@@ -54,6 +54,7 @@ use Modules\Transkript\Ai\ClaudeProvider;
 use Modules\Transkript\Ai\GeminiProvider;
 use Modules\Transkript\Ai\HttpProvider;
 use Modules\Transkript\Ai\OpenAiCompatibleProvider;
+use Modules\Transkript\Ai\DinlenmeDeposu;
 use Modules\Transkript\Ai\YedekliSaglayici;
 use Modules\Transkript\Http\HttpIstemci;
 use Modules\Transkript\Http\HttpYanit;
@@ -163,6 +164,11 @@ $bellek->exec("INSERT INTO ayarlar VALUES ('aktif_moduller', '[\"Transkript\"]')
 Setting::load($bellek);
 Modules::forget();
 Modules::boot();
+
+// Testlerin sağlayıcı dinlenmeleri gerçek kayda (storage/files) değil geçici dosyaya yazılır.
+$dinlenmeDosyasi = sys_get_temp_dir() . '/tk-dinlenme-test-' . getmypid() . '.json';
+DinlenmeDeposu::kullan($dinlenmeDosyasi);
+register_shutdown_function(static function () use ($dinlenmeDosyasi): void { @unlink($dinlenmeDosyasi); });
 
 /* ---------------------------------------------------------------- */
 echo "\nTranskriptPolicy (kayıt sahibine bağlı kurallar)\n";
@@ -2083,6 +2089,24 @@ dogrula('Günlük kota sıfırlanması: Pasifik gece yarısı + 1 dk (yaz saati 
     YedekliSaglayici::kotaSifirlanmasinaKadar($utc('2026-10-09 20:00')) === 11 * 3600 + 60
     && YedekliSaglayici::kotaSifirlanmasinaKadar($utc('2026-12-01 07:30')) === 30 * 60 + 60);
 
+/* Cowork 6. tur K2: Türkiye 21:56'da günlük kota → bitiş ertesi gün 10:01 (TR, yaz
+ * saati); kayıt kalıcı dosyada (önbellek değil); "Dinlenmeleri sıfırla" günlük kotayı
+ * kutu işaretlenmedikçe korur. */
+$trSaat = static fn (int $t): string => (new DateTimeImmutable('@' . $t))->setTimezone(new DateTimeZone('Europe/Istanbul'))->format('Y-m-d H:i');
+$kotaAni = $utc('2026-10-09 18:56');   // 21:56 TR
+YedekliSaglayici::dinlendir('test-a', 'kota_doldu', $kotaAni);
+YedekliSaglayici::dinlendir('test-b', 'sunucu');
+$dosyada = (array) json_decode((string) @file_get_contents(DinlenmeDeposu::yol()), true);
+$korunan = YedekliSaglayici::hepsiniSifirla(['test-a', 'test-b']);
+$kotaSonra = YedekliSaglayici::dinlenmeKaydi('test-a');
+$hepsi = YedekliSaglayici::hepsiniSifirla(['test-a', 'test-b'], true);
+dogrula('K2: günlük kota (21:56 TR) ertesi gün 10:01\'e kadar; kayıt kalıcı dosyada; sıfırlama günlük kotayı kutu işaretlenmedikçe korur',
+    $trSaat((int) ($dosyada['test-a']['bitis'] ?? 0)) === '2026-10-10 10:01' && ($dosyada['test-a']['kod'] ?? '') === 'kota_doldu'
+    && isset($dosyada['test-b']) && !str_contains(DinlenmeDeposu::yol(), 'storage' . DIRECTORY_SEPARATOR . 'cache')
+    && $korunan === ['test-b'] && ($kotaSonra['kod'] ?? '') === 'kota_doldu' && YedekliSaglayici::dinlenmeKalan('test-b') === 0
+    && $hepsi === ['test-a', 'test-b'] && YedekliSaglayici::dinlenmeKaydi('test-a') === null);
+$dinlenmeyiSil();
+
 YedekliSaglayici::dinlendir('test-a', 'kota_doldu');
 YedekliSaglayici::dinlendir('test-b', 'model_bulunamadi', null, null, 'm-b');
 $ozet = YedekliSaglayici::ozet([
@@ -2459,7 +2483,8 @@ $ayarSayfasi = App\Core\View::capture('Transkript::ayarlar', [
 ]);
 dogrula('Ayarlar: sağlayıcı tablosu, "Dinlenmeleri sıfırla" (CSRF\'li), son 50 çağrı günlüğü; anahtarsız "Atlandı", hata Türkçe',
     str_contains($ayarSayfasi, 'Yapay zekâ sağlayıcıları') && str_contains($ayarSayfasi, 'Dinlenmeleri sıfırla')
-    && preg_match('#action="[^"]*ayarlar/dinlenme-sifirla">\s*<input type="hidden" name="csrf_token"#', $ayarSayfasi) === 1
+    && preg_match('#action="[^"]*ayarlar/dinlenme-sifirla"[^>]*>\s*<input type="hidden" name="csrf_token"#', $ayarSayfasi) === 1
+    && str_contains($ayarSayfasi, 'name="kota_dahil"') && str_contains($ayarSayfasi, 'kutuyu işaretlemediyseniz o sıfırlanmaz')
     && str_contains($ayarSayfasi, 'Atlandı (anahtar yok)') && str_contains($ayarSayfasi, 'Son 50 yapay zekâ çağrısı')
     && str_contains($ayarSayfasi, 'model yok (404)') && str_contains($ayarSayfasi, 'açılış ') && str_contains($ayarSayfasi, '2.502')
     && preg_match('#href="[^"]*/panel/transkript/27">\#28</a>#', $ayarSayfasi) === 1

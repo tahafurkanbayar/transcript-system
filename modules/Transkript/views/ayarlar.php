@@ -173,21 +173,29 @@ $sayi     = static fn (int $n): string => number_format($n, 0, ',', '.');
         </div>
         <?php
         /* Günlük kotası dolan sağlayıcıyı sıfırlamak işe yaramaz: ilk analizde
-         * aynı hatayı alıp yeniden dinlenir (cowork 5. tur, A11). Onayda söylenir. */
+         * aynı hatayı alıp yeniden dinlenir ve o ana dek ekran yanlışlıkla
+         * "Hazır" der (cowork 5. tur A11, 6. tur K2). Varsayılan olarak
+         * korunur; yalnız kutu işaretlenirse sıfırlanır (ücretli katman). */
         $kotaDolu = array_values(array_filter($durum['zincir'], static fn (array $h): bool => ($h['kod'] ?? '') === 'kota_doldu'));
         $sifirlaOnay = 'Dinlenen ve devre dışı sağlayıcılar hemen yeniden denenecek. Anahtarı ya da modeli düzelttiyseniz kullanın.';
 
         if ($kotaDolu !== []) {
-            $sifirlaOnay = implode(' ', array_map(
+            $sifirlaOnay .= ' ' . implode(' ', array_map(
                 static fn (array $h): string => $h['etiket'] . ' günlük kotası ' . $h['acilis'] . ' civarında açılır;',
                 $kotaDolu
-            )) . ' şimdi sıfırlamak ilk analizde aynı hatayı ve yeni bir dinlenmeyi getirir. Yine de sıfırlansın mı?';
+            )) . ' kutuyu işaretlemediyseniz o sıfırlanmaz.';
         }
         ?>
-        <form method="post" action="<?= e(url('panel/transkript/ayarlar/dinlenme-sifirla')) ?>">
+        <form method="post" action="<?= e(url('panel/transkript/ayarlar/dinlenme-sifirla')) ?>" class="tk-sifirla">
             <?= csrf_field() ?>
+            <?php if ($kotaDolu !== []): ?>
+                <label class="form-check small mb-0" title="Anahtara ücretli katman eklediyseniz">
+                    <input class="form-check-input" type="checkbox" name="kota_dahil" value="1">
+                    <span class="form-check-label">Günlük kotası dolanları da sıfırla</span>
+                </label>
+            <?php endif; ?>
             <button type="submit" class="btn cy-btn cy-btn--ghost cy-btn--sm js-tk-form-onay" title="Anahtarı ya da modeli düzelttiyseniz beklemeden yeniden denensin"
-                    data-onay="<?= e($sifirlaOnay) ?>" data-onay-baslik="Dinlenmeleri sıfırla" data-onay-dugme="Evet, sıfırla"<?= $kotaDolu !== [] ? ' data-onay-tehlike="1"' : '' ?>>
+                    data-onay="<?= e($sifirlaOnay) ?>" data-onay-baslik="Dinlenmeleri sıfırla" data-onay-dugme="Evet, sıfırla">
                 <?= icon('refresh', 'cy-icon cy-icon--sm') ?> Dinlenmeleri sıfırla
             </button>
         </form>

@@ -110,10 +110,15 @@ final class AyarController extends Controller
      */
     public function dinlenmeSifirla(Request $request): void
     {
-        YedekliSaglayici::hepsiniSifirla(Ai::zincir());
+        $zincir     = Ai::zincir();
+        $sifirlanan = YedekliSaglayici::hepsiniSifirla($zincir, $request->bool('kota_dahil'));
+        $korunan    = array_values(array_diff($zincir, $sifirlanan));
 
-        Logger::info('Yapay zekâ dinlenmeleri sıfırlandı', ['kullanici' => Auth::id()], 'transkript');
-        Flash::success('Dinlenmeler sıfırlandı; bütün sağlayıcılar bir sonraki çağrıda yeniden denenecek.');
+        Logger::info('Yapay zekâ dinlenmeleri sıfırlandı', ['kullanici' => Auth::id(), 'korunan' => $korunan], 'transkript');
+        Flash::success($korunan === []
+            ? 'Dinlenmeler sıfırlandı; bütün sağlayıcılar bir sonraki çağrıda yeniden denenecek.'
+            : 'Dinlenmeler sıfırlandı. Günlük kotası dolan ' . implode(', ', array_map([Ai::class, 'etiket'], $korunan))
+                . ' açılış saatine kadar dinlenmeye devam ediyor (sıfırlamak için kutuyu işaretleyin).');
         Response::redirect(url('panel/transkript/ayarlar'));
     }
 

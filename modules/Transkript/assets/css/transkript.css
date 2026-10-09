@@ -215,3 +215,6 @@ a.tk-zaman.is-oynuyor { background: var(--cy-brand); color: #fff; }
 .tk-kim__baslatan small,
 .tk-kim__kutuphane { color: var(--cy-text-muted); }
 .tk-kim__kutuphane { display: block; font-size: .8rem; }
+
+/* Ayarlar: "Dinlenmeleri sıfırla" + "günlük kotası dolanları da" kutusu */
+.tk-sifirla { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .75rem; justify-content: flex-end; }

@@ -11,8 +11,9 @@
  *  bir Provider görür. Anahtarı olmayan sağlayıcı zincire hiç girmez
  *  (Pipeline::saglayiciUret).
  *
- *  DİNLENME (Cache, işçiler arasında ortak): hata veren sağlayıcı bir
- *  süre denenmez. Süre hatanın türüne göre:
+ *  DİNLENME (DinlenmeDeposu: kalıcı dosya, işçiler arasında ortak; önbellek
+ *  temizlenince kaybolmaz): hata veren sağlayıcı bir süre denenmez. Süre
+ *  hatanın türüne göre:
  *
  *      kota_doldu        günlük kota: bir sonraki sıfırlamaya kadar
  *                        (Pasifik gece yarısı; ai.yedek.kota_saat_dilimi)
@@ -47,7 +48,6 @@ declare(strict_types=1);
 
 namespace Modules\Transkript\Ai;
 
-use App\Core\Cache\Cache;
 use Closure;
 use DateTimeImmutable;
 use DateTimeZone;
@@ -56,8 +56,6 @@ use Throwable;
 
 final class YedekliSaglayici implements Provider
 {
-    private const DINLENME_ONEKI = 'transkript.ai_dinlenme.';
-
     /** Hata kodu → dinlenme (sn). Listede olmayan kod dinletmez (isteğe özgü: 400, 413). */
     public const DINLENME_SN = [
         'kota_doldu'       => 3600,     // yalnız sıfırlama saati hesaplanamazsa
@@ -158,7 +156,7 @@ final class YedekliSaglayici implements Provider
     }
 
     /* =================================================================
-     *  DİNLENME (Cache; bütün işçiler aynı bilgiyi görür)
+     *  DİNLENME (DinlenmeDeposu: kalıcı dosya; bütün işçiler aynı bilgiyi görür)
      * ============================================================== */
 
     /**
@@ -168,7 +166,7 @@ final class YedekliSaglayici implements Provider
      */
     public static function dinlenmeKaydi(string $ad): ?array
     {
-        $kayit = Cache::get(self::DINLENME_ONEKI . $ad);
+        $kayit = DinlenmeDeposu::al($ad);
 
         return match (true) {
             is_array($kayit) && is_int($kayit['bitis'] ?? null) => [
@@ -217,7 +215,7 @@ final class YedekliSaglayici implements Provider
         };
 
         if ($sure > 0) {
-            Cache::put(self::DINLENME_ONEKI . $ad, ['bitis' => $simdi + $sure, 'kod' => $kod, 'model' => $model, 'zaman' => $simdi], $sure);
+            DinlenmeDeposu::yaz($ad, ['bitis' => $simdi + $sure, 'kod' => $kod, 'model' => $model, 'zaman' => $simdi, 'sakla' => time() + $sure]);
         }
 
         return $sure;
@@ -225,7 +223,7 @@ final class YedekliSaglayici implements Provider
 
     public static function dinlenmeyiBitir(string $ad): void
     {
-        Cache::forget(self::DINLENME_ONEKI . $ad);
+        DinlenmeDeposu::sil($ad);
     }
 
     public static function dinlenmeSuresi(string $kod): int
@@ -397,11 +395,31 @@ final class YedekliSaglayici implements Provider
             . date('H:i', $zaman);
     }
 
-    /** Yöneticinin "Dinlenmeleri sıfırla" düğmesi: zincirdeki hepsi yeniden denenir. */
-    public static function hepsiniSifirla(array $adlar): void
+    /**
+     * Yöneticinin "Dinlenmeleri sıfırla" düğmesi: zincirdekiler yeniden
+     * denenir. GÜNLÜK KOTASI dolanlar ($kotaDahil = false iken) korunur:
+     * sıfırlamak kotayı açmaz, her analiz o sağlayıcıyı boşuna dener ve
+     * ekran yanlışlıkla "Hazır" der (cowork 6. tur K2). Anahtara ücretli
+     * katman eklendiyse yönetici kutuyu işaretleyip onları da sıfırlar.
+     *
+     * @param  list<string> $adlar
+     * @return list<string> sıfırlananlar
+     */
+    public static function hepsiniSifirla(array $adlar, bool $kotaDahil = false): array
     {
+        $sifirlanan = [];
+
         foreach ($adlar as $ad) {
+            $kayit = self::dinlenmeKaydi((string) $ad);
+
+            if (!$kotaDahil && $kayit !== null && $kayit['kod'] === 'kota_doldu' && self::dinlenmeKalan((string) $ad) > 0) {
+                continue;
+            }
+
             self::dinlenmeyiBitir((string) $ad);
+            $sifirlanan[] = (string) $ad;
         }
+
+        return $sifirlanan;
     }
 }
