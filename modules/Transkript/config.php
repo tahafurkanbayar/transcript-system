@@ -134,14 +134,26 @@ return [
     ],
 
     /* -----------------------------------------------------------------
-     *  ANALİZ BAŞLATMA (Services\AnalizBaslatici)
+     *  ANALİZ BAŞLATMA VE KOTALAR (Services\AnalizBaslatici)
      * -----------------------------------------------------------------
-     *  Yeni AI işi açan istek kullanıcı başına saatte bu kadarla
-     *  sınırlıdır (panel ve API ortak sayaç). Önbellekten dönen ya da
-     *  sürmekte olan analize düşen istek sayılmaz. 0 → sınır yok.
+     *  Yalnız YENİ AI işi açan istek sayılır; önbellekten dönen ya da
+     *  sürmekte olan analize düşen istek sayılmaz (ikinci AI çağrısı yok).
+     *  Aşılınca 429 + Retry-After ve Türkçe mesaj. 0 → sınır yok.
+     *
+     *  saatlik_sinir        kullanıcı başına saatte (panel ve API ortak)
+     *  gunluk_sinir         kullanıcı başına günde (bugün başlattığı analiz)
+     *  yonetici_muaf        transkript.admin kişisel sınırlara takılmaz
+     *  gunluk_token_tavani  bütün kullanıcılar, bugün harcanan token
+     *  gunluk_maliyet_tavani bütün kullanıcılar, bugünkü tahmini maliyet
+     *                       (USD, ücretli katman fiyatıyla). Genel tavan
+     *                       bütçedir: yöneticiye de uygulanır.
      * -------------------------------------------------------------- */
     'analiz' => [
-        'saatlik_sinir' => 20,
+        'saatlik_sinir'         => 20,
+        'gunluk_sinir'          => 10,
+        'yonetici_muaf'         => true,
+        'gunluk_token_tavani'   => 0,
+        'gunluk_maliyet_tavani' => 5.0,
 
         // Bundan uzun video analiz edilmez (dakika; 0 = sınırsız). Süre
         // biliniyorsa istekte, bilinmiyorsa video bilgisi ya da transcript
