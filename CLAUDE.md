@@ -10,7 +10,7 @@ iddialar, fikirler ve kullanıcıya özel bölüm. Türkçe önceliklidir.
 - **Onaylı plan:** [`docs/TEKNIK_RAPOR.md`](docs/TEKNIK_RAPOR.md). Tablo, sınıf, rota ve
   yetki adları oradan gelir. Plan ile gerçek kod çelişirse dur ve sor; planı
   sessizce değiştirme.
-- **Starter kılavuzu:** `SISTEM.md` (mimari), `README.md` (komutlar),
+- **Starter kılavuzu:** `SISTEM.md` (mimari), `docs/STARTER-README.md` (komutlar),
   `modules/Ornek/` (kopyalanacak çalışan modül örneği, `OrnekPolicy` dahil).
 - **Adım promptları:** [`docs/ADIM_PROMPTLARI.md`](docs/ADIM_PROMPTLARI.md).
 
