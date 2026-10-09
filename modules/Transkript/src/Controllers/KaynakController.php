@@ -128,6 +128,11 @@ final class KaynakController extends Controller
             Response::success(count($satirlar) . ' bölüm', ['satirlar' => $satirlar, 'kelimeler' => [], 'arama' => false]);
         }
 
+        // Tek harf aranmaz; "0 sonuç" yerine nedeni söylenir (JS zaten istemez).
+        if (mb_strlen(trim($q)) < 2) {
+            Response::success('En az 2 harf yazın.', ['satirlar' => [], 'kelimeler' => [], 'arama' => true]);
+        }
+
         $satirlar = array_map(
             static fn (array $s): array => self::satir((int) $s['baslangic_ms'], (string) $s['metin']),
             (new Search($this->db))->segmentler((int) $metin['id'], $q, 100, Search::SIRA_ZAMAN)
@@ -157,7 +162,7 @@ final class KaynakController extends Controller
                 throw HttpException::notFound();
             }
 
-            $icerik = DisaAktarim::markdown($kaynak, $veri['rapor'], $veri['analiz']);
+            $icerik = DisaAktarim::markdown($kaynak, $veri['rapor'], $veri['analiz'], $veri['transcript']);
         } else {
             $segmentler = new SegmentRepository($this->db);
             $metin      = $segmentler->sonMetin((int) $kaynak['id']) ?? throw HttpException::notFound();

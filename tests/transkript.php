@@ -1382,9 +1382,9 @@ $redOrnek = [
     'user_relevance'   => ['score' => 99],
 ];
 $rs = $dv->birlestirme($redOrnek, 1800000, $tumBaslar)['sonuc'];
-dogrula('birlestirme: konular başlangıca göre sıralanır, ters aralığın sonu boşalır',
-    array_column($rs['topics'], 'title') === ['Birinci', 'İkinci', 'Ters aralık'] && $rs['topics'][2]['end'] === null
-    && $rs['topics'][0]['end'] === '00:10:00', json_encode($rs['topics'], JSON_UNESCAPED_UNICODE));
+dogrula('birlestirme: konular sıralanır, bitiş bir sonrakinin başlangıcı, son konu video sonunda biter (ters aralık düzelir)',
+    array_column($rs['topics'], 'title') === ['Birinci', 'İkinci', 'Ters aralık']
+    && array_column($rs['topics'], 'end') === ['00:10:00', '00:20:00', '00:30:00'], json_encode($rs['topics'], JSON_UNESCAPED_UNICODE));
 dogrula('birlestirme: paragraflar korunur, öneriler {text} olur, user_relevance her zaman null (MVP)',
     $rs['detailed_summary'] === "Birinci paragraf.\n\nİkinci paragraf."
     && $rs['recommendations'] === [['text' => 'Düz metin öneri'], ['text' => 'Nesne öneri']] && $rs['user_relevance'] === null);
@@ -1603,7 +1603,7 @@ dogrula('Reduce: doğrulanmış rapor, düşünme bütçesi reduce ayarından',
     $r7['sonuc']['summary'] === 'Kısa özet.' && $r7['sonuc']['recommendations'] === [['text' => 'Öneri']]
     && $ai->istekler[0]['ek'] === ['thinkingConfig' => ['thinkingBudget' => 4096]] && $ai->istekler[0]['sema'] === Pipeline::BIRLESTIRME_SEMASI);
 $redOgeler = Pipeline::ogeler($r7['sonuc']);
-dogrula('Doğrulanmış rapor maddelere çevrilir', array_column($redOgeler, 'tur') === ['konu'] && $redOgeler[0]['bitis_ms'] === 540000);
+dogrula('Doğrulanmış rapor maddelere çevrilir (tek konu videonun sonuna kadar sürer)', array_column($redOgeler, 'tur') === ['konu'] && $redOgeler[0]['bitis_ms'] === 1080000);
 
 /* ---------------------------------------------------------------- */
 echo "\nEkranlar (RaporVerisi, Varliklar, liste sorgusu; veritabanı sahte)\n";
@@ -1658,11 +1658,33 @@ $raporOrnek  = [
     'ideas'            => [], 'timestamps' => [['at' => '00:00:00', 'label' => 'Başlangıç']],
     'recommendations'  => [['text' => 'Öneri']],
 ];
-$md = DisaAktarim::markdown($kaynakOrnek, $raporOrnek, ['model' => 'gemini-2.5-flash', 'bitti_at' => '2026-10-09 09:00:00']);
+$md = DisaAktarim::markdown($kaynakOrnek, $raporOrnek, ['model' => 'gemini-2.5-flash', 'bitti_at' => '2026-10-09 09:00:00', 'prompt_surumu' => 'v2'], ['dil' => 'en', 'otomatik_mi' => true]);
 dogrula('Markdown: başlık, meta, bölümler, zaman damgası youtu.be bağlantısı',
     str_starts_with($md, "# Do schools kill creativity? \\| TED\n") && str_contains($md, 'Kanal: TED · Süre: 19:19 · Video: <https://youtu.be/iG9CE55wbtY>')
     && str_contains($md, '- **Kritik:** Önemli \\*nokta\\* [00:02:05](https://youtu.be/iG9CE55wbtY?t=125)')
-    && str_contains($md, "### Dil\n") && str_contains($md, '_(görüş)_') && str_contains($md, '_Transkript ile üretildi · gemini-2.5-flash · 09.10.2026 09:00.'));
+    && str_contains($md, "### Dil\n") && str_contains($md, '_(görüş)_') && str_contains($md, '_Transkript ile üretildi. İddialar doğrulanmamıştır._'));
+dogrula('Markdown künyesi: tarih, model, istem sürümü, transcript dili; bölüm başlığı "Kavramlar ve teknik bilgiler"',
+    str_contains($md, '_Hazırlandı: 09.10.2026 09:00 · Model: gemini-2.5-flash · İstem: v2 · Transcript: İngilizce (otomatik altyazı)_')
+    && str_contains($md, '## Kavramlar ve teknik bilgiler') && !str_contains($md, '## Teknik bilgiler'));
+$konuTest = ResultValidator::konulariDuzenle([
+    ['title' => 'B', 'start' => '00:08:38', 'end' => '00:13:02'],
+    ['title' => 'A', 'start' => '00:00:12', 'end' => '00:08:56'],
+    ['title' => 'C', 'start' => '00:13:02', 'end' => '00:25:00'],
+], 1159000);
+dogrula('Konu aralıkları: çakışma giderilir (08:56 → 08:38), ilk konu 00:00, son bitiş video süresine kırpılır',
+    array_column($konuTest, 'start') === ['00:00:00', '00:08:38', '00:13:02'] && array_column($konuTest, 'end') === ['00:08:38', '00:13:02', '00:19:19'],
+    json_encode($konuTest));
+$konuSuresiz = ResultValidator::konulariDuzenle([['title' => 'A', 'start' => '00:01:00', 'end' => '00:05:00'], ['title' => 'Zamansız', 'start' => null, 'end' => null]], null);
+dogrula('Konu aralıkları: süre bilinmiyorsa son bitiş korunur; zamanı olmayan konu sona, dokunulmaz',
+    $konuSuresiz[0]['start'] === '00:00:00' && $konuSuresiz[0]['end'] === '00:05:00' && $konuSuresiz[1]['title'] === 'Zamansız' && $konuSuresiz[1]['start'] === null);
+Ayarlar::set('ai.istem_surumu', 'v3');
+dogrula('Eski istem uyarısı: v1 / v2 / sürümsüz eski, v3 güncel', RaporVerisi::eskiIstem('v1') && RaporVerisi::eskiIstem('v2') && RaporVerisi::eskiIstem('') && !RaporVerisi::eskiIstem('v3'));
+Ayarlar::forget();
+dogrula('Dil adı: tr → Türkçe, en-US → İngilizce, bilinmeyen kod büyük harf', RaporVerisi::dilAdi('tr') === 'Türkçe' && RaporVerisi::dilAdi('en-US') === 'İngilizce' && RaporVerisi::dilAdi('sv') === 'SV');
+$goster = (string) file_get_contents(MODUL_YOLU . '/views/goster.php');
+dogrula('Rapor sayfası: önem rozeti "12 / 14" için sayılar, transcript aramasının etiketi, ipucu yalnız rapor varken',
+    str_contains($goster, 'data-suzgecli=') && str_contains($goster, '<label class="visually-hidden" for="tk_transcript_ara">')
+    && (bool) preg_match('/if \(\$rapor !== null\): \?>\s*<p class="tk-oynatici__not">/', $goster));
 dogrula('Markdown: AI metni bağlantıya / başlığa dönüşmez (kaçışlanır), paragraflar korunur',
     str_contains($md, "İlk paragraf.\n\nİkinci \\[tıkla\\](javascript:alert(1)) paragraf.") && str_contains($md, "\\# başlık değil")
     && preg_match('/(?<!\\\\)\]\(javascript/', $md) === 0);

@@ -163,7 +163,7 @@ final class ResultValidator
                 'summary' => self::metin($m['summary'] ?? null, self::OZET_EN_COK, true),
             ];
         });
-        usort($konular, static fn (array $a, array $b): int => (Zaman::oku((string) $a['start']) ?? PHP_INT_MAX) <=> (Zaman::oku((string) $b['start']) ?? PHP_INT_MAX));
+        $konular = self::konulariDuzenle($konular, $bitMs);
 
         $oneriler = $this->liste($veri, 'recommendations', static function (mixed $m): ?array {
             $metin = self::metin(is_array($m) ? ($m['text'] ?? null) : $m, self::MADDE_EN_COK);
@@ -182,6 +182,56 @@ final class ResultValidator
         ];
 
         return ['sonuc' => $sonuc, 'uyarilar' => $this->uyarilar];
+    }
+
+    /**
+     * Konuları videoyu kesintisiz bölen aralıklara çevirir (YouTube
+     * bölümleri de buradan üretilir). Model aralıkları çakıştırabiliyor
+     * ("03:08–08:56" ardından "08:38–13:02"):
+     *   - başlangıca göre sıralanır (başlangıcı olmayan sona),
+     *   - ilk konu 00:00:00'dan başlar,
+     *   - her konunun bitişi bir sonrakinin başlangıcıdır,
+     *   - son konu videonun sonunda biter; hiçbir bitiş videoyu aşmaz.
+     * Rapor sayfası eski raporlara da uygular (RaporVerisi); $bitMs
+     * bilinmiyorsa (null) son konunun bitişine dokunulmaz.
+     *
+     * @param  list<array<string,mixed>> $konular title, start, end, summary
+     * @return list<array<string,mixed>>
+     */
+    public static function konulariDuzenle(array $konular, ?int $bitMs): array
+    {
+        $konular = array_values(array_filter($konular, 'is_array'));
+
+        usort($konular, static fn (array $a, array $b): int
+            => (Zaman::oku((string) ($a['start'] ?? '')) ?? PHP_INT_MAX) <=> (Zaman::oku((string) ($b['start'] ?? '')) ?? PHP_INT_MAX));
+
+        $son = count($konular) - 1;
+
+        foreach ($konular as $i => &$konu) {
+            $bas = Zaman::oku((string) ($konu['start'] ?? ''));
+
+            if ($bas === null) {
+                continue;
+            }
+
+            if ($i === 0) {
+                $konu['start'] = Zaman::yaz(0);
+                $bas = 0;
+            }
+
+            $sonraki = $i < $son ? Zaman::oku((string) ($konular[$i + 1]['start'] ?? '')) : null;
+            $bit     = $sonraki ?? ($bitMs ?? Zaman::oku((string) ($konu['end'] ?? '')));
+
+            if ($bit !== null && $bitMs !== null) {
+                $bit = min($bit, $bitMs);
+            }
+
+            $konu['end'] = $bit !== null && $bit > $bas ? Zaman::yaz($bit) : null;
+        }
+
+        unset($konu);
+
+        return $konular;
     }
 
     /* =================================================================

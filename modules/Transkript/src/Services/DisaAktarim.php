@@ -50,7 +50,7 @@ final class DisaAktarim
      * @param array<string,mixed>      $rapor  doğrulanmış rapor JSON'u
      * @param array<string,mixed>|null $analiz RaporVerisi::getir()['analiz']
      */
-    public static function markdown(array $kaynak, array $rapor, ?array $analiz): string
+    public static function markdown(array $kaynak, array $rapor, ?array $analiz, ?array $transcript = null): string
     {
         $video = $kaynak['tur'] === 'youtube' ? (string) $kaynak['dis_kimlik'] : '';
         $zaman = static fn (mixed $at): string => self::zamanBaglantisi($at, $video);
@@ -67,6 +67,19 @@ final class DisaAktarim
 
         if ($meta !== []) {
             $satir[] = implode(' · ', $meta);
+            $satir[] = '';
+        }
+
+        // Raporun künyesi: ne zaman, hangi model ve istemle, hangi transcript'ten.
+        $kunye = array_filter([
+            ($analiz['bitti_at'] ?? null) !== null ? 'Hazırlandı: ' . date('d.m.Y H:i', (int) strtotime((string) $analiz['bitti_at'])) : null,
+            ($analiz['model'] ?? '') !== '' ? 'Model: ' . self::md((string) $analiz['model']) : null,
+            ($analiz['prompt_surumu'] ?? '') !== '' ? 'İstem: ' . self::md((string) $analiz['prompt_surumu']) : null,
+            $transcript !== null ? 'Transcript: ' . RaporVerisi::dilAdi((string) $transcript['dil']) . (!empty($transcript['otomatik_mi']) ? ' (otomatik altyazı)' : ' (altyazı)') : null,
+        ]);
+
+        if ($kunye !== []) {
+            $satir[] = '_' . implode(' · ', $kunye) . '_';
             $satir[] = '';
         }
 
@@ -110,7 +123,7 @@ final class DisaAktarim
             $zaman($m['at'] ?? null) . ' ' . self::md((string) $m['label']));
 
         if (($rapor['technical_information'] ?? []) !== []) {
-            $satir[] = '## Teknik bilgiler';
+            $satir[] = '## ' . RaporVerisi::TEKNIK_BASLIK;
             $satir[] = '';
 
             foreach (RaporVerisi::kategoriyeGore((array) $rapor['technical_information']) as $kategori => $maddeler) {
@@ -138,10 +151,7 @@ final class DisaAktarim
 
         $satir[] = '---';
         $satir[] = '';
-        $satir[] = '_Transkript ile üretildi'
-            . ($analiz !== null && ($analiz['model'] ?? '') !== '' ? ' · ' . self::md((string) $analiz['model']) : '')
-            . ($analiz !== null && ($analiz['bitti_at'] ?? null) !== null ? ' · ' . date('d.m.Y H:i', (int) strtotime((string) $analiz['bitti_at'])) : '')
-            . '. İddialar doğrulanmamıştır._';
+        $satir[] = '_Transkript ile üretildi. İddialar doğrulanmamıştır._';
 
         return (string) preg_replace("/\n{3,}/", "\n\n", implode("\n", $satir)) . "\n";
     }
