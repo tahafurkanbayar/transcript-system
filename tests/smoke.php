@@ -367,10 +367,17 @@ test('Var olan / olmayan hesap yanıt süreleri benzer', function () use ($base,
         return null;
     }
 
+    /* Kademeli gecikme (transcript-system, K5): beklenen süre dolmadan gelen
+     * deneme parola denetimine ulaşmaz, hızlı döner; ölçüm anlamsızlaşırdı.
+     * Her denemeden önce gecikme beklenir: ölçülen hep parola denetimi yoludur. */
     $olc = function (string $kimlik) use ($base): float {
         $sureler = [];
 
         for ($i = 0; $i < 3; $i++) {
+            if ($i > 0) {
+                sleep(2 ** ($i - 1) + 1);
+            }
+
             $c = new Istemci($base);
             $t = $c->token('giris');
             $sureler[] = $c->istek('giris', 'POST', ['csrf_token' => $t, 'identifier' => $kimlik, 'password' => 'x' . random_int(1, 9999)])['sure'];
@@ -384,6 +391,9 @@ test('Var olan / olmayan hesap yanıt süreleri benzer', function () use ($base,
     $var = $olc($opts['kullanici']);
     $yok = $olc('yok_' . bin2hex(random_bytes(4)));
     $oran = max($var, $yok) / max(0.001, min($var, $yok));
+
+    // Gerçek hesapta üç hata kaldı (gecikme 4 sn): sonraki testlerin girişi takılmasın.
+    sleep(5);
 
     return $oran < 1.8 ? true : sprintf('var: %.0f ms, yok: %.0f ms (oran %.1f)', $var * 1000, $yok * 1000, $oran);
 });
@@ -634,10 +644,12 @@ echo '  (site demo modunda: ' . ($demoModu ? 'EVET' : 'HAYIR') . ")\n";
 $sayfaMatrisi = [
     'panel'               => [200, 200, 200],
     'panel/kullanicilar'  => [200, 403, 403],
-    'panel/mesajlar'      => [200, 200, 403],
-    'panel/eposta'        => [200, 200, 403],
-    'panel/sayfalar'      => [200, 200, 403],
-    'panel/sayfalar/yeni' => [200, 200, 403],
+    // transcript-system kararı (2026-10-09): sayfalar, mesajlar ve e-posta geçmişi
+    // yalnız yöneticide (Role.php; tests/rol-matrisi.php ile aynı).
+    'panel/mesajlar'      => [200, 403, 403],
+    'panel/eposta'        => [200, 403, 403],
+    'panel/sayfalar'      => [200, 403, 403],
+    'panel/sayfalar/yeni' => [200, 403, 403],
     'panel/ayarlar/genel' => [200, 403, 403],
     'panel/sistem'        => [200, 403, 403],
     'panel/hesabim'       => [200, 200, 200],
@@ -677,8 +689,8 @@ foreach ($sayfaMatrisi as $yol => $beklenen) {
 
 $islemMatrisi = [
     'api/kullanicilar/list' => [200, 403, 403],
-    'api/mesajlar/list'     => [200, 200, 403],
-    'api/eposta/list'       => [200, 200, 403],
+    'api/mesajlar/list'     => [200, 403, 403],
+    'api/eposta/list'       => [200, 403, 403],
 ];
 
 foreach ($islemMatrisi as $yol => $beklenen) {
