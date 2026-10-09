@@ -52,13 +52,23 @@ $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format(
         <form class="tk-analiz__form" id="tk_analiz_form" novalidate>
             <label class="visually-hidden" for="tk_url">YouTube bağlantısı</label>
             <input type="url" class="form-control" id="tk_url" name="url" required inputmode="url" autocomplete="off"
-                   placeholder="https://www.youtube.com/watch?v=…" maxlength="500">
+                   placeholder="https://www.youtube.com/watch?v=…" maxlength="500" value="<?= e($onUrl ?? '') ?>"<?= ($onUrl ?? '') !== '' ? ' data-hazir="1"' : '' ?>>
             <button type="submit" class="btn cy-btn cy-btn--primary" id="tk_analiz_dugme">
                 <?= icon('zap', 'cy-icon cy-icon--sm') ?> Analiz Et
             </button>
         </form>
         <?php /* Sonuç (önbellek uyarısı, hata) — JS doldurur. */ ?>
         <div class="tk-analiz__sonuc" id="tk_analiz_sonuc" role="status" aria-live="polite" hidden></div>
+        <details class="tk-kisayol">
+            <summary>Kısayol: YouTube'dan tek tıkla gönder</summary>
+            <p class="cy-panel__note mb-2">
+                Masaüstü: aşağıdaki düğmeyi yer imleri çubuğuna sürükleyin; YouTube'da bir videodayken tıklayınca bu sayfa bağlantı dolu açılır.
+                Telefon: <span class="cy-mono"><?= e(url_full('panel/transkript', ['url' => ''])) ?></span> sonuna video bağlantısını ekleyerek açabilirsiniz.
+            </p>
+            <?php /* Sürüklenmek içindir; bu sayfada tıklamayı CSP zaten engeller. */ ?>
+            <a class="btn cy-btn cy-btn--ghost cy-btn--sm" href="<?= e("javascript:location.href='" . url_full('panel/transkript', ['url' => '']) . "'+encodeURIComponent(location.href)") ?>"
+               title="Yer imleri çubuğuna sürükleyin"><?= icon('zap', 'cy-icon cy-icon--sm') ?> Transkript'e gönder</a>
+        </details>
     </section>
 <?php else: ?>
     <p class="cy-panel__note mb-3"><?= icon('info', 'cy-icon cy-icon--sm') ?> Analiz başlatma yetkiniz yok; analiz edilmiş videoların raporlarını görebilirsiniz.</p>

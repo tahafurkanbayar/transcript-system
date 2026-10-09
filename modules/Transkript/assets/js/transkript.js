@@ -13,10 +13,11 @@
  *    2) Listede süren analizlerin canlı ilerlemesi (3 sn)
  *    3) Rapor sayfasında aşama ilerlemesi (3 sn), bitince yenileme
  *    4) Gömülü oynatıcı: zaman damgası → seekTo (postMessage; dış betik yok)
- *    5) Önem filtresi, 6) Yeniden analiz düğmesi
+ *    5) Önem filtresi, 6) Yeniden analiz düğmesi, kutu dolu geldiyse odak
  *    7) Transcript: açılınca yükleme; arama debounce + seq yarış koruması
  *       ve Türkçe katlamalı vurgulama (CilginYazilim/search-autocomplete,
- *       assets/js/search.js'ten uyarlandı)
+ *       assets/js/search.js'ten uyarlandı); oynatıcıyla eş zamanlı satır
+ *    8) Oynatıcının anlık zamanı (infoDelivery) → o anki transcript satırı
  * ===================================================================== */
 (function ($) {
     'use strict';
@@ -140,6 +141,11 @@
             olay.preventDefault();
             gonder(false);
         });
+
+        // panel/transkript?url=… (yer imi): kutu dolu; tek dokunuş kalsın.
+        if ($url.attr('data-hazir') === '1') {
+            $dugme.trigger('focus');
+        }
     }
 
     /* =================================================================
@@ -359,6 +365,45 @@
         var seq        = 0;
         var bekleme    = null;
         var yuklendi   = false;
+        var aktifSn    = -1;
+        var takip      = transcript.querySelector('.js-tk-takip');
+
+        /* 8) Oynatıcı zamanı: YouTube, "listening" el sıkışmasından sonra
+         * postMessage ile infoDelivery.currentTime gönderir. Yalnız
+         * youtube-nocookie kökeninden gelen ileti dinlenir. O anki satır
+         * işaretlenir; "takip" açıksa liste (sayfa değil) kaydırılır. */
+        window.addEventListener('message', function (olay) {
+            if (olay.origin !== YOUTUBE || !transcript.open || !takip || !takip.checked) { return; }
+
+            var veri;
+
+            try { veri = JSON.parse(olay.data); } catch (e) { return; }
+
+            var an = veri && veri.info && typeof veri.info.currentTime === 'number' ? veri.info.currentTime : null;
+
+            if (an === null) { return; }
+
+            var secilen = null;
+
+            liste.querySelectorAll('li[data-sn]').forEach(function (li) {
+                if (parseInt(li.getAttribute('data-sn'), 10) <= an) { secilen = li; }
+            });
+
+            if (!secilen) { return; }
+
+            var sn = parseInt(secilen.getAttribute('data-sn'), 10);
+
+            if (sn === aktifSn) { return; }
+
+            aktifSn = sn;
+
+            var eski = liste.querySelector('li.is-aktif');
+
+            if (eski) { eski.classList.remove('is-aktif'); }
+
+            secilen.classList.add('is-aktif');
+            liste.scrollTop = secilen.offsetTop - liste.offsetTop - liste.clientHeight / 3;
+        });
 
         var zamanOgesi = function (sn, metin) {
             if (!video) { return el('span', 'tk-zaman', metin); }
@@ -376,6 +421,7 @@
 
             satirlar.forEach(function (s) {
                 var li = document.createElement('li');
+                li.setAttribute('data-sn', String(s.sn));
                 var metin = document.createElement('span');
 
                 vurgula(metin, String(s.metin), kelimeler);
@@ -386,6 +432,7 @@
 
             liste.textContent = '';
             liste.appendChild(parca);
+            aktifSn = -1;
         };
 
         var yukle = function (q) {
