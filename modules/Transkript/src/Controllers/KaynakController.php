@@ -77,13 +77,12 @@ final class KaynakController extends Controller
             'sayfa'      => $sayfa,
             'boyut'      => $boyut,
             // Yönetici herkesinkini; öteki roller GÖREBİLDİĞİ raporları sayar
-            // (rol listesine değil yetkiye bağlı). Token / maliyet: analiz
-            // başlatan kendi kullanımını görür, üye hiç görmez.
+            // (rol listesine değil yetkiye bağlı). Token / maliyet kartları
+            // yalnız yöneticide (kullanıcı kararı: üye ve editör görmez).
             'istatistik' => $policy->canSeeAllCosts()
                 ? $repo->istatistik(null)
-                : $repo->gorunenIstatistik((int) $user?->id, $policy->canAnalyze()),
+                : $repo->gorunenIstatistik((int) $user?->id),
             'hepsi'      => $policy->canSeeAllCosts(),
-            'maliyetli'  => $policy->canAnalyze(),
             // panel/transkript?url=… → kutu dolu gelir (yer imi, paylaşım bağlantısı).
             'onUrl'      => mb_substr($request->input('url'), 0, 500),
             'kuyruk'     => (new KuyrukDurumu($this->db))->getir(),

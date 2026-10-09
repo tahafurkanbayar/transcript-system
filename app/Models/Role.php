@@ -9,12 +9,15 @@
  *
  *  ROLLER
  *    admin  → Yönetici. Her şeyi yapabilir.
- *    editor → Editör. Sayfaları, mesajları ve giden e-posta geçmişini
- *             yönetir; KULLANICI EKRANINA HİÇ GİREMEZ (aşağıdaki
- *             listede users.* yoktur). Editöre kullanıcı yönetimi
- *             vermek isterseniz ABILITIES listesine users.view /
- *             users.create / users.update ekleyin. Yan menü yetkiye
- *             göre çizilir; başka bir yere dokunmanız gerekmez.
+ *    editor → Editör. Modüllerin kendisine açtığı alanlarda çalışır
+ *             (transcript-system: analiz başlatır) ve API anahtarı
+ *             alır. Sayfalara, iletişim mesajlarına (ziyaretçinin
+ *             kişisel verisi), giden e-posta geçmişine, kullanıcılara
+ *             ve ayarlara GİREMEZ (proje kararı, 2026-10-09; starter'da
+ *             editör sayfa ve mesaj yönetiyordu). Geri açmak için
+ *             ABILITIES listesine pages.* / messages.* / mail.view
+ *             ekleyin. Yan menü yetkiye göre çizilir; başka bir yere
+ *             dokunmanız gerekmez.
  *
  *             GÜVENLİK: yönetici hesapları bu yetkilerle bile
  *             DEĞİŞTİRİLEMEZ, silinemez, pasife alınamaz ve kimse
@@ -53,16 +56,12 @@ final class Role
         ],
         self::EDITOR => [
             'dashboard.view',
-            'messages.view', 'messages.manage',
-            // İçerik sayfaları editörün asıl işidir: yazabilir,
-            // düzenleyebilir, yayınlayabilir.
-            'pages.view', 'pages.manage',
-            // Editör giden e-postaların geçmişini görebilir ama
-            // toplu duyuru gönderemez (mail.send yalnızca yöneticide).
-            'mail.view',
+            // Sayfa, mesaj ve e-posta geçmişi BİLEREK yok: mesajlar ve
+            // giden postalar kişisel veri taşır, sayfalar KVKK metnini de
+            // içerir; bunlar yalnız yöneticide (proje kararı).
             'profile.view', 'profile.update', 'profile.api',
-            // Bakım sırasında içerik hazırlayabilsin. ÜYE'de bu yetki
-            // BİLEREK yoktur: kayıt açıkken herkes üye olabilir.
+            // Bakım sırasında panelde çalışmaya devam edebilsin. ÜYE'de
+            // bu yetki BİLEREK yoktur: kayıt açıkken herkes üye olabilir.
             'maintenance.bypass',
         ],
         self::MEMBER => [
@@ -81,7 +80,7 @@ final class Role
     /** @var array<string,string> */
     private const DESCRIPTIONS = [
         self::ADMIN  => 'Her şeye erişir: kullanıcılar, site ayarları, sistem ve toplu e-posta.',
-        self::EDITOR => 'Sayfa yazar ve yayınlar, iletişim mesajlarını yönetir, e-posta geçmişini görür; kullanıcılara ve ayarlara erişemez.',
+        self::EDITOR => 'Modüllerde kendisine açılan işleri yapar (ör. analiz başlatır) ve API anahtarı alır; sayfalara, mesajlara, e-posta geçmişine, kullanıcılara ve ayarlara erişemez.',
         self::MEMBER => 'Yalnızca kendi profilini ve açık modüllerde kendisine verilen alanları kullanır.',
     ];
 

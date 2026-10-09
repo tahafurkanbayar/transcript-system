@@ -6,9 +6,17 @@ noktalar, zaman çizelgesi, teknik bilgiler, iddialar, fikirler. Onaylı plan:
 [docs/TEKNIK_RAPOR.md](../../docs/TEKNIK_RAPOR.md).
 
 Projeye ait kodun tamamı bu klasördedir; çekirdeğe (`app/`, `config/`,
-çekirdek `routes/` ve `views/`) dokunulmaz. Tek istisna, modülün ana sayfayı
-çizebilmesi için eklenen genel kancadır (`app/Core/HomePage.php` ve
-`HomeController`'da üç satır; "Ekranlar → Ana sayfa").
+çekirdek `routes/` ve `views/`) dokunulmaz. İki istisna var, ikisi de
+kullanıcının isteğiyle:
+
+- Modülün ana sayfayı çizebilmesi için genel kanca: `app/Core/HomePage.php`
+  ve `HomeController`'da üç satır ("Ekranlar → Ana sayfa").
+- **Editör'ün kapsamı daraltıldı** (`app/Models/Role.php`, 2026-10-09).
+  Editör artık sayfalara, iletişim mesajlarına ve e-posta geçmişine
+  giremez; bunlar kişisel veri ve KVKK metni taşıdığı için yalnız
+  yöneticidedir. Editör analiz başlatır ve API anahtarı alır. Starter'da
+  editör sayfa ve mesaj yönetiyordu; geri açmak için `Role::ABILITIES`'e
+  `pages.*`, `messages.*` ve `mail.view` eklenir.
 
 ---
 
@@ -65,8 +73,9 @@ Eylem bazında (canlı denendi: misafir / üye / editör / yönetici; rol testi
 | Hatanın iç nedeni (kota, servis, ayar) | | genel metin | kendi başlattığı | ✓ |
 | "Raporu hazır" / "Bugün" sayaçları | | görebildiği (farklı video) | görebildiği (farklı video) | herkesin (analiz sayısı) |
 | Süren / hatalı sayısı (liste, kontrol paneli) | | | ✓ | ✓ |
-| Token / maliyet kartı | | | kendi analizleri | herkesin |
+| Token / maliyet (liste kartları, rapor kartı, API özeti) | | | | ✓ |
 | API anahtarı (çekirdek `profile.api`) | | | ✓ | ✓ |
+| Sayfalar, iletişim mesajları, e-posta geçmişi (çekirdek) | | 403 | 403 | ✓ |
 
 CSRF anahtarı olmayan her POST 403'tür.
 

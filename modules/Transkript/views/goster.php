@@ -374,8 +374,9 @@ $indir = static fn (string $bicim): string => url('panel/transkript/' . $kaynakI
                         <dt>Model</dt><dd class="cy-mono"><?= e($analiz['model'] !== '' ? $analiz['model'] : '—') ?></dd>
                         <dt>İstem</dt><dd class="cy-mono"><?= e($analiz['prompt_surumu'] !== '' ? $analiz['prompt_surumu'] : '—') ?></dd>
                         <dt>Transcript</dt><dd><?= $veri['transcript'] !== null ? e(RaporVerisi::dilAdi((string) $veri['transcript']['dil'])) : '—' ?></dd>
-                        <dt>Token</dt><dd class="cy-mono"><?= e(number_format($analiz['toplam_token'], 0, ',', '.')) ?></dd>
+                        <?php /* Token ve maliyet yalnız yöneticiye (kullanıcı kararı: üye ve editör görmez). */ ?>
                         <?php if ($policy->canSeeAllCosts()): ?>
+                            <dt>Token</dt><dd class="cy-mono"><?= e(number_format($analiz['toplam_token'], 0, ',', '.')) ?></dd>
                             <dt>Tahmini maliyet</dt><dd class="cy-mono">$<?= e(number_format($analiz['maliyet_usd'], 4, ',', '.')) ?></dd>
                         <?php endif; ?>
                     </dl>

@@ -2142,15 +2142,12 @@ dogrula('İlerleme etiketi de aynı kurala uyar (policy\'siz çağrı ayrıntıl
     && str_contains(KaynakDurumu::etiket(['durum' => 'hata', 'hata_kodu' => 'ai_kota_doldu']), 'kota'));
 
 $sayacPdo = new KayitPdo();
-(new KaynakRepository($sayacPdo))->gorunenIstatistik(4);
+$gorunenSayi = (new KaynakRepository($sayacPdo))->gorunenIstatistik(4);
 $uyeSorgu = $sayacPdo->sorgular;
-$sayacPdo->sorgular = [];
-(new KaynakRepository($sayacPdo))->gorunenIstatistik(4, true);
-$editorSorgu = $sayacPdo->sorgular;
-dogrula('Yönetici dışı sayaç: görünür kayıtlar, bugün = farklı video; token yalnız istenirse ve yalnız kendi analizleri',
+dogrula('Yönetici dışı sayaç: görünür kayıtlar, bugün = farklı video; token / maliyet sorulmaz, 0 döner',
     str_contains($uyeSorgu[0] ?? '', 'COUNT(DISTINCT CASE WHEN a.bitti_at >= CURDATE() THEN a.kaynak_id END)')
     && str_contains($uyeSorgu[0] ?? '', 'k.sahip_id IN (0, :ben)') && count($uyeSorgu) === 2
-    && count($editorSorgu) === 3 && str_contains($editorSorgu[2] ?? '', 'a.kullanici_id = :ben'));
+    && !str_contains(implode(' ', $uyeSorgu), 'ai_kullanim_kaydi') && $gorunenSayi['token'] === 0 && $gorunenSayi['maliyet'] === 0.0);
 $panelKodu = (string) file_get_contents(MODUL_YOLU . '/events.php') . $kaynakKodu;
 dogrula('Sayaç rol adına değil yetkiye bağlı: yönetici dışında herkes gorunenIstatistik (editör dahil)',
     !str_contains($panelKodu, 'istatistik($user->id)') && !str_contains($panelKodu, 'istatistik($user?->id)')
@@ -2170,7 +2167,7 @@ $listeCiz = static fn (TranskriptPolicy $p, string $durum): string => App\Core\V
     'policy' => $p, 'filtre' => ['q' => '', 'durum' => $durum], 'varsayilanDurum' => KaynakController::listeDurumu('', $p->canAnalyze()),
     'liste' => ['satirlar' => [$satirHata], 'toplam' => 1], 'sayfa' => 1, 'boyut' => 10,
     'istatistik' => ['bugun' => 3, 'kaynak' => 3, 'suruyor' => 0, 'hata' => 1, 'token' => 0, 'maliyet' => 0.0],
-    'hepsi' => $p->canSeeAllCosts(), 'maliyetli' => $p->canAnalyze(), 'onUrl' => '', 'kuyruk' => ['takildi' => false],
+    'hepsi' => $p->canSeeAllCosts(), 'onUrl' => '', 'kuyruk' => ['takildi' => false],
 ]);
 $uyeHepsi  = $listeCiz($prU, '');
 $uyeHazir  = $listeCiz($prU, 'hazir');
@@ -2182,17 +2179,41 @@ dogrula('Liste: kota metnini yönetici görür; üye ve başlatmayan editör gen
 dogrula('Liste: üyede "Raporu hazır" seçili gelir, "Tüm durumlar" hepsi değerini taşır; analiz başlatanda boş değer',
     str_contains($uyeHazir, '<option value="hazir" selected>') && str_contains($uyeHazir, '<option value="hepsi">Tüm durumlar')
     && str_contains($yonListe, '<option value="" selected>Tüm durumlar'));
-dogrula('Kartlar: üyede hata sayısı ve token kartı yok; editörde "Token kullanımınız"; yönetici "Toplam token" ve analiz sayısı',
-    !str_contains($uyeHepsi, '1 hata') && !str_contains($uyeHepsi, 'Token kullanımınız') && !str_contains($uyeHepsi, 'Toplam token')
+$tokenKarti = static fn (string $html): bool => (bool) preg_match('/Toplam token|Tahmini maliyet|Token kullanımınız/u', $html);
+dogrula('Kartlar: token / maliyet yalnız yöneticide; hata sayısı analiz başlatabilende (editör), üyede yok',
+    !str_contains($uyeHepsi, '1 hata') && !$tokenKarti($uyeHepsi)
     && str_contains($uyeHepsi, 'Bugün hazırlanan rapor') && str_contains($uyeHepsi, 'yeniden analiz sayılmaz')
-    && str_contains($edListe, '1 hata') && str_contains($edListe, 'Token kullanımınız') && !str_contains($edListe, 'Toplam token')
-    && str_contains($yonListe, 'Toplam token') && str_contains($yonListe, 'Bugün tamamlanan analiz'));
+    && str_contains($edListe, '1 hata') && !$tokenKarti($edListe)
+    && str_contains($yonListe, 'Toplam token') && str_contains($yonListe, 'Tahmini maliyet') && str_contains($yonListe, 'Bugün tamamlanan analiz'));
+
+$raporCiz = static fn (TranskriptPolicy $p): string => App\Core\View::capture('Transkript::goster', [
+    'kaynak' => ['id' => 16, 'tur' => 'youtube', 'dis_kimlik' => 'abcdefghijk', 'sahip_id' => 0, 'baslik' => 'Örnek', 'kanal_adi' => 'Kanal',
+                 'sure_sn' => 600, 'kucuk_resim' => null, 'yayin_tarihi' => null, 'durum' => 'normal'],
+    'veri' => [
+        'durum'  => ['durum' => 'tamamlandi', 'asama' => 'bitti', 'ilerleme' => 100, 'etiket' => 'Analiz tamamlandı', 'hata' => null, 'sirada' => null,
+                     'parca' => ['toplam' => 0, 'biten' => 0, 'hatali' => 0]],
+        'rapor'  => ['summary' => 'Kısa özet.'],
+        'analiz' => ['id' => 9, 'model' => 'gemini-2.5-flash', 'prompt_surumu' => 'v3', 'toplam_token' => 123456, 'maliyet_usd' => 0.0123, 'bitti_at' => '2026-10-09 18:00:00'],
+        'eksik'  => [], 'transcript' => ['saglayici' => 'youtube', 'dil' => 'tr', 'otomatik_mi' => false, 'segment_sayisi' => 10],
+    ],
+    'policy' => $p, 'origin' => 'http://localhost', 'kuyruk' => ['takildi' => false], 'surenAnaliz' => null,
+]);
+$raporUye = $raporCiz($prU);
+$raporEd  = $raporCiz($prE1);
+$raporYon = $raporCiz($prY);
+dogrula('Rapor kartı: token ve maliyet yalnız yöneticiye; model herkese',
+    !str_contains($raporUye, '<dt>Token</dt>') && !str_contains($raporUye, '123.456') && !str_contains($raporEd, '<dt>Token</dt>') && !str_contains($raporEd, '123.456')
+    && str_contains($raporYon, '<dt>Token</dt>') && str_contains($raporYon, '123.456') && str_contains($raporYon, 'Tahmini maliyet')
+    && str_contains($raporUye, 'gemini-2.5-flash') && str_contains($raporEd, 'gemini-2.5-flash'));
+preg_match('#function ozet\(.*?\n    }\n#s', (string) file_get_contents(MODUL_YOLU . '/src/Controllers/Api/TranskriptApiController.php'), $ozetGovde);
+dogrula('API özeti: yönetici dışında toplam_token ve maliyet_usd çıkarılır',
+    str_contains($ozetGovde[0] ?? '', "if (!\$policy->canSeeAllCosts())") && str_contains($ozetGovde[0] ?? '', "unset(\$analiz['toplam_token'], \$analiz['maliyet_usd'])"));
 dogrula('Liste boşken üyeye "kutuya yapıştırın" denmez',
     str_contains(App\Core\View::capture('Transkript::index', [
         'policy' => $prU, 'filtre' => ['q' => '', 'durum' => 'hazir'], 'varsayilanDurum' => 'hazir',
         'liste' => ['satirlar' => [], 'toplam' => 0], 'sayfa' => 1, 'boyut' => 10,
         'istatistik' => ['bugun' => 0, 'kaynak' => 0, 'suruyor' => 0, 'hata' => 0, 'token' => 0, 'maliyet' => 0.0],
-        'hepsi' => false, 'maliyetli' => false, 'onUrl' => '', 'kuyruk' => ['takildi' => false],
+        'hepsi' => false, 'onUrl' => '', 'kuyruk' => ['takildi' => false],
     ]), 'Henüz hazır rapor yok.'));
 
 $vaatCiz = static fn (bool $girisli, bool $analiz, bool $api): string => App\Core\View::capture('Transkript::anasayfa', [

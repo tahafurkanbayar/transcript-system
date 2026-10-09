@@ -275,12 +275,11 @@ final class KaynakRepository
      *
      *   bugun  bugün raporu hazırlanan FARKLI video; aynı videonun
      *          yeniden analizi ikinci kez sayılmaz
-     *   token / maliyet  $kendiKullanimi ise kendi başlattığı analizlerin
-     *          (analiz yetkisi olan), değilse 0 (gösterilmez)
+     *   token / maliyet  0: yalnız yöneticiye gösterilir (istatistik(null))
      *
      * @return array{bugun:int, token:int, maliyet:float, kaynak:int, suruyor:int, hata:int}
      */
-    public function gorunenIstatistik(int $kullaniciId, bool $kendiKullanimi = false): array
+    public function gorunenIstatistik(int $kullaniciId): array
     {
         $p = [':ben' => $kullaniciId];
 
@@ -310,7 +309,9 @@ final class KaynakRepository
             'kaynak'  => (int) ($r['kaynak'] ?? 0),
             'suruyor' => (int) ($s['suruyor'] ?? 0),
             'hata'    => (int) ($s['hata'] ?? 0),
-        ] + ($kendiKullanimi ? $this->kullanim($kullaniciId) : ['token' => 0, 'maliyet' => 0.0]);
+            'token'   => 0,
+            'maliyet' => 0.0,
+        ];
     }
 
     /**
