@@ -133,6 +133,8 @@ jobs:
           son=$(git tag --sort=-v:refname | head -1)
           for etiket in v1.2.0 "$son"; do
             [ -n "$etiket" ] || continue
+            # transcript-system starter geçmişi olmadan başladı: etiket yoksa atla.
+            git rev-parse -q --verify "refs/tags/$etiket" >/dev/null || { echo "→ $etiket yok, atlandı"; continue; }
             echo "→ $etiket"
             git show "$etiket:kurulum/database.sql" > /tmp/eski.sql
             php tests/sema.php --eski=/tmp/eski.sql --host=127.0.0.1 --kullanici=root --parola=root
