@@ -409,6 +409,32 @@ final class KaynakRepository
     }
 
     /**
+     * Yöneticinin Kontrol Paneli'ndeki "Son analizler": en yeni analiz
+     * çalışmaları, kaynağı ve başlatanıyla (silinmiş kullanıcıda ad boş).
+     *
+     * @return list<array<string,mixed>>
+     */
+    public function sonAnalizler(int $adet = 5): array
+    {
+        $sorgu = $this->db->prepare(
+            "SELECT a.id AS analiz_id, a.kaynak_id, a.durum, a.asama, a.ilerleme, a.hata_kodu, a.kullanici_id,
+                    a.created_at, a.basladi_at, a.bitti_at,
+                    TIMESTAMPDIFF(SECOND, COALESCE(a.basladi_at, a.created_at), COALESCE(a.bitti_at, a.updated_at, a.created_at)) AS sure_sn,
+                    k.baslik, k.dis_kimlik, k.tur,
+                    TRIM(CONCAT(COALESCE(u.ad, ''), ' ', COALESCE(u.soyad, ''))) AS baslatan, u.kullanici_adi
+               FROM transkript_analizler a
+               JOIN transkript_kaynaklar k ON k.id = a.kaynak_id
+               LEFT JOIN kullanicilar u ON u.id = a.kullanici_id
+              ORDER BY a.id DESC
+              LIMIT :adet"
+        );
+        $sorgu->bindValue(':adet', max(1, min(20, $adet)), PDO::PARAM_INT);
+        $sorgu->execute();
+
+        return $sorgu->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    /**
      * Son analizi geçici sebeple duran kaynaklar (HataKodlari::DEVAM_EDILEBILIR):
      * yöneticinin "Bekleyenleri yeniden dene" düğmesi bunları sürdürür.
      *

@@ -26,6 +26,7 @@ namespace App\Http\Controllers;
 
 use App\Core\Auth;
 use App\Core\DashboardCards;
+use App\Core\DashboardPanels;
 use App\Core\Request;
 use App\Http\Controller;
 use App\Repositories\PageRepository;
@@ -91,6 +92,9 @@ final class DashboardController extends Controller
             [DashboardCards::class, 'normalize'],
             array_merge($kartlar, DashboardCards::collect($user))
         );
+
+        // Modüllerin liste bölümleri (bkz. DashboardPanels); kartların altında.
+        $data['paneller'] = DashboardPanels::collect($user);
 
         if ($user !== null && !Auth::can('users.view')) {
             $data['profil'] = $this->profileCompletion($user);

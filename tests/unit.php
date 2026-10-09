@@ -1124,6 +1124,24 @@ dogrula('ZIP paketinde .gitignore var (ZIP\'ten git\'e konan proje .env\'i commi
 dogrula('ZIP paketinde docs/MOBIL-API.md var, yalnızca ekran görüntüleri çıkar',
     preg_match('/^docs\/\s+export-ignore/m', $paketKurallari) !== 1 && preg_match('/^docs\/screenshots\/\s+export-ignore/m', $paketKurallari) === 1);
 
+/* Modül bölümleri (transcript-system): boş ve null atlanır, hata veren
+ * sağlayıcı paneli çökertmez, sıra eklenme sırasıdır. */
+App\Core\DashboardPanels::forget();
+App\Core\DashboardPanels::add('bir', static fn (?App\Models\User $u): ?string => '<section>bir</section>');
+App\Core\DashboardPanels::add('bos', static fn (?App\Models\User $u): ?string => '   ');
+App\Core\DashboardPanels::add('yok', static fn (?App\Models\User $u): ?string => null);
+App\Core\DashboardPanels::add('hata', static function (?App\Models\User $u): ?string { throw new RuntimeException('bozuk'); });
+App\Core\DashboardPanels::add('iki', static fn (?App\Models\User $u): ?string => $u === null ? null : '<section>iki</section>');
+$logKlasoru = sys_get_temp_dir() . '/cy-panel-log-' . bin2hex(random_bytes(4));
+App\Core\Log\Logger::useDirectory($logKlasoru);
+$panelMisafir = App\Core\DashboardPanels::collect(null);
+App\Core\Log\Logger::useDirectory(null);
+array_map('unlink', glob($logKlasoru . '/*') ?: []);
+@rmdir($logKlasoru);
+App\Core\DashboardPanels::forget();
+dogrula('Kontrol Paneli bölümleri: boş / null atlanır, hata veren sağlayıcı paneli çökertmez',
+    $panelMisafir === ['<section>bir</section>']);
+
 /* ---------------------------------------------------------------- */
 echo "
 Test sayısı

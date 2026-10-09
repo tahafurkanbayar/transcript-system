@@ -32,14 +32,19 @@
 declare(strict_types=1);
 
 use App\Core\DashboardCards;
+use App\Core\DashboardPanels;
 use App\Core\Database;
 use App\Core\HomePage;
 use App\Core\Request;
 use App\Core\Queue\Queue;
 use App\Core\Schedule\Schedule;
+use App\Core\View;
 use App\Models\User;
+use Modules\Transkript\Ai\Ai;
 use Modules\Transkript\Ayarlar;
 use Modules\Transkript\Controllers\AnasayfaController;
+use Modules\Transkript\Controllers\AyarController;
+use Modules\Transkript\Repositories\AiKullanimRepository;
 use Modules\Transkript\Repositories\KaynakRepository;
 use Modules\Transkript\Services\AnalizBaslatici;
 use Modules\Transkript\Services\KuyrukDurumu;
@@ -115,11 +120,44 @@ DashboardCards::add('transkript-bugun', static function (?User $user): ?array {
 });
 
 /* ---------------------------------------------------------------------
- *  KONTROL PANELİ: kuyruk işçisi çalışmıyorsa yöneticiye kırmızı kart
+ *  KONTROL PANELİ: yapay zekâ sağlayıcıları (yalnız yönetici)
+ * ---------------------------------------------------------------------
+ *  Kaç sağlayıcı hazır, ilk açılacak olan ne zaman, bugün kaç çağrı.
+ *  Ayrıntı Transkript ayarlarındaki sağlayıcı tablosunda (aynı veri:
+ *  AyarController::zincirTablosu). Hiçbiri hazır değilse kırmızı.
+ * ------------------------------------------------------------------ */
+DashboardCards::add('transkript-saglayicilar', static function (?User $user): ?array {
+    if ($user === null || !$user->can('transkript.admin')) {
+        return null;
+    }
+
+    $tablo = AyarController::zincirTablosu(Ai::zincirDurumu(), (new AiKullanimRepository(Database::connection()))->saglayiciOzeti());
+    $kullanilan = array_values(array_filter($tablo, static fn (array $h): bool => $h['hal'] !== 'atlandi'));
+    $hazir  = count(array_filter($kullanilan, static fn (array $h): bool => $h['hal'] === 'hazir'));
+    $cagri  = array_sum(array_column($tablo, 'bugun_cagri'));
+    $dinlenen = array_values(array_filter($kullanilan, static fn (array $h): bool => $h['hal'] !== 'hazir'));
+    usort($dinlenen, static fn (array $a, array $b): int => $a['kalan_dk'] <=> $b['kalan_dk']);
+
+    return [
+        'ikon'   => 'server',
+        'renk'   => $hazir === 0 ? 'danger' : ($dinlenen !== [] ? 'warning' : 'success'),
+        'etiket' => 'Yapay zekâ sağlayıcıları',
+        'deger'  => $hazir . ' / ' . count($kullanilan) . ' hazır',
+        'ipucu'  => implode(' · ', array_filter([
+            $dinlenen !== [] ? $dinlenen[0]['etiket'] . ' ' . $dinlenen[0]['acilis'] . ' açılır' : '',
+            'bugün ' . $cagri . ' çağrı',
+        ])),
+        'yol'    => 'panel/transkript/ayarlar#tk-saglayicilar',
+    ];
+});
+
+/* ---------------------------------------------------------------------
+ *  KONTROL PANELİ: kuyruk işçisi görülmüyorsa yöneticiye kart
  * ---------------------------------------------------------------------
  *  Çekirdeğin Sistem → Kuyruklar kartı modülü tanımaz; uyarı çekirdeğe
- *  dokunmadan DashboardCards kancasıyla eklenir. Sağlayıcı yalnız
- *  kontrol paneli açılırken çağrılır (tek kısa sorgu).
+ *  dokunmadan DashboardCards kancasıyla eklenir. İşçi çalışıyorsa kart
+ *  yok. Çalışmıyorsa: tarayıcıdan işleme açıksa sarı "tarayıcı
+ *  üzerinden işleniyor" (sayfa açıkken ilerler), kapalıysa kırmızı.
  * ------------------------------------------------------------------ */
 DashboardCards::add('transkript-kuyruk', static function (?User $user): ?array {
     if ($user === null || !$user->can('transkript.admin')) {
@@ -128,8 +166,19 @@ DashboardCards::add('transkript-kuyruk', static function (?User $user): ?array {
 
     $durum = (new KuyrukDurumu(Database::connection()))->getir();
 
-    if (!$durum['takildi']) {
+    if ($durum['bilinmiyor'] || KuyrukDurumu::isciGorulduMu()) {
         return null;
+    }
+
+    if (KuyrukDurumu::tarayicidanIslenir()) {
+        return [
+            'ikon'   => 'refresh',
+            'renk'   => $durum['takildi'] ? 'warning' : 'brand',
+            'etiket' => 'Kuyruk tarayıcı üzerinden işleniyor',
+            'deger'  => $durum['bekleyen'] . ' iş sırada',
+            'ipucu'  => 'işçi yok; analiz, panel sayfası açıkken ilerler',
+            'yol'    => 'panel/transkript',
+        ];
     }
 
     return [
@@ -140,6 +189,22 @@ DashboardCards::add('transkript-kuyruk', static function (?User $user): ?array {
         'ipucu'  => KuyrukDurumu::KOMUT_ELLE,
         'yol'    => 'panel/transkript',
     ];
+});
+
+/* ---------------------------------------------------------------------
+ *  KONTROL PANELİ: "Son analizler" listesi (yalnız yönetici)
+ * ---------------------------------------------------------------------
+ *  Çekirdeğin DashboardPanels kancası; son 5 analiz, durum, başlatan,
+ *  süre. Herkesin kaydıdır: yalnız transkript.admin görür.
+ * ------------------------------------------------------------------ */
+DashboardPanels::add('transkript-son-analizler', static function (?User $user): ?string {
+    if ($user === null || !$user->can('transkript.admin')) {
+        return null;
+    }
+
+    return View::capture('Transkript::_parcalar/son-analizler', [
+        'analizler' => (new KaynakRepository(Database::connection()))->sonAnalizler(5),
+    ]);
 });
 
 /* ---------------------------------------------------------------------

@@ -35,6 +35,7 @@ require CY_BASE . '/app/bootstrap.php';
 
 use App\Core\Auth;
 use App\Core\DashboardCards;
+use App\Core\DashboardPanels;
 use App\Core\Database;
 use App\Core\Env;
 use App\Core\Exceptions\HttpException;
@@ -441,6 +442,14 @@ try {
 
     Ayarlar::forget();
     dogrula('Her rolde liste "Raporu hazır" toplamı = sayaç = Kontrol Paneli kartı = API meta', $fark === [], implode('; ', $fark));
+
+    $yonetimKartlari = array_column(DashboardCards::collect(kullanici('Y')), 'etiket');
+    $analistKartlari = array_column(DashboardCards::collect(kullanici('A')), 'etiket');
+    $yonetimBolumu   = implode('', DashboardPanels::collect(kullanici('Y')));
+    dogrula('Kontrol Paneli: sağlayıcı kartı ve "Son analizler" (test kaydıyla) yalnız yöneticide; analistte yok',
+        in_array('Yapay zekâ sağlayıcıları', $yonetimKartlari, true) && !in_array('Yapay zekâ sağlayıcıları', $analistKartlari, true)
+        && str_contains($yonetimBolumu, 'Son analizler') && str_contains($yonetimBolumu, 'Yetki testi K5')
+        && DashboardPanels::collect(kullanici('A')) === [] && DashboardPanels::collect(kullanici('U')) === []);
 
     $bListe = array_column($repo->liste([], 1, 100, ROLLER['B'][0], false)['satirlar'], 'id');
     $uListe = array_column($repo->liste([], 1, 100, ROLLER['U'][0], false)['satirlar'], 'id');

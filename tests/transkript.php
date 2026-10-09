@@ -2303,6 +2303,7 @@ dogrula('Liste süzgeci: analiz başlatamayanın varsayılanı "hazir", "hepsi" 
 $satirHata = [
     'id' => 24, 'tur' => 'youtube', 'dis_kimlik' => 'abcdefghijk', 'sahip_id' => 0, 'baslik' => 'Hatalı video', 'kanal_adi' => 'Kanal',
     'sure_sn' => 600, 'kucuk_resim' => null, 'yayin_tarihi' => null, 'kaynak_durumu' => 'normal', 'analiz_id' => 30, 'kullanici_id' => 1,
+    'kutuphanede' => 1, 'paylasildi' => 0,
     'durum' => 'hata', 'asama' => 'parca', 'ilerleme' => 40, 'hata_kodu' => 'ai_kota_doldu', 'created_at' => '2026-10-09 18:00:00', 'rapor_analiz_id' => null,
 ];
 $listeCiz = static fn (TranskriptPolicy $p, string $durum): string => App\Core\View::capture('Transkript::index', [
@@ -2330,7 +2331,7 @@ dogrula('Kartlar: token / maliyet yalnız yöneticide; hata sayısı analiz baş
 
 $raporCiz = static fn (TranskriptPolicy $p): string => App\Core\View::capture('Transkript::goster', [
     'kaynak' => ['id' => 16, 'tur' => 'youtube', 'dis_kimlik' => 'abcdefghijk', 'sahip_id' => 0, 'baslik' => 'Örnek', 'kanal_adi' => 'Kanal',
-                 'sure_sn' => 600, 'kucuk_resim' => null, 'yayin_tarihi' => null, 'durum' => 'normal'],
+                 'sure_sn' => 600, 'kucuk_resim' => null, 'yayin_tarihi' => null, 'durum' => 'normal', 'kutuphanede' => true, 'paylasildi' => 0],
     'veri' => [
         'durum'  => ['durum' => 'tamamlandi', 'asama' => 'bitti', 'ilerleme' => 100, 'etiket' => 'Analiz tamamlandı', 'hata' => null, 'sirada' => null,
                      'parca' => ['toplam' => 0, 'biten' => 0, 'hatali' => 0]],
@@ -2491,7 +2492,7 @@ dogrula('kuyruk-isci-kur.bat: etiket / goto yok, ps1\'i çağırır; görev otur
 
 $durduCiz = static fn (TranskriptPolicy $p): string => App\Core\View::capture('Transkript::goster', [
     'kaynak' => ['id' => 25, 'tur' => 'youtube', 'dis_kimlik' => 'abcdefghijk', 'sahip_id' => 0, 'baslik' => 'Örnek', 'kanal_adi' => 'Kanal',
-                 'sure_sn' => 360, 'kucuk_resim' => null, 'yayin_tarihi' => null, 'durum' => 'normal'],
+                 'sure_sn' => 360, 'kucuk_resim' => null, 'yayin_tarihi' => null, 'durum' => 'normal', 'kutuphanede' => true, 'paylasildi' => 0],
     'veri' => [
         'durum'  => ['durum' => 'hata', 'asama' => 'parca', 'ilerleme' => 80, 'etiket' => 'x', 'sirada' => null,
                      'parca' => ['toplam' => 1, 'biten' => 1, 'hatali' => 1],
@@ -2617,6 +2618,32 @@ $anasayfaKodu = (string) file_get_contents(MODUL_YOLU . '/views/anasayfa.php');
 dogrula('Ana sayfa API kartı "yönetici onayıyla" demiyor; Kontrol Paneli açıklamasında yükleme sözü yok',
     !str_contains($anasayfaKodu, 'yönetici onayıyla') && !str_contains((string) ($kunye['aciklama'] ?? ''), 'sonraki aşamada'));
 dogrula('Çekirdek: editor rolü ekranda "Analist"', Role::label(Role::EDITOR) === 'Analist');
+
+/* ---------------------------------------------------------------- */
+echo "\nYönetici Kontrol Paneli (sağlayıcılar, kuyruk, son analizler)\n";
+
+$sonAnalizHtml = App\Core\View::capture('Transkript::_parcalar/son-analizler', ['analizler' => [
+    ['analiz_id' => 3, 'kaynak_id' => 28, 'durum' => 'tamamlandi', 'asama' => 'bitti', 'ilerleme' => 100, 'hata_kodu' => null, 'kullanici_id' => 4,
+     'created_at' => '2026-10-09 21:00:00', 'basladi_at' => null, 'bitti_at' => '2026-10-09 21:01:00', 'sure_sn' => 62,
+     'baslik' => '<b>Başlık</b>', 'dis_kimlik' => 'abcdefghijk', 'tur' => 'youtube', 'baslatan' => 'Deneme Üye', 'kullanici_adi' => 'uye1'],
+    ['analiz_id' => 2, 'kaynak_id' => 29, 'durum' => 'hata', 'asama' => 'parca', 'ilerleme' => 40, 'hata_kodu' => 'iptal_edildi', 'kullanici_id' => null,
+     'created_at' => '2026-10-09 20:00:00', 'basladi_at' => null, 'bitti_at' => null, 'sure_sn' => 19,
+     'baslik' => 'İkinci', 'dis_kimlik' => 'bcdefghijkl', 'tur' => 'youtube', 'baslatan' => '', 'kullanici_adi' => null],
+    ['analiz_id' => 1, 'kaynak_id' => 30, 'durum' => 'analiz_ediliyor', 'asama' => 'parca', 'ilerleme' => 55, 'hata_kodu' => null, 'kullanici_id' => 1,
+     'created_at' => '2026-10-09 19:00:00', 'basladi_at' => null, 'bitti_at' => null, 'sure_sn' => 5,
+     'baslik' => 'Üçüncü', 'dis_kimlik' => 'cdefghijklm', 'tur' => 'youtube', 'baslatan' => 'Yönetici', 'kullanici_adi' => 'admin'],
+]]);
+dogrula('Son analizler: başlık kaçışlanır; başlatan, süre, iptal rozeti; süren analizde yüzde; silinmiş kullanıcı adı',
+    str_contains($sonAnalizHtml, '&lt;b&gt;Başlık&lt;/b&gt;') && !str_contains($sonAnalizHtml, '<b>Başlık')
+    && str_contains($sonAnalizHtml, 'Deneme Üye') && str_contains($sonAnalizHtml, 'sürdü') && str_contains($sonAnalizHtml, 'İptal edildi')
+    && str_contains($sonAnalizHtml, 'Analiz ediliyor %55') && str_contains($sonAnalizHtml, 'silinmiş kullanıcı'));
+$olayKodu = (string) file_get_contents(MODUL_YOLU . '/events.php');
+dogrula('Sağlayıcı kartı, kuyruk kartı ve son analizler yalnız yöneticiye (transkript.admin)',
+    preg_match("#DashboardCards::add\('transkript-saglayicilar'.*?can\('transkript\.admin'\)#s", $olayKodu) === 1
+    && preg_match("#DashboardPanels::add\('transkript-son-analizler'.*?can\('transkript\.admin'\)#s", $olayKodu) === 1);
+dogrula('Kuyruk kartı: işçi yokken tarayıcıdan işleme açıksa "tarayıcı üzerinden işleniyor", kapalıysa kırmızı uyarı',
+    str_contains($olayKodu, "'Kuyruk tarayıcı üzerinden işleniyor'") && str_contains($olayKodu, "'Kuyruk işçisi çalışmıyor'")
+    && strpos($olayKodu, 'KuyrukDurumu::tarayicidanIslenir()') < strpos($olayKodu, "'Kuyruk işçisi çalışmıyor'"));
 
 Setting::flush();
 Ayarlar::forget();
