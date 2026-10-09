@@ -2616,6 +2616,11 @@ preg_match('#function devamEt\(.*?\n    }\n#s', $baslaticiKodu, $devamGovde);
 dogrula('Kaldığı yerden devam yalnız başlatana ve yöneticiye (canRetry); başkası kendi analizini açar',
     str_contains($devamGovde[0] ?? '', '$policy->canRetry($son)'));
 
+dogrula('K4: günlük hak sayımı tek sorgu (başlatma + "Bugünkü hakkınız"); çağrısız biten hata / iptal sayılmaz',
+    str_contains(AnalizBaslatici::BUGUN_SAYILAN, "NOT (a.durum = 'hata' AND NOT EXISTS")
+    && str_contains(AnalizBaslatici::BUGUN_SAYILAN, "u.ref_tur = 'analiz' AND u.ref_id = a.id")
+    && substr_count($baslaticiKodu, 'prepare(self::BUGUN_SAYILAN)') === 2 && !str_contains($baslaticiKodu, 'WHERE kullanici_id = :ben AND created_at >= CURDATE()'));
+
 $hakSimdi = (int) strtotime('2026-10-10 14:20:00');
 $hakBos   = AnalizBaslatici::hakKarari(false, 3, 10, 1, 20, $hakSimdi);
 $hakGun   = AnalizBaslatici::hakKarari(false, 10, 10, 1, 20, $hakSimdi);

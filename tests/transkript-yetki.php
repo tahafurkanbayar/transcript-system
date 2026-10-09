@@ -454,6 +454,18 @@ try {
     Ayarlar::forget();
     dogrula('Her rolde liste "Raporu hazır" toplamı = sayaç = Kontrol Paneli kartı = API meta', $fark === [], implode('; ', $fark));
 
+    /* Cowork 6. tur K4: A'nın bugünkü analizleri K1 (tamamlandı), K4 (sürüyor), K5
+     * (hata, hiç yapay zekâ çağrısı yok). K5 haktan düşmez; çağrı kaydı varsa düşer. */
+    $aHak = (new \Modules\Transkript\Services\AnalizBaslatici($db, kullanici('A')))->hakDurumu()['gunluk'];
+    $db->prepare("INSERT INTO ai_kullanim_kaydi (modul, ref_tur, ref_id, saglayici, model, giris_token, cikis_token, maliyet_usd, sure_ms, durum, hata_kodu)
+                  VALUES ('transkript', 'analiz', (SELECT id FROM transkript_analizler WHERE kaynak_id = :k), 'gemini', 'test', 0, 0, 0, 1, 'hata', 'kota_doldu')")
+        ->execute([':k' => $k['K5']]);
+    $aHakCagrili = (new \Modules\Transkript\Services\AnalizBaslatici($db, kullanici('A')))->hakDurumu()['gunluk'];
+    $db->prepare("DELETE FROM ai_kullanim_kaydi WHERE modul = 'transkript' AND ref_tur = 'analiz' AND ref_id = (SELECT id FROM transkript_analizler WHERE kaynak_id = :k)")
+        ->execute([':k' => $k['K5']]);
+    dogrula('K4: yapay zekâ çağrısı yapılmadan hatayla / iptalle biten analiz günlük haktan düşmez; çağrı yapıldıysa düşer',
+        $aHak === 2 && $aHakCagrili === 3, "çağrısız $aHak, çağrılı $aHakCagrili");
+
     $yonetimKartlari = array_column(DashboardCards::collect(kullanici('Y')), 'etiket');
     $analistKartlari = array_column(DashboardCards::collect(kullanici('A')), 'etiket');
     $yonetimBolumu   = implode('', DashboardPanels::collect(kullanici('Y')));
