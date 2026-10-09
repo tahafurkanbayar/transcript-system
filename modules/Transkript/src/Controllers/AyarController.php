@@ -84,6 +84,7 @@ final class AyarController extends Controller
             'hatalar'       => $hatalar,
             'durum'         => [
                 'saglayici'   => Ai::label(),
+                'zincir'      => Ai::zincirDurumu(),
                 'ai_anahtar'  => Ai::isConfigured(),
                 'yt_anahtar'  => trim(Env::get('YOUTUBE_API_KEY')) !== '',
                 'transcript'  => implode(' → ', (array) Ayarlar::get('transcript.saglayicilar', [])),

@@ -3,6 +3,22 @@
 Starter'ın sürüm geçmişi kökteki `CHANGELOG.md`'dedir; bu dosya yalnız
 `modules/Transkript/` içindir. Biçim [Keep a Changelog](https://keepachangelog.com/tr/1.1.0/).
 
+## 0.4.0 (2026-10-09): yapay zekâ yedek zinciri, üye sayaçları
+
+### Eklenenler
+- **Yedek zinciri** (`Ai\YedekliSaglayici`): `.env` `AI_PROVIDERS=gemini,openrouter,…`
+  ile sağlayıcılar sırayla denenir; kota ya da hata veren sıradakine bırakır,
+  bir süre dinlenir (Cache, bütün işçiler). Yeni sağlayıcılar: OpenRouter,
+  Mistral, Cerebras (OpenAI uyumlu). Sağlayıcı başına `<AD>_MODEL`.
+- Ayarlar → Durum: yedek sırası, tanımlı / tanımsız, dinlenme süresi.
+
+### Değişenler
+- Zincirde arkasında yedek olan sağlayıcı 429'da beklemeden geçer.
+- Kullanım kaydına yanıtı veren sağlayıcının adı yazılır; düşen denemeler
+  `hata` satırı.
+- Analiz başlatamayan üye, sayaçlarda ve kontrol paneli kartında görebildiği
+  raporları görür; token / maliyet kartı üyeye çizilmez.
+
 ## 0.3.0 (2026-10-09): tanıtım ana sayfası
 
 ### Eklenenler

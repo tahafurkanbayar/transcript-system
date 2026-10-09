@@ -109,8 +109,30 @@ return [
      *  Flash modellerinde geçerlidir; Pro'ya geçilirse değiştirin.
      *
      *  istem_surumu: prompts/<ad>.<surum>.txt; analizle birlikte saklanır.
+     *
+     *  YEDEK ZİNCİRİ (Ai\YedekliSaglayici): .env'de
+     *      AI_PROVIDERS=gemini,openrouter,mistral,groq
+     *  verilirse sağlayıcılar bu sırayla denenir; biri kota / hata verirse
+     *  sıradakine geçilir. Anahtarı (GEMINI_API_KEY, OPENROUTER_API_KEY,
+     *  MISTRAL_API_KEY, GROQ_API_KEY, CEREBRAS_API_KEY) tanımlı olmayan
+     *  atlanır. Aşamanın modeli yalnız ilkine uygulanır; diğerleri
+     *  <AD>_MODEL (ör. GROQ_MODEL) ya da varsayılanını kullanır.
+     *  yedek.dinlenme_sn: hata veren sağlayıcı bu kadar saniye sona
+     *  alınır (bütün işçiler için); 0 ya da listede yoksa dinlenmez.
      * -------------------------------------------------------------- */
     'ai' => [
+        'yedek' => [
+            'dinlenme_sn' => [
+                'kota_doldu'       => 3600,   // günlük kota: saatte bir yeniden bakılır
+                'rate_limit'       => 60,     // dakikalık sınır
+                'yetkisiz'         => 1800,   // anahtar geçersiz / faturalandırma kapalı
+                'model_bulunamadi' => 1800,   // model kaldırılmış
+                'sunucu'           => 120,
+                'baglanti'         => 120,
+                'zaman_asimi'      => 120,
+            ],
+        ],
+
         'istem_surumu' => 'v3',
 
         'map' => [

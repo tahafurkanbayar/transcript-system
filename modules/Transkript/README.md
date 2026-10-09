@@ -284,6 +284,53 @@ Claude `output_config.format`, OpenAI uyumlu `json_object`), Gemini'de düşünm
 token'larının maliyete katılması, 429 gövdesindeki `retryDelay`'e uyum ve
 günlük kota dolunca boşuna yeniden denememe (`kota_doldu`).
 
+### Yedek zinciri (`Ai\YedekliSaglayici`)
+
+Ücretsiz katmanların günlük kotası çabuk dolar; uzun bir video 10–20 AI
+çağrısı açar. `.env`'de sıra verilince sağlayıcılar sırayla denenir, biri
+kota ya da hata verirse sıradakine geçilir:
+
+```
+AI_PROVIDERS=gemini,openrouter,mistral,groq
+GEMINI_API_KEY=…
+OPENROUTER_API_KEY=…
+MISTRAL_API_KEY=…
+GROQ_API_KEY=…
+# isteğe bağlı: OPENROUTER_MODEL=…, GROQ_MODEL=… (boşsa varsayılan)
+```
+
+| Sağlayıcı | Varsayılan model | Anahtar |
+|---|---|---|
+| `gemini` | `gemini-2.5-flash` (panel / `AI_MODEL`) | aistudio.google.com/apikey |
+| `openrouter` | `meta-llama/llama-3.3-70b-instruct:free` | openrouter.ai/keys |
+| `mistral` | `mistral-small-latest` | console.mistral.ai/api-keys |
+| `groq` | `llama-3.3-70b-versatile` | console.groq.com/keys |
+| `cerebras` | `llama-3.3-70b` | cloud.cerebras.ai |
+
+- Anahtarı tanımlı olmayan sağlayıcı atlanır; tek sağlayıcı kalırsa davranış
+  eskisiyle aynıdır. Ortak `AI_API_KEY` yalnız ilk sağlayıcıya gider (bir
+  servisin anahtarı başka servise gönderilmez). Anahtarlar veritabanında değil,
+  yalnız `.env`'de.
+- Aşamanın modeli (panel / config / `AI_MODEL`) yalnız ilk sağlayıcıya
+  uygulanır; Gemini'nin `thinkingConfig` eki yalnız Gemini'ye gider.
+- **Dinlenme:** hata veren sağlayıcı bir süre sona alınır (`config.php` →
+  `ai.yedek.dinlenme_sn`: günlük kota 1 saat, dakikalık sınır 1 dk, geçersiz
+  anahtar / kaldırılmış model 30 dk, sunucu ve ağ 2 dk). Bilgi Cache'te durur,
+  bütün işçiler görür; sonraki parçalar bitmiş servise gidip vakit harcamaz.
+  Hepsi dinleniyorsa yine sırayla denenir.
+- Arkasında yedek olan sağlayıcı 429 / 5xx'te istek içinde beklemez
+  (`HttpProvider::yenidenDenemeSiniri(0)`); son sağlayıcı `Retry-After`'a uyar.
+- **Hepsi düşerse:** denemelerden biri geçiciyse o kodla (iş kuyrukta sonra
+  yeniden dener), hepsi günlük kotaysa `kota_doldu` (analiz "yarın deneyin"
+  diye durur), yoksa son hatanın kodu. Her sağlayıcının sebebi log'a yazılır.
+- Kullanım kaydı (`ai_kullanim_kaydi`): düşen her deneme `hata` satırı,
+  yanıtı veren sağlayıcı kendi adıyla. Ayarlar ekranının Durum panelinde sıra,
+  "tanımlı / tanımsız" ve dinlenme süresi görünür.
+
+Ücretsiz modellerin bir kısmı (ör. OpenRouter `:free`) gönderilen metni
+eğitimde kullanabilir; KVKK metninde yurt dışına aktarılan sağlayıcılar
+listelenmeli.
+
 ### Analiz hattı (`Services/Pipeline`)
 
 ```

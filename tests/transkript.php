@@ -52,7 +52,9 @@ use Modules\Transkript\Ai\Ai;
 use Modules\Transkript\Ai\AiHatasi;
 use Modules\Transkript\Ai\ClaudeProvider;
 use Modules\Transkript\Ai\GeminiProvider;
+use Modules\Transkript\Ai\HttpProvider;
 use Modules\Transkript\Ai\OpenAiCompatibleProvider;
+use Modules\Transkript\Ai\YedekliSaglayici;
 use Modules\Transkript\Http\HttpIstemci;
 use Modules\Transkript\Http\HttpYanit;
 use Modules\Transkript\Ayarlar;
@@ -1887,6 +1889,125 @@ dogrula('Model listesi: Gemini\'de yalnız Flash ailesi (map\'te thinkingBudget 
 dogrula('Panel ayarlarında API anahtarı alanı yok (anahtar yalnız .env)',
     !array_filter(array_keys(PanelAyarlari::ALANLAR), static fn (string $a): bool => str_contains($a, 'anahtar') || str_contains($a, 'key')));
 $ayarYaz([]);
+
+/* ---------------------------------------------------------------- */
+echo "\nYapay zekâ yedek zinciri (sahte sağlayıcı; API'ye gidilmez)\n";
+
+/** .env değerlerini geçici olarak değiştirir; dönen kapanış eski hâle getirir. Değerler yazdırılmaz. */
+$ortamDegistir = static function (array $degerler): Closure {
+    $ozellik = new ReflectionProperty(Env::class, 'values');
+    $eski    = $ozellik->getValue();
+    $ozellik->setValue(null, array_merge((array) $eski, $degerler));
+
+    return static fn () => $ozellik->setValue(null, $eski);
+};
+$dinlenmeyiSil = static function (): void {
+    foreach (['test-a', 'test-b', 'test-c'] as $ad) {
+        YedekliSaglayici::dinlenmeyiBitir($ad);
+    }
+};
+$kotaDoldu = static fn (): AiHatasi => new AiHatasi('429 günlük kota', 'kota_doldu', 429);
+$dinlenmeyiSil();
+
+$a = new SahteAi([$kotaDoldu()]);
+$b = new SahteAi([SahteAi::yanit('{"tamam":1}'), SahteAi::yanit('{"tamam":2}')]);
+$zincir = new YedekliSaglayici([['ad' => 'test-a', 'saglayici' => $a], ['ad' => 'test-b', 'saglayici' => $b]]);
+$y1 = $zincir->sendJson([['role' => 'user', 'content' => 'x']], 's', ['type' => 'object']);
+dogrula('Birincinin kotası dolunca ikinciden yanıt; düşen deneme ve sebebi kayıtlı',
+    $y1['text'] === '{"tamam":1}' && $zincir->sonAd() === 'test-b'
+    && array_column($zincir->denemeler(), 'kod') === ['kota_doldu'] && $zincir->denemeler()[0]['ad'] === 'test-a');
+dogrula('Kotası dolan sağlayıcı dinlenir (saatte bir)', YedekliSaglayici::dinlenmeKalan('test-a') > 3500);
+$y2 = $zincir->sendJson([['role' => 'user', 'content' => 'y']], 's', ['type' => 'object']);
+dogrula('Dinlenen sağlayıcıya bir sonraki çağrıda gidilmez', $y2['text'] === '{"tamam":2}' && count($a->istekler) === 1 && $zincir->denemeler() === []);
+$dinlenmeyiSil();
+
+$hepsi = static function (array $kodlar): string {
+    $halkalar = [];
+    foreach ($kodlar as $i => $kod) {
+        $halkalar[] = ['ad' => 'test-' . chr(97 + $i), 'saglayici' => new SahteAi([new AiHatasi('düştü', $kod)])];
+    }
+    try {
+        (new YedekliSaglayici($halkalar))->sendJson([], '', []);
+    } catch (AiHatasi $e) {
+        return $e->kod . ($e->yenidenDenenebilir() ? '+' : '');
+    } finally {
+        foreach (array_keys($kodlar) as $i) {
+            YedekliSaglayici::dinlenmeyiBitir('test-' . chr(97 + $i));
+        }
+    }
+    return '';
+};
+dogrula('Hepsi düşerse: biri geçiciyse o kod (iş sonra yeniden dener); hepsi günlük kotaysa kota_doldu; yoksa sonuncunun kodu',
+    $hepsi(['kota_doldu', 'rate_limit']) === 'rate_limit+' && $hepsi(['kota_doldu', 'kota_doldu']) === 'kota_doldu'
+    && $hepsi(['yetkisiz', 'istek_hatasi']) === 'istek_hatasi' && $hepsi(['sunucu', 'yetkisiz']) === 'sunucu+');
+
+YedekliSaglayici::dinlendir('test-a', 'rate_limit');
+YedekliSaglayici::dinlendir('test-b', 'rate_limit');
+$a = new SahteAi([SahteAi::yanit('{"a":1}')]);
+$b = new SahteAi([]);
+$y = (new YedekliSaglayici([['ad' => 'test-a', 'saglayici' => $a], ['ad' => 'test-b', 'saglayici' => $b]]))->sendJson([], '', []);
+dogrula('Hepsi dinleniyorsa yine sırayla denenir; yanıt veren dinlenmeden çıkar',
+    $y['text'] === '{"a":1}' && YedekliSaglayici::dinlenmeKalan('test-a') === 0 && YedekliSaglayici::dinlenmeKalan('test-b') > 0);
+$dinlenmeyiSil();
+
+$a = new SahteAi([new AiHatasi('400', 'istek_hatasi', 400)]);
+$b = new SahteAi([SahteAi::yanit('{}')]);
+(new YedekliSaglayici([
+    ['ad' => 'test-a', 'saglayici' => $a, 'ek' => ['thinkingConfig' => ['thinkingBudget' => 0]]],
+    ['ad' => 'test-b', 'saglayici' => $b],
+]))->sendJson([], '', [], ['bunu' => 'yok say']);
+dogrula('Ek ayar yalnız kendi halkasına gider (Gemini thinkingConfig başka servise gitmez); isteğe özgü hata dinletmez',
+    $a->istekler[0]['ek'] === ['thinkingConfig' => ['thinkingBudget' => 0]] && $b->istekler[0]['ek'] === []
+    && YedekliSaglayici::dinlenmeKalan('test-a') === 0);
+
+$g1 = new GeminiProvider('test', 'gemini-2.5-flash');
+$g2 = new OpenAiCompatibleProvider('test', 'm', 'https://ornek.test/v1');
+new YedekliSaglayici([['ad' => 'test-a', 'saglayici' => $g1], ['ad' => 'test-b', 'saglayici' => $g2]]);
+$siniri = static fn (object $p): ?int => (new ReflectionProperty(HttpProvider::class, 'denemeSiniri'))->getValue($p);
+dogrula('Arkasında yedek olan halka 429\'da beklemez (0); son halka Retry-After\'a uyup yeniden dener', $siniri($g1) === 0 && $siniri($g2) === null);
+
+/* Pipeline: düşen deneme "hata", yanıt veren kendi adıyla kayda girer */
+$dinlenmeyiSil();
+SahteSorgu::$calisan = [];
+$zincirAi = new YedekliSaglayici([
+    ['ad' => 'test-a', 'saglayici' => new SahteAi([new AiHatasi('429', 'rate_limit', 429)])],
+    ['ad' => 'test-b', 'saglayici' => new SahteAi([SahteAi::yanit($gecerliMap)])],
+]);
+$plZ = new Pipeline(new AiKullanimRepository(new KayitPdo()), 42, new ResultValidator(), static fn (string $asama): array => [$zincirAi, 'zincir']);
+$sZ  = $plZ->parcaAnalizEt($parcaSatiri, $bloklar7, [540000, 560000], $baglam7);
+$saglayicilar = array_values(array_map(static fn (array $p): string => (string) $p[':saglayici'],
+    array_filter(SahteSorgu::$calisan, static fn (array $p): bool => isset($p[':saglayici']))));
+dogrula('Pipeline zincirle çalışır; kullanım kaydı: düşen "hata", yanıt veren sağlayıcı adıyla',
+    ($sZ['sonuc']['topic'] ?? '') === 'Konu' && kullanimDurumlari() === ['hata', 'basarili'] && $saglayicilar === ['test-a', 'test-b']);
+$dinlenmeyiSil();
+
+$geri = $ortamDegistir(['AI_PROVIDERS' => 'gemini, groq,bilinmeyen,groq', 'AI_PROVIDER' => 'gemini', 'AI_MODEL' => '',
+    'GEMINI_API_KEY' => 'test-g', 'GROQ_API_KEY' => '', 'AI_API_KEY' => 'test-ortak', 'OPENROUTER_API_KEY' => 'test-o', 'GROQ_MODEL' => 'llama-test']);
+$zincirAdlari = Ai::zincir();
+$groqOrtakla  = Ai::zincirdeKullanilabilir('groq', false);
+[$tek, $tekAd] = Pipeline::saglayiciUret('map');
+$geri();
+dogrula('AI_PROVIDERS sırası okunur; bilinmeyen ve tekrar atlanır', $zincirAdlari === ['gemini', 'groq']);
+dogrula('Ortak AI_API_KEY yalnız birincile verilir (Groq\'a Gemini\'nin anahtarı gitmez)', $groqOrtakla === false);
+dogrula('Yedeklerin anahtarı yoksa düz sağlayıcı (eski davranış)', $tek instanceof GeminiProvider && $tekAd === 'gemini');
+
+$geri = $ortamDegistir(['AI_PROVIDERS' => 'gemini,openrouter,groq', 'AI_PROVIDER' => 'gemini', 'AI_MODEL' => '',
+    'GEMINI_API_KEY' => 'test-g', 'OPENROUTER_API_KEY' => 'test-o', 'GROQ_API_KEY' => 'test-q', 'GROQ_MODEL' => 'llama-test', 'OPENROUTER_MODEL' => '']);
+$ayarYaz(['transkript_ai_model' => 'gemini-2.5-flash-lite']);
+[$z, $zAd] = Pipeline::saglayiciUret('map');
+$durum = Ai::zincirDurumu();
+$ayarYaz([]);
+$geri();
+$halkalar = $z instanceof YedekliSaglayici ? (new ReflectionProperty(YedekliSaglayici::class, 'halkalar'))->getValue($z) : [];
+dogrula('Anahtarı olan yedeklerle zincir kurulur; panel modeli yalnız birincile, diğerleri kendi modeli; thinkingConfig yalnız Gemini\'ye',
+    $zAd === 'zincir' && $z instanceof YedekliSaglayici && $z->adlar() === ['gemini', 'openrouter', 'groq']
+    && $halkalar[0]['saglayici']->model() === 'gemini-2.5-flash-lite'
+    && $halkalar[1]['saglayici']->model() === 'meta-llama/llama-3.3-70b-instruct:free'
+    && $halkalar[2]['saglayici']->model() === 'llama-test'
+    && $halkalar[0]['ek'] !== [] && $halkalar[1]['ek'] === [] && $halkalar[2]['ek'] === []);
+dogrula('Ayarlar ekranı için durum: sıra, tanımlı, model; anahtar değeri yok',
+    array_column($durum, 'ad') === ['gemini', 'openrouter', 'groq'] && array_column($durum, 'tanimli') === [true, true, true]
+    && !str_contains((string) json_encode($durum), 'test-o') && !str_contains((string) json_encode($durum), 'test-q'));
 
 /* ---------------------------------------------------------------- */
 echo "\nAna sayfa (çekirdeğin HomePage kancası, tanıtım sayfası)\n";
