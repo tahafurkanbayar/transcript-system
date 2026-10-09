@@ -17,6 +17,7 @@
  *  @var int                                                       $boyut
  *  @var array{bugun:int,token:int,maliyet:float,kaynak:int}       $istatistik
  *  @var bool                                                      $hepsi  istatistik herkesin mi
+ *  @var array<string,mixed>                                       $kuyruk KuyrukDurumu::getir()
  * =====================================================================
  */
 
@@ -38,6 +39,8 @@ $filtreli = $filtre['q'] !== '' || $filtre['durum'] !== '';
 $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format((float) $n, $basamak, ',', '.');
 ?>
 <link rel="stylesheet" href="<?= e(Varliklar::adres('transkript.css')) ?>">
+
+<?php View::partial('Transkript::_parcalar/kuyruk-uyarisi', ['kuyruk' => $kuyruk, 'policy' => $policy]); ?>
 
 <?php if ($policy->canAnalyze()): ?>
     <section class="cy-panel mb-3 tk-analiz" id="tk_analiz"

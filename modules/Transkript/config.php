@@ -151,10 +151,17 @@ return [
      *  boyunca işler; süre dolunca elindeki işi bitirip çıkar. Önceki
      *  çalışma sürerken yenisi başlamaz (görev kilidi). Kalıcı bir
      *  işçi (php cy queue:work) çalıştırılıyorsa görevi kapatın.
+     *
+     *  panelden_isle: cron'u olmayan barındırma için yedek. Açıksa
+     *  yönetici, işçi çalışmıyor uyarısındaki "Şimdi işle" düğmesiyle
+     *  sıradaki işleri istek içinde çalıştırır (en çok ~20 sn; bir AI
+     *  adımı sürerse istek daha uzun sürer). Geliştirme ortamında
+     *  (APP_ENV yayın değilse) bu ayar olmadan da açıktır.
      * -------------------------------------------------------------- */
     'kuyruk' => [
         'zamanlanmis_gorev' => true,
         'butce_sn'          => 240,
         'en_cok_is'         => 50,
+        'panelden_isle'     => false,
     ],
 ];

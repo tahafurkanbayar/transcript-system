@@ -19,9 +19,11 @@
  *  @var array<string,mixed>                 $veri    RaporVerisi::getir()
  *  @var Modules\Transkript\TranskriptPolicy $policy
  *  @var string                              $origin  gömülü oynatıcı için
+ *  @var array<string,mixed>                 $kuyruk  KuyrukDurumu::getir()
  * =====================================================================
  */
 
+use App\Core\View;
 use Modules\Transkript\HataKodlari;
 use Modules\Transkript\Services\DisaAktarim;
 use Modules\Transkript\Services\RaporVerisi;
@@ -132,6 +134,10 @@ $indir = static fn (string $bicim): string => url('panel/transkript/' . $kaynakI
             </div>
         </section>
 
+        <?php if ($suruyor): ?>
+            <?php View::partial('Transkript::_parcalar/kuyruk-uyarisi', ['kuyruk' => $kuyruk, 'policy' => $policy]); ?>
+        <?php endif; ?>
+
         <!-- İLERLEME (analiz sürerken; 3 sn'de bir güncellenir) -->
         <section class="cy-panel mb-3 tk-ilerleme" id="tk_ilerleme"
                  data-url="<?= e(url('panel/transkript/ilerleme/' . $kaynakId)) ?>"
@@ -143,6 +149,7 @@ $indir = static fn (string $bicim): string => url('panel/transkript/' . $kaynakI
             <span class="cy-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="<?= (int) $durum['ilerleme'] ?>" aria-label="Analiz ilerlemesi">
                 <span class="cy-progress__bar js-tk-cubuk" style="width: <?= (int) $durum['ilerleme'] ?>%"></span>
             </span>
+            <p class="tk-sirada cy-muted js-tk-sirada"<?= ($durum['sirada'] ?? null) !== null ? '' : ' hidden' ?>><?= icon('clock', 'cy-icon cy-icon--sm') ?> <span class="js-tk-sirada-metin"><?= e((string) ($durum['sirada'] ?? '')) ?></span></p>
             <ol class="tk-asamalar">
                 <?php foreach ($asamalar as $anahtar => $ad): ?>
                     <?php $sira = array_search($anahtar, $asamaSirasi, true); ?>
