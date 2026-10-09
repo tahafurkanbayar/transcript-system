@@ -3,6 +3,31 @@
 Starter'ın sürüm geçmişi kökteki `CHANGELOG.md`'dedir; bu dosya yalnız
 `modules/Transkript/` içindir. Biçim [Keep a Changelog](https://keepachangelog.com/tr/1.1.0/).
 
+## 0.6.4 (2026-10-09): kullanıcı olarak oturum açma (çekirdek)
+
+Modül kodu değişmedi; kullanıcının isteğiyle çekirdeğe eklenen özellik burada kayıtlı.
+
+- Kullanıcılar ekranında satırda ve ayrıntı penceresinde "Bu kullanıcı olarak
+  gir" (`POST api/kullanicilar/oturum-ac`). Parola sorulmaz. Yalnız yönetici,
+  yalnız aktif ve yönetici olmayan hesaba (`Auth::impersonationBlock`:
+  yönetici olmayan 403, yönetici hesabı 403, kendisi ya da pasif / askıda /
+  onay bekleyen hesap 409). Demo modunda kilitli.
+- Gezinirken her sayfanın altında bant: "X (Üye) olarak geziyorsunuz ·
+  Yönetici hesabına dön" (`POST oturum/yoneticiye-don`; bakım modunda da açık).
+  Panel, site ve hata sayfalarında görünür.
+- Oturum değişirken kimlik ve CSRF anahtarı yenilenir, kişisel oturum verisi
+  silinir (`Session::keepOnly`). Yönetici her istekte yeniden doğrulanır:
+  pasife alınırsa, parolası değişirse ya da gezilen hesap yönetici yapılırsa
+  oturum kapanır.
+- Üyenin son giriş bilgisi, "beni hatırla" jetonu ve cihaz çerezi değişmez.
+  Gezinirken çıkış yapılırsa yöneticinin jetonu iptal edilir.
+- Hesabım'daki değişiklikler (bilgiler, parola, fotoğraf, API anahtarı,
+  oturumlar, bildirimler, hesabı silme) gezinirken kapalı: yeni
+  `kendi-oturumu` ara katmanı.
+- Güvenlik günlüğüne giriş ve dönüş yazılır (yönetici, gezilen hesap, IP).
+- Birim testleri +8; `config/app.php` → `test_sayisi` 360. Canlı HTTP
+  denemesi geçici hesaplarla 35 kontrol.
+
 ## 0.6.3 (2026-10-09): ayar doğrulamaları (cowork 5. tur, 2. prompt)
 
 ### Transkript ayarları

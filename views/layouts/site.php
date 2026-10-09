@@ -178,6 +178,8 @@ $siteDil = substr($siteDil, 0, 5);
 
     <div class="toast-container cy-toast-container position-fixed end-0 p-3" id="cy_toasts"></div>
 
+    <?php View::partial('partials/gezinme-bandi'); ?>
+
     <script type="application/json" id="cy_flash"><?= json_encode($flashes, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?></script>
 
     <script src="<?= e(asset('js/jquery-3.7.0.min.js')) ?>"></script>

@@ -706,6 +706,28 @@ dogrula('Mobil giriş tarayıcı girişiyle aynı kapıdan geçer', str_contains
     && str_contains((string) file_get_contents(CY_BASE . '/app/Http/Controllers/Api/MobileController.php'), 'Auth::verifyCredentials('));
 dogrula('Giriş, bekleyen hesap silmeyi iptal eder', str_contains($auth, 'AccountDeletion::cancel($user->id)'));
 
+/* Kullanıcı olarak oturum açma (transcript-system): kural veritabanına gitmez. */
+$hesap = static fn (int $id, string $rol, string $durum = 'aktif'): App\Models\User
+    => App\Models\User::fromRow(['id' => $id, 'rol' => $rol, 'durum' => $durum]);
+$gecis = static fn (App\Models\User $kim, App\Models\User $kime): int
+    => App\Core\Auth::impersonationBlock($kim, $kime)['durum'] ?? 0;
+$yonetici = $hesap(1, Role::ADMIN);
+dogrula('Yönetici üye ve analist olarak oturum açabilir', $gecis($yonetici, $hesap(2, Role::MEMBER)) === 0 && $gecis($yonetici, $hesap(3, Role::EDITOR)) === 0);
+dogrula('Başka bir yönetici olarak oturum açılamaz (403)', $gecis($yonetici, $hesap(4, Role::ADMIN)) === 403);
+dogrula('Yönetici kendi hesabına "geçemez" (409)', $gecis($yonetici, $yonetici) === 409);
+dogrula('Pasif, askıda ya da onay bekleyen hesaba geçilemez (409)',
+    $gecis($yonetici, $hesap(5, Role::MEMBER, 'pasif')) === 409 && $gecis($yonetici, $hesap(5, Role::MEMBER, 'askida')) === 409
+    && $gecis($yonetici, $hesap(5, Role::MEMBER, 'onay_bekliyor')) === 409);
+dogrula('Analist, üye ve pasif yönetici kimsenin yerine geçemez (403)',
+    $gecis($hesap(3, Role::EDITOR), $hesap(2, Role::MEMBER)) === 403 && $gecis($hesap(2, Role::MEMBER), $hesap(6, Role::MEMBER)) === 403
+    && $gecis($hesap(7, Role::ADMIN, 'pasif'), $hesap(2, Role::MEMBER)) === 403);
+
+$_SESSION = ['_fingerprint' => 'p', '_last_activity' => 1, '_created' => 1, '_auth_user_id' => 1, '_flash' => [['type' => 'info']], '_yeni_api_anahtari' => 'x'];
+App\Core\Session::keepOnly(['_fingerprint', '_last_activity', '_created']);
+dogrula('Hesap değişince oturumda yalnız sistem anahtarları kalır', array_keys($_SESSION) === ['_fingerprint', '_last_activity', '_created']);
+$_SESSION = [];
+dogrula('Bakımda da üye olarak gezen yönetici kendi hesabına dönebilir', str_contains($middlewareKaynak, "['cikis', 'oturum/yoneticiye-don']"));
+
 $_SERVER['REQUEST_URI'] = '/api/v1/dosyalar/rapor.pdf';
 unset($_GET['r']);
 Url::forgetCurrent();
@@ -778,6 +800,15 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
         }
     }
 
+    $hesabimAcik = [];
+
+    foreach ($rotaTablosu as $rota) {
+        if ($rota['verb'] === 'POST' && str_starts_with($rota['path'], 'panel/hesabim/') && !in_array('kendi-oturumu', $rota['middleware'], true)) {
+            $hesabimAcik[] = $rota['path'];
+        }
+    }
+
+    dogrula('Hesabım\'daki değişiklikler kullanıcı olarak gezen yöneticiye kapalı', $hesabimAcik === [], implode(', ', $hesabimAcik));
     dogrula('Bütün panel rotaları giriş ister', $panelGirissiz === [], implode(', ', $panelGirissiz));
     dogrula('Oturumla çalışan bütün POST rotaları CSRF korumalı', $postCsrfsiz === [], implode(', ', $postCsrfsiz));
     dogrula('Panelin iç API uçları giriş ister (iletişim formu hariç)', $apiGirissiz === [], implode(', ', $apiGirissiz));

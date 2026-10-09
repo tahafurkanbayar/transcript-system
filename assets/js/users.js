@@ -14,7 +14,8 @@ jQuery(function ($) {
         fetch:  CY.url('api/kullanicilar/fetch'),
         save:   CY.url('api/kullanicilar/save'),
         remove: CY.url('api/kullanicilar/delete'),
-        status: CY.url('api/kullanicilar/status')
+        status: CY.url('api/kullanicilar/status'),
+        impersonate: CY.url('api/kullanicilar/oturum-ac')
     };
 
     // Sınır sunucudan gelir (config/upload.php → max_bytes; bkz. modals.php).
@@ -332,6 +333,7 @@ jQuery(function ($) {
             }
 
             $('#detail_edit_button').toggleClass('d-none', !data.can_edit);
+            $('#detail_impersonate_button').toggleClass('d-none', !data.can_impersonate);
             detailModal.show();
         });
     }
@@ -345,6 +347,28 @@ jQuery(function ($) {
         var id = currentDetailId;
         detailModal.hide();
         $('#detailModal').one('hidden.bs.modal', function () { fetchUser(id, openEditModal); });
+    });
+
+    /* Kullanıcı olarak gir: sunucu oturumu o hesaba geçirir, oturum
+     * kimliği ve CSRF anahtarı değişir; bu sayfa artık kullanılamaz,
+     * yanıttaki adrese gidilir. */
+    function impersonate(id, $button) {
+        $button.prop('disabled', true);
+
+        $.ajax({
+            url: API.impersonate, method: 'POST', dataType: 'json',
+            data: { id: id, csrf_token: CY.token() }
+        })
+        .done(function (response) { window.location.href = response.yonlendir; })
+        .fail(function (xhr) { CY.ajaxError(xhr, 'Bu kullanıcı olarak oturum açılamadı.'); $button.prop('disabled', false); });
+    }
+
+    $('#user_table').on('click', '.js-impersonate', function () {
+        impersonate($(this).data('id'), $(this));
+    });
+
+    $('#detail_impersonate_button').on('click', function () {
+        if (currentDetailId !== null) { impersonate(currentDetailId, $(this)); }
     });
 
     $('#user_table').on('click', '.js-edit', function () {

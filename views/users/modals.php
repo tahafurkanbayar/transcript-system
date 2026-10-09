@@ -275,6 +275,9 @@ $roles = $roles ?? [];
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn cy-btn cy-btn--ghost" data-bs-dismiss="modal">Kapat</button>
+                <button type="button" class="btn cy-btn cy-btn--ghost d-none" id="detail_impersonate_button" title="Parola sormadan bu hesabın gözünden gezin; alttaki banttan dönersiniz.">
+                    <?= icon('login', 'cy-icon cy-icon--sm') ?> Bu kullanıcı olarak gir
+                </button>
                 <button type="button" class="btn cy-btn cy-btn--primary d-none" id="detail_edit_button">
                     <?= icon('edit', 'cy-icon cy-icon--sm') ?> Düzenle
                 </button>

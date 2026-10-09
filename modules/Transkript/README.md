@@ -28,6 +28,9 @@ isteğiyle:
 - **Editör ekranda "Analist"** (`Role::LABELS`, 2026-10-09): rol artık içerik
   düzenlemiyor, analiz yapıyor. Rol anahtarı `editor` kaldı; veritabanı ve
   `module.json` değişmedi.
+- **Kullanıcı olarak oturum açma** (`Auth`, `Middleware`, `Session`, 2026-10-09):
+  yönetici Kullanıcılar ekranından parola sormadan bir üyenin ya da analistin
+  gözünden gezer, alttaki banttan döner. Ayrıntı: CHANGELOG 0.6.4.
 
 ---
 

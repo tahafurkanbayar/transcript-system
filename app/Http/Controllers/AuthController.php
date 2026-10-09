@@ -356,4 +356,18 @@ final class AuthController extends Controller
         Flash::info('Oturumunuz güvenli bir şekilde kapatıldı.');
         Response::redirect(url('giris'));
     }
+
+    /** POST oturum/yoneticiye-don — kullanıcı olarak gezinmeyi bitirir (bkz. Auth::impersonate). */
+    public function stopImpersonating(Request $request): void
+    {
+        $gezilen = Auth::user();
+
+        if (Auth::stopImpersonating() === null) {
+            Flash::info('Zaten kendi hesabınızdasınız.');
+            Response::redirect(url('panel'));
+        }
+
+        Flash::success('Yönetici hesabınıza döndünüz' . ($gezilen !== null ? ' (' . $gezilen->fullName() . ' hesabından)' : '') . '.');
+        Response::redirect(url('panel/kullanicilar'));
+    }
 }
