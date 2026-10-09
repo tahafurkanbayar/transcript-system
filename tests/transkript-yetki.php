@@ -466,6 +466,22 @@ try {
     dogrula('K4: yapay zekâ çağrısı yapılmadan hatayla / iptalle biten analiz günlük haktan düşmez; çağrı yapıldıysa düşer',
         $aHak === 2 && $aHakCagrili === 3, "çağrısız $aHak, çağrılı $aHakCagrili");
 
+    /* K6: "Son analizler" işlem süresini ve beklemeyi ayrı gösterir. K1: 20 dk önce
+     * kuyruğa girdi, 18 dk önce başladı, şimdi bitti, arada 10 dk ertelendi → 8 dk
+     * sürdü, 12 dk bekledi. K5 (hata) 5 dk önce durdu; sürdürülünce 5 dk beklemeye eklenir. */
+    $db->prepare('UPDATE transkript_analizler SET created_at = NOW() - INTERVAL 20 MINUTE, basladi_at = NOW() - INTERVAL 18 MINUTE,
+                  bitti_at = NOW(), bekleme_sn = 600 WHERE kaynak_id = :k')->execute([':k' => $k['K1']]);
+    $sonK1 = array_values(array_filter($repo->sonAnalizler(20), static fn (array $s): bool => (int) $s['kaynak_id'] === $k['K1']))[0] ?? [];
+    $k5Analiz = (int) satir($db, 'SELECT id FROM transkript_analizler WHERE kaynak_id = :k', [':k' => $k['K5']]);
+    $db->prepare('UPDATE transkript_analizler SET bitti_at = NOW() - INTERVAL 5 MINUTE, bekleme_sn = 0 WHERE id = :id')->execute([':id' => $k5Analiz]);
+    $surdu = (new \Modules\Transkript\Repositories\AnalizRepository($db))->devamEttir($k5Analiz, 'analiz_ediliyor');
+    $k5Bekleme = (int) satir($db, 'SELECT bekleme_sn FROM transkript_analizler WHERE id = :id', [':id' => $k5Analiz]);
+    $panel = implode('', DashboardPanels::collect(kullanici('Y')));
+    dogrula('K6: işlem süresi ertelenen / duran süre hariç (8 dk), bekleme ayrı (12 dk); sürdürülen analizin duruşu beklemeye eklenir; panel "sırada bekledi" yazar',
+        abs((int) ($sonK1['sure_sn'] ?? 0) - 480) <= 2 && abs((int) ($sonK1['bekleme_sn'] ?? 0) - 720) <= 2
+        && $surdu && abs($k5Bekleme - 300) <= 2 && str_contains($panel, 'sırada bekledi'),
+        json_encode([$sonK1['sure_sn'] ?? null, $sonK1['bekleme_sn'] ?? null, $surdu, $k5Bekleme]));
+
     $yonetimKartlari = array_column(DashboardCards::collect(kullanici('Y')), 'etiket');
     $analistKartlari = array_column(DashboardCards::collect(kullanici('A')), 'etiket');
     $yonetimBolumu   = implode('', DashboardPanels::collect(kullanici('Y')));
@@ -584,7 +600,10 @@ try {
         $aKilitli  = $ipDen('203.0.113.10', $k5Parola);
         $bGirer    = $ipDen('198.51.100.20', $k5Parola);
         $limiter->clear($k5Kadi);
+        // Saniye sınırına denk gelmesin diye üç hata: bekleme 4 sn (en az 3 sn kalır).
         $ilkHata   = $ipDen('198.51.100.30', 'yanlis-parola');
+        $limiter->begin($k5Kadi, '198.51.100.30');
+        $limiter->begin($k5Kadi, '198.51.100.30');
         $hemen     = $ipDen('198.51.100.30', $k5Parola);
         $limiter->begin($k5Kadi, '198.51.100.40');
         $limiter->begin($k5Kadi, '198.51.100.40');
@@ -597,9 +616,10 @@ try {
         App\Core\Ip::forget();
     }
 
-    dogrula('K5: A IP\'si kilitliyken (doğru parolayla bile) B IP\'si aynı kullanıcı adıyla girer; hatadan hemen sonra 1 sn, üç hatadan sonra 4 sn gecikme',
+    dogrula('K5: A IP\'si kilitliyken (doğru parolayla bile) B IP\'si aynı kullanıcı adıyla girer; üç hatadan sonra doğru parola da 4 sn bekler; 1-2-4-8 sn',
         !$aKilitli['ok'] && str_contains($aKilitli['message'], 'Çok fazla hatalı deneme') && $bGirer['ok']
-        && !$ilkHata['ok'] && !$hemen['ok'] && str_contains($hemen['message'], '1 saniye bekleyip') && in_array($ucHata, [3, 4], true)
+        && !$ilkHata['ok'] && !$hemen['ok'] && preg_match('/Lütfen [34] saniye bekleyip/u', $hemen['message']) === 1 && in_array($ucHata, [3, 4], true)
+        && App\Core\RateLimiter::gradualDelay(1, 0) === 1 && App\Core\RateLimiter::gradualDelay(2, 0) === 2
         && App\Core\RateLimiter::gradualDelay(4, 0) === 8 && App\Core\RateLimiter::gradualDelay(2, 5) === 0 && App\Core\RateLimiter::gradualDelay(0, 0) === 0,
         json_encode([$aKilitli['message'], $bGirer['ok'], $hemen['message'], $ucHata], JSON_UNESCAPED_UNICODE));
 

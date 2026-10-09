@@ -226,6 +226,8 @@ abstract class TranskriptIsi extends Job
         $this->birlikte(function () use ($birak, $sn): void {
             $birak();
             Queue::later($this, $sn);
+            // Ertelenen süre işlem değil beklemedir ("Son analizler", K6).
+            $this->analizler()->beklemeEkle($this->analizId, $sn);
         });
 
         Cache::put(self::ERTELEME_ONEKI . $this->analizId, $simdi + $sn, $sn + 3600);

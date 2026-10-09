@@ -191,9 +191,14 @@ final class AnalizRepository
      */
     public function devamEttir(int $id, string $durum): bool
     {
+        /* Durduğu andan (bitti_at) şimdiye kadar geçen süre beklemedir; işlem
+         * süresine sayılmaz (K6). MySQL atamaları soldan sağa uygular:
+         * bekleme_sn, bitti_at sıfırlanmadan ÖNCE hesaplanır. */
         $statement = $this->db->prepare(
             "UPDATE transkript_analizler
-                SET durum = :durum, hata_kodu = NULL, hata_ozeti = NULL, bitti_at = NULL
+                SET durum = :durum, hata_kodu = NULL, hata_ozeti = NULL,
+                    bekleme_sn = bekleme_sn + GREATEST(0, TIMESTAMPDIFF(SECOND, COALESCE(bitti_at, updated_at), NOW())),
+                    bitti_at = NULL
               WHERE id = :id AND durum = 'hata'"
         );
         $statement->execute([':durum' => $durum, ':id' => $id]);
@@ -208,6 +213,13 @@ final class AnalizRepository
         )->execute([':analiz' => $id]);
 
         return true;
+    }
+
+    /** Ertelenen süreyi beklemeye ekler (yapay zekâ dinlenirken; K6). */
+    public function beklemeEkle(int $id, int $saniye): void
+    {
+        $this->db->prepare('UPDATE transkript_analizler SET bekleme_sn = bekleme_sn + :sn WHERE id = :id')
+            ->execute([':sn' => max(0, $saniye), ':id' => $id]);
     }
 
     /** @return list<int> henüz işlenmemiş parçaların sırası */
