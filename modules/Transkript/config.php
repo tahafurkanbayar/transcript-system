@@ -111,7 +111,7 @@ return [
      *  istem_surumu: prompts/<ad>.<surum>.txt; analizle birlikte saklanır.
      * -------------------------------------------------------------- */
     'ai' => [
-        'istem_surumu' => 'v1',
+        'istem_surumu' => 'v2',
 
         'map' => [
             'saglayici'   => '',
