@@ -65,6 +65,7 @@ use Modules\Transkript\Kaynak\Kaynak;
 use Modules\Transkript\Kaynak\KaynakHatasi;
 use Modules\Transkript\Kaynak\UrlParser;
 use Modules\Transkript\Kaynak\YoutubeMetadata;
+use Modules\Transkript\PanelAyarlari;
 use Modules\Transkript\Repositories\AiKullanimRepository;
 use Modules\Transkript\Repositories\AnalizRepository;
 use Modules\Transkript\Repositories\KaynakRepository;
@@ -208,6 +209,8 @@ $beklenen = [
     'POST panel/transkript/analiz'                           => 'EY',
     'GET panel/transkript/ilerleme/{kaynak_id}'              => 'UEY',
     'POST panel/transkript/kuyruk/isle'                      => 'Y',
+    'GET panel/transkript/ayarlar'                           => 'Y',
+    'POST panel/transkript/ayarlar'                          => 'Y',
     'GET panel/transkript/varlik/{dosya}'                    => 'UEY',
     'GET panel/transkript/{kaynak_id}/transkript'            => 'UEY',
     'GET panel/transkript/{kaynak_id}/indir/{bicim}'         => 'UEY',
@@ -1839,6 +1842,46 @@ $listeGorunum = (string) file_get_contents(MODUL_YOLU . '/views/index.php');
 dogrula('Liste: TÜR sütunu yok (YouTube dışı tür rozet), durum tek sütun, işlemler sütunu',
     !str_contains($listeGorunum, '>Tür</th>') && !str_contains($listeGorunum, '>AI analizi</th>') && str_contains($listeGorunum, 'data-kart="islem"')
     && str_contains($listeGorunum, 'js-tk-sil') && str_contains($listeGorunum, 'js-tk-iptal'));
+
+/* ---------------------------------------------------------------- */
+echo "\nPanel ayarları (config.php üstüne yazılır; anahtar yok)\n";
+
+/** Setting önbelleğini veritabanına gitmeden doldurur. */
+$ayarYaz = static function (array $degerler): void {
+    $ozellik = new ReflectionProperty(Setting::class, 'cache');
+    $ozellik->setValue(null, $degerler);
+    Ayarlar::forget();
+};
+$ayarYaz([]);
+$varsayilanMap = Ayarlar::get('ai.map');
+dogrula('Panel değeri yoksa config.php aynen', Ayarlar::get('analiz.en_uzun_dk') === 180 && Ayarlar::get('transcript.tercih_diller') === ['tr'] && ($varsayilanMap['model'] ?? null) === '');
+$ayarYaz(['transkript_en_uzun_dk' => '90', 'transkript_ai_model' => 'gemini-2.5-flash-lite', 'transkript_altyazi_dili' => 'orijinal',
+    'transkript_gunluk_maliyet_tavani' => '2.5', 'transkript_gunluk_sinir' => '']);
+dogrula('Panel değeri üstüne yazılır: tam yol, dizinin içi ("ai.map" → model), altyazı seçimi, ondalık',
+    Ayarlar::get('analiz.en_uzun_dk') === 90 && Ayarlar::get('ai.map.model') === 'gemini-2.5-flash-lite'
+    && (Ayarlar::get('ai.reduce')['model'] ?? null) === 'gemini-2.5-flash-lite' && (Ayarlar::get('ai.map')['max_token'] ?? null) === 8192
+    && Ayarlar::get('transcript.tercih_diller') === [] && Ayarlar::get('analiz.gunluk_maliyet_tavani') === 2.5);
+dogrula('Boş panel değeri config varsayılanına döner; varsayilan() paneli yok sayar',
+    Ayarlar::get('analiz.gunluk_sinir') === 10 && Ayarlar::varsayilan('analiz.en_uzun_dk') === 180 && Ayarlar::get('analiz.en_uzun_dk') === 90);
+dogrula('Süre sınırı mesajı panel değerini kullanır', HataKodlari::mesaj('video_cok_uzun') === 'Bu video çok uzun; en çok 90 dakikalık videolar analiz edilebiliyor.');
+$ayarYaz(['transkript_fiyat_giris' => '1', 'transkript_fiyat_cikis' => '10']);
+dogrula('Panelde fiyat girildiyse maliyet ondan; yoksa sağlayıcının tahmini',
+    Pipeline::maliyet(['usage' => ['input_tokens' => 1_000_000, 'output_tokens' => 100_000], 'cost' => 9.9]) === 2.0
+    && (static function () use ($ayarYaz): bool { $ayarYaz([]); return Pipeline::maliyet(['usage' => ['input_tokens' => 5], 'cost' => 0.25]) === 0.25; })());
+$ayarYaz([]);
+dogrula('Doğrulama: tam sayı, aralık, ondalık virgül, seçenek listesi',
+    PanelAyarlari::dogrula('en_uzun_dk', 'abc') === 'Tam sayı girin (ör. 10).' && PanelAyarlari::dogrula('en_uzun_dk', '2000') === '0 ile 1.440 arasında olmalı.'
+    && PanelAyarlari::dogrula('en_uzun_dk', '120') === null && PanelAyarlari::dogrula('gunluk_maliyet_tavani', '2,5') === null
+    && PanelAyarlari::dogrula('altyazi_dili', 'fr') === 'Listeden bir seçenek seçin.' && PanelAyarlari::dogrula('altyazi_dili', 'orijinal') === null
+    && PanelAyarlari::dogrula('yok', '1') === 'Bilinmeyen ayar.');
+dogrula('Model listesi: Gemini\'de yalnız Flash ailesi (map\'te thinkingBudget 0 Pro\'da geçersiz)',
+    Ai::provider() !== 'gemini'
+    || (array_keys(PanelAyarlari::secenekler('ai_model')) !== [] && !array_filter(array_keys(PanelAyarlari::secenekler('ai_model')), static fn (string $m): bool => $m !== '' && !str_contains($m, 'flash'))));
+dogrula('Panel ayarlarında API anahtarı alanı yok (anahtar yalnız .env)',
+    !array_filter(array_keys(PanelAyarlari::ALANLAR), static fn (string $a): bool => str_contains($a, 'anahtar') || str_contains($a, 'key')));
+$ayarYaz([]);
+Setting::flush();
+Ayarlar::forget();
 
 Logger::useDirectory(null);
 Setting::flush();

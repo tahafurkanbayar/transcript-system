@@ -20,6 +20,7 @@ declare(strict_types=1);
 
 use App\Core\Router;
 use Modules\Transkript\Controllers\Api\TranskriptApiController;
+use Modules\Transkript\Controllers\AyarController;
 use Modules\Transkript\Controllers\KaynakController;
 use Modules\Transkript\Controllers\SohbetController;
 
@@ -45,6 +46,13 @@ $router->post('panel/transkript/kuyruk/isle', KaynakController::class, 'kuyruguI
 // Modülün JS / CSS dosyaları (modules/ klasörü tarayıcıya kapalı; bkz. Varliklar).
 $router->get('panel/transkript/varlik/{dosya}', KaynakController::class, 'varlik',
     ['installed', 'auth', 'can:transkript.view']);
+
+// Yönetici ayarları ({kaynak_id} rotalarından ÖNCE: ilk eşleşen kazanır).
+$router->get('panel/transkript/ayarlar', AyarController::class, 'goster',
+    ['installed', 'auth', 'can:transkript.admin']);
+
+$router->post('panel/transkript/ayarlar', AyarController::class, 'kaydet',
+    ['installed', 'auth', 'csrf', 'can:transkript.admin']);
 
 $router->get('panel/transkript/{kaynak_id}/transkript', KaynakController::class, 'transkript',
     ['installed', 'auth', 'can:transkript.view']);

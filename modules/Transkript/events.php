@@ -37,6 +37,7 @@ use App\Core\Queue\Queue;
 use App\Core\Schedule\Schedule;
 use App\Models\User;
 use Modules\Transkript\Ayarlar;
+use Modules\Transkript\Repositories\KaynakRepository;
 use Modules\Transkript\Services\KuyrukDurumu;
 
 if (PHP_SAPI === 'cli' && (bool) Ayarlar::get('kuyruk.zamanlanmis_gorev', true)) {
@@ -55,6 +56,51 @@ if (PHP_SAPI === 'cli' && (bool) Ayarlar::get('kuyruk.zamanlanmis_gorev', true))
         }
     })->everyMinute()->describe('Transkript analiz işlerini çalıştırır');
 }
+
+/* ---------------------------------------------------------------------
+ *  KONTROL PANELİ KARTLARI (DashboardCards kancası; çekirdeğe dokunmadan)
+ * ---------------------------------------------------------------------
+ *  Raporlar: transkript.view olan herkese (yönetici herkesinkini, diğerleri
+ *  kendi başlattıklarını sayar). Bugünkü kullanım: yalnız yönetici.
+ * ------------------------------------------------------------------ */
+DashboardCards::add('transkript-raporlar', static function (?User $user): ?array {
+    if ($user === null || !$user->can('transkript.view')) {
+        return null;
+    }
+
+    $hepsi = $user->can('transkript.admin');
+    $sayi  = (new KaynakRepository(Database::connection()))->istatistik($hepsi ? null : $user->id);
+    $alt   = array_filter([
+        $sayi['suruyor'] > 0 ? $sayi['suruyor'] . ' sürüyor' : '',
+        $sayi['hata'] > 0 ? $sayi['hata'] . ' hata' : '',
+    ]);
+
+    return [
+        'ikon'   => 'files',
+        'renk'   => $sayi['hata'] > 0 ? 'warning' : 'success',
+        'etiket' => 'Transkript raporu',
+        'deger'  => $sayi['kaynak'],
+        'ipucu'  => $alt !== [] ? implode(' · ', $alt) : 'raporu hazır video',
+        'yol'    => 'panel/transkript',
+    ];
+});
+
+DashboardCards::add('transkript-bugun', static function (?User $user): ?array {
+    if ($user === null || !$user->can('transkript.admin')) {
+        return null;
+    }
+
+    $bugun = (new KaynakRepository(Database::connection()))->bugunkuKullanim();
+
+    return [
+        'ikon'   => 'activity',
+        'renk'   => 'brand',
+        'etiket' => 'Bugünkü yapay zekâ kullanımı',
+        'deger'  => number_format($bugun['token'], 0, ',', '.') . ' token',
+        'ipucu'  => '$' . number_format($bugun['maliyet'], 4, ',', '.') . ' tahmini (ücretli katman fiyatıyla)',
+        'yol'    => 'panel/transkript/ayarlar',
+    ];
+});
 
 /* ---------------------------------------------------------------------
  *  KONTROL PANELİ: kuyruk işçisi çalışmıyorsa yöneticiye kırmızı kart

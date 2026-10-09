@@ -43,6 +43,12 @@ $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format(
 
 <?php View::partial('Transkript::_parcalar/kuyruk-uyarisi', ['kuyruk' => $kuyruk, 'policy' => $policy]); ?>
 
+<?php if ($policy->isAdmin()): ?>
+    <div class="tk-ust tk-ust--sag mb-3">
+        <a class="btn cy-btn cy-btn--ghost cy-btn--sm" href="<?= e(url('panel/transkript/ayarlar')) ?>"><?= icon('settings', 'cy-icon cy-icon--sm') ?> Transkript ayarları</a>
+    </div>
+<?php endif; ?>
+
 <?php if ($policy->canAnalyze()): ?>
     <section class="cy-panel mb-3 tk-analiz" id="tk_analiz"
              data-url="<?= e(url('panel/transkript/analiz')) ?>"

@@ -280,6 +280,22 @@ final class KaynakRepository
         ];
     }
 
+    /**
+     * Bugün harcanan token ve tahmini maliyet (bütün kullanıcılar; kontrol
+     * paneli kartı).
+     *
+     * @return array{token:int, maliyet:float}
+     */
+    public function bugunkuKullanim(): array
+    {
+        $satir = $this->db->query(
+            "SELECT COALESCE(SUM(giris_token + cikis_token), 0) AS token, COALESCE(SUM(maliyet_usd), 0) AS maliyet
+               FROM ai_kullanim_kaydi WHERE modul = 'transkript' AND created_at >= CURDATE()"
+        )->fetch(PDO::FETCH_ASSOC) ?: [];
+
+        return ['token' => (int) ($satir['token'] ?? 0), 'maliyet' => round((float) ($satir['maliyet'] ?? 0), 4)];
+    }
+
     /** gizli / silinmiş video (KaynakHatasi) kaydı. */
     public function durumYaz(int $id, string $durum): void
     {

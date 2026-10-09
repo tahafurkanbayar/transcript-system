@@ -156,6 +156,23 @@ YouTube açıklamasına yapıştırılacak bölüm listesi (ilk 0:00, en az 3, 1
 kuralı); kısa özeti kopyala; "~N dk okuma"; `panel/transkript?url=…` ile dolu
 açılış ve masaüstü yer imi. Hepsi kayıtlı rapordan üretilir, AI çağrısı yok.
 
+**Ayarlar (`panel/transkript/ayarlar`, yalnız yönetici):** yapay zekâ modeli
+(Gemini'de yalnız Flash ailesi: map'te düşünme kapalı, `thinkingBudget 0` Pro'da
+geçersiz), tercih edilen altyazı (Türkçe varsa o / videonun kendi dili), en uzun
+video, kotalar, 1M token giriş / çıkış fiyatı. Değerler çekirdeğin `ayarlar`
+tablosunda gizli `transkript` grubunda (`transkript_<alan>`, düzenlenemez
+işaretli; çekirdeğin Ayarlar ekranı göstermez, ezemez) durur ve
+`config.php`'nin üstüne yazılır (`PanelAyarlari`, `Ayarlar::get`). Boş alan
+varsayılana döner. API anahtarları yalnız "tanımlı / tanımsız" görünür; değeri
+`.env`'den çıkmaz. Yanında sağlayıcı, transcript sırası, istem sürümü ve kuyruk
+işçisinin durumu.
+
+**Kontrol Paneli** (çekirdeğin `DashboardCards` kancası): "Transkript raporu"
+(raporu hazır video; sürüyor / hata sayısı), yöneticiye "Bugünkü yapay zekâ
+kullanımı" (token + tahmini $) ve işçi çalışmıyorsa kırmızı kart. Son analizler
+listesi ve panelde hızlı analiz kutusu için çekirdekte bir bileşen kancası yok
+(kartlar yalnız sayı gösterir).
+
 **Oynatıcı:** sağda yapışkan `youtube-nocookie` gömülü oynatıcı. Zaman
 damgasına tıklayınca IFrame Player API'nin `postMessage` komutlarıyla
 (`seekTo`, `playVideo`) o saniyeye atlar; dış betik (`iframe_api`)
