@@ -46,6 +46,29 @@ Satır düzeyi (`TranskriptPolicy`): YouTube kaynağı ve analizi herkes için
 ortak cache'tir (`sahip_id = 0`). Yüklenen dosya, sohbet ve kişisel özet
 yalnızca sahibine ve `transkript.admin` yetkisi olana açıktır.
 
+Eylem bazında (canlı denendi: misafir / üye / editör / yönetici, 46 denetim):
+
+| Eylem | Misafir | Üye | Editör | Yönetici |
+|---|:-:|:-:|:-:|:-:|
+| Liste, rapor, ilerleme, transcript, indirme (ortak YouTube kaydı) | giriş sayfası | ✓ | ✓ | ✓ |
+| Başkasının yüklediği dosya kaydı | giriş sayfası | 404 | 404 (kendi: ✓) | ✓ |
+| Analiz başlat (önbellekteyse AI'a gidilmez) | 401 | 403 | ✓ | ✓ |
+| Yeniden analiz (`yeniden=1`) | 401 | 403 | 403 | ✓ |
+| Süren analizi iptal | 401 | 403 | kendi başlattığı | ✓ |
+| Sil | 401 | kendi yüklediği | kendi yüklediği | ✓ (ortak kayıt dahil) |
+| "Şimdi işle" (kuyruk) | 401 | 403 | 403 | ✓ |
+| Maliyet sütunları, "bütün kullanıcılar" sayaçları | | kendi | kendi | herkesin |
+
+CSRF anahtarı olmayan her POST 403'tür.
+
+**Kotalar** (`config.php` → `analiz`; yalnız yeni AI işi açan istek sayılır,
+önbellekten dönen sayılmaz): kullanıcı başına saatte `saatlik_sinir` (20) ve
+günde `gunluk_sinir` (10) analiz; bütün kullanıcılar için günlük
+`gunluk_token_tavani` (0 = kapalı) ve `gunluk_maliyet_tavani` (5 USD, ücretli
+katman fiyatıyla tahmin). Aşılınca 429 + `Retry-After` (gün sonuna kadar) ve
+Türkçe mesaj (`gunluk_sinir`, `gunluk_butce`). Yönetici kişisel sınırlardan
+muaftır (`yonetici_muaf`); genel bütçe tavanı herkese uygulanır.
+
 ## Tablolar
 
 | Tablo | İçerik |

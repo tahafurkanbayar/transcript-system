@@ -1216,10 +1216,35 @@ dogrula('Oturumsuz istek → 403', baslatmaReddi(null, $gecerliUrl) === ['yetkis
 $hizKlasoru = sys_get_temp_dir() . '/transkript-hiz-' . bin2hex(random_bytes(4));
 Throttle::useDirectory($hizKlasoru);
 Ayarlar::set('analiz.saatlik_sinir', 1);
-$ilk    = baslatmaReddi($yonetici, $gecerliUrl);
-$ikinci = baslatmaReddi($yonetici, $gecerliUrl);
+$ilk    = baslatmaReddi($editor, $gecerliUrl);
+$ikinci = baslatmaReddi($editor, $gecerliUrl);
 dogrula('Yeni iş saatlik sınıra tabi: ikinci istek → rate_limit 429',
     $ilk[0] === '' && $ikinci[0] === 'rate_limit' && $ikinci[1] === 429, json_encode([$ilk, $ikinci]));
+$yoneticiIlk    = baslatmaReddi($yonetici, $gecerliUrl);
+$yoneticiIkinci = baslatmaReddi($yonetici, $gecerliUrl);
+Ayarlar::set('analiz.yonetici_muaf', false);
+$muafDegil = baslatmaReddi($yonetici, $gecerliUrl);
+$muafDegil2 = baslatmaReddi($yonetici, $gecerliUrl);
+dogrula('Yönetici kişisel sınırlardan muaf (yonetici_muaf = false olunca o da sınıra takılır)',
+    $yoneticiIlk[0] === '' && $yoneticiIkinci[0] === '' && $muafDegil[0] === '' && $muafDegil2[0] === 'rate_limit', json_encode([$yoneticiIkinci, $muafDegil2]));
+Ayarlar::forget();
+
+dogrula('Günlük kota: 10 / 10 → gunluk_sinir; 0 sınırsız',
+    AnalizBaslatici::kotaKarari(10, 10, 0, 0, 0.0, 0.0)['kod'] === 'gunluk_sinir'
+    && str_contains(AnalizBaslatici::kotaKarari(10, 10, 0, 0, 0.0, 0.0)['mesaj'], '(10 / 10)')
+    && AnalizBaslatici::kotaKarari(9, 10, 0, 0, 0.0, 0.0) === null && AnalizBaslatici::kotaKarari(500, 0, 0, 0, 0.0, 0.0) === null);
+dogrula('Genel günlük bütçe: token ya da tahmini maliyet tavanı dolunca gunluk_butce (kişisel sınırdan önce)',
+    AnalizBaslatici::kotaKarari(0, 10, 1000, 1000, 0.0, 0.0)['kod'] === 'gunluk_butce'
+    && AnalizBaslatici::kotaKarari(10, 10, 0, 0, 5.01, 5.0)['kod'] === 'gunluk_butce'
+    && AnalizBaslatici::kotaKarari(0, 10, 999, 1000, 4.99, 5.0) === null);
+Ayarlar::set('analiz.gunluk_sinir', 0);
+Ayarlar::set('analiz.gunluk_maliyet_tavani', 0.0);
+$kotaPdo = new KayitPdo();
+try {
+    (new AnalizBaslatici($kotaPdo, $editor, new YoutubeMetadata(new SahteHttp([]))))->youtube($gecerliUrl);
+} catch (Throwable) {
+}
+dogrula('Günlük bütçe AI kullanım kaydından bugünkü toplamla okunur', (bool) array_filter($kotaPdo->sorgular, static fn (string $s): bool => str_contains($s, 'FROM ai_kullanim_kaydi') && str_contains($s, 'CURDATE()')));
 Ayarlar::forget();
 
 /* oEmbed ön kontrolü (sahte HTTP): kayıt açılmadan ret. Ret, INSERT'ten önce
@@ -1798,6 +1823,13 @@ $raporPdo = new KayitPdo();
 $raporYazildi = (new AnalizRepository($raporPdo))->raporuYaz(5, 1, ['summary' => 'x'], 'x', '', [], ['token' => 1, 'maliyet' => 0.0]);
 dogrula('raporuYaz önce satırı kilitler (FOR UPDATE); analiz yoksa / iptalse hiçbir şey yazmaz',
     $raporYazildi === false && str_contains($raporPdo->sorgular[0] ?? '', 'FOR UPDATE') && count($raporPdo->sorgular) === 1);
+
+$aramaPdo = new KayitPdo();
+(new KaynakRepository($aramaPdo))->liste(['q' => 'Çılgın'], 1, 10, 1, true);
+(new KaynakRepository($aramaPdo))->liste(['q' => 'jNQX'], 1, 10, 1, true);
+$kimlikAramasi = array_map(static fn (string $s): bool => str_contains($s, 'k.dis_kimlik LIKE'), $aramaPdo->sorgular);
+dogrula('Liste araması: ASCII dışı sorgu ascii_bin kimlik sütununa gitmez (eskiden "Illegal mix of collations" 500); "jNQX" kimlikte parça arar',
+    $kimlikAramasi === [false, false, true, true], json_encode($kimlikAramasi));
 
 // Yorumlar atılarak bakılır (açıklamada "confirm()" geçer).
 $listeJs = (string) preg_replace(['#/\*.*?\*/#s', '#^\s*//.*$#m'], '', (string) file_get_contents(MODUL_YOLU . '/assets/js/transkript.js'));
