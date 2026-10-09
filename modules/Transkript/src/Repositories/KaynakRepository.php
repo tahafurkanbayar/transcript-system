@@ -23,6 +23,7 @@ namespace Modules\Transkript\Repositories;
 use InvalidArgumentException;
 use Modules\Transkript\Kaynak\UrlParser;
 use Modules\Transkript\Kaynak\VideoBilgisi;
+use Modules\Transkript\Services\Search;
 use PDO;
 use RuntimeException;
 
@@ -114,6 +115,140 @@ final class KaynakRepository
             ':dil'          => $bilgi->dil,
             ':id'           => $id,
         ]);
+    }
+
+    /**
+     * Süre meta veriden gelmediyse (oEmbed süre vermez) transcript'in
+     * son segmentinden yazılır. Meta veri süresi varsa ona dokunulmaz.
+     */
+    public function sureYoksaYaz(int $id, int $sureSn): void
+    {
+        if ($sureSn <= 0) {
+            return;
+        }
+
+        $this->db->prepare('UPDATE transkript_kaynaklar SET sure_sn = :sure WHERE id = :id AND (sure_sn IS NULL OR sure_sn = 0)')
+            ->execute([':sure' => $sureSn, ':id' => $id]);
+    }
+
+    /* =================================================================
+     *  LİSTE (panel/transkript ve api/v1/transkript/kaynaklar)
+     * ============================================================== */
+
+    /** Liste durum filtresi → son analizin koşulu. */
+    public const LISTE_DURUMLARI = ['hazir', 'suruyor', 'hata'];
+
+    /**
+     * Kaynaklar, son analizleriyle birlikte; en son analiz edilen başta.
+     *
+     * GÖRÜNÜRLÜK (TranskriptPolicy::canViewSource ile aynı kural):
+     * YouTube kaynağı (sahip_id = 0) herkese; yüklenen dosya yalnız
+     * sahibine; $hepsi (transkript.admin) her şeye.
+     *
+     * ARAMA başlık ve kanal adında, utf8mb4_unicode_ci ile: turkish_ci'de
+     * "ai" "AI"yı bulmaz (README, "Arama neden katlanmış sütunda?").
+     *
+     * @param  array{tur?:string,durum?:string,q?:string} $filtre
+     * @return array{satirlar: list<array<string,mixed>>, toplam: int}
+     */
+    public function liste(array $filtre, int $sayfa, int $boyut, ?int $gorenId, bool $hepsi): array
+    {
+        $kosullar     = [];
+        $parametreler = [];
+
+        if (!$hepsi) {
+            $kosullar[] = '(k.sahip_id = 0 OR k.sahip_id = :ben)';
+            $parametreler[':ben'] = (int) $gorenId;
+        }
+
+        $tur = (string) ($filtre['tur'] ?? '');
+
+        if (in_array($tur, ['youtube', 'ses_dosyasi', 'video_dosyasi'], true)) {
+            $kosullar[] = 'k.tur = :tur';
+            $parametreler[':tur'] = $tur;
+        }
+
+        $kosullar[] = match ((string) ($filtre['durum'] ?? '')) {
+            'hazir'   => 'EXISTS (SELECT 1 FROM transkript_analizler r WHERE r.kaynak_id = k.id AND r.guncel_mi = 1 AND r.durum = \'tamamlandi\')',
+            'suruyor' => 'a.durum NOT IN (\'tamamlandi\', \'hata\')',
+            'hata'    => 'a.durum = \'hata\'',
+            default   => '1 = 1',
+        };
+
+        $q = trim((string) ($filtre['q'] ?? ''));
+
+        if ($q !== '') {
+            $kalip = '%' . Search::escapeLike(mb_substr($q, 0, 100)) . '%';
+            $kosullar[] = '(k.baslik COLLATE utf8mb4_unicode_ci LIKE :q1 OR k.kanal_adi COLLATE utf8mb4_unicode_ci LIKE :q2 OR k.dis_kimlik = :q3)';
+            $parametreler += [':q1' => $kalip, ':q2' => $kalip, ':q3' => $q];
+        }
+
+        $kaynak = 'FROM transkript_kaynaklar k
+                   JOIN transkript_analizler a ON a.id = (SELECT MAX(a2.id) FROM transkript_analizler a2 WHERE a2.kaynak_id = k.id)
+                  WHERE ' . implode(' AND ', $kosullar);
+
+        $say = $this->db->prepare('SELECT COUNT(*) ' . $kaynak);
+        $say->execute($parametreler);
+        $toplam = (int) $say->fetchColumn();
+
+        $sorgu = $this->db->prepare(
+            "SELECT k.id, k.tur, k.dis_kimlik, k.baslik, k.kanal_adi, k.sure_sn, k.kucuk_resim, k.yayin_tarihi,
+                    k.durum AS kaynak_durumu,
+                    a.id AS analiz_id, a.durum, a.asama, a.ilerleme, a.hata_kodu, a.created_at,
+                    (SELECT r.id FROM transkript_analizler r
+                      WHERE r.kaynak_id = k.id AND r.guncel_mi = 1 AND r.durum = 'tamamlandi'
+                      ORDER BY r.id DESC LIMIT 1) AS rapor_analiz_id
+             " . $kaynak . '
+             ORDER BY a.id DESC
+             LIMIT :limit OFFSET :offset'
+        );
+
+        foreach ($parametreler as $ad => $deger) {
+            $sorgu->bindValue($ad, $deger, is_int($deger) ? PDO::PARAM_INT : PDO::PARAM_STR);
+        }
+
+        $boyut = max(1, min(100, $boyut));
+        $sorgu->bindValue(':limit', $boyut, PDO::PARAM_INT);
+        $sorgu->bindValue(':offset', max(0, ($sayfa - 1) * $boyut), PDO::PARAM_INT);
+        $sorgu->execute();
+
+        return ['satirlar' => $sorgu->fetchAll(PDO::FETCH_ASSOC), 'toplam' => $toplam];
+    }
+
+    /**
+     * Özet kutucukları: bugün açılan analiz, toplam token, tahmini maliyet
+     * ve analiz edilen kaynak sayısı. $kullaniciId verilirse yalnız o
+     * kullanıcının başlattığı analizler (yönetici değilse).
+     *
+     * @return array{bugun:int, token:int, maliyet:float, kaynak:int}
+     */
+    public function istatistik(?int $kullaniciId): array
+    {
+        $kendi = $kullaniciId !== null ? ' AND a.kullanici_id = :ben' : '';
+        $p     = $kullaniciId !== null ? [':ben' => $kullaniciId] : [];
+
+        $analiz = $this->db->prepare(
+            'SELECT COALESCE(SUM(a.created_at >= CURDATE()), 0) AS bugun, COUNT(DISTINCT a.kaynak_id) AS kaynak
+               FROM transkript_analizler a WHERE 1 = 1' . $kendi
+        );
+        $analiz->execute($p);
+        $a = $analiz->fetch(PDO::FETCH_ASSOC) ?: [];
+
+        $kullanim = $this->db->prepare(
+            "SELECT COALESCE(SUM(u.giris_token + u.cikis_token), 0) AS token, COALESCE(SUM(u.maliyet_usd), 0) AS maliyet
+               FROM ai_kullanim_kaydi u
+               JOIN transkript_analizler a ON a.id = u.ref_id
+              WHERE u.modul = 'transkript' AND u.ref_tur = 'analiz'" . $kendi
+        );
+        $kullanim->execute($p);
+        $u = $kullanim->fetch(PDO::FETCH_ASSOC) ?: [];
+
+        return [
+            'bugun'   => (int) ($a['bugun'] ?? 0),
+            'token'   => (int) ($u['token'] ?? 0),
+            'maliyet' => round((float) ($u['maliyet'] ?? 0), 4),
+            'kaynak'  => (int) ($a['kaynak'] ?? 0),
+        ];
     }
 
     /** gizli / silinmiş video (KaynakHatasi) kaydı. */
