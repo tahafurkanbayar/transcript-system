@@ -403,10 +403,12 @@ final class Auth
                 'kalan'  => $lockedFor,
             ]);
 
+            /* Bir dakikadan kısa bekleme kademeli gecikmedir (1, 2, 4, 8 sn;
+             * bkz. RateLimiter::lockedFor), kilit değil: mesaj da öyle der. */
             return [
                 'ok'      => false,
                 'message' => $lockedFor < 60
-                    ? sprintf('Çok fazla hatalı deneme yapıldı. Lütfen %d saniye sonra tekrar deneyin.', $lockedFor)
+                    ? sprintf('Art arda hatalı deneme yaptınız. Lütfen %d saniye bekleyip tekrar deneyin.', $lockedFor)
                     : sprintf('Çok fazla hatalı deneme yapıldı. Lütfen %d dakika sonra tekrar deneyin.', (int) ceil($lockedFor / 60)),
                 'user' => null,
             ];

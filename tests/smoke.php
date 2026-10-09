@@ -311,6 +311,15 @@ test('Hatalı girişler kilide takılıyor (saat diliminden bağımsız)', funct
         $p     = $c->giris($kimlik, 'yanlis-parola-' . $i);
         $sayfa = $c->istek('giris')['govde'];
 
+        /* Kademeli gecikme (1, 2, 4, 8 sn): bekleyip aynı denemeyi yinele;
+         * beklerken gelen deneme sayılmaz (transcript-system, K5). */
+        if (preg_match('/Lütfen (\d+) saniye bekleyip/u', $sayfa, $gecikme) === 1) {
+            $iz[] = $i . ':bekle' . $gecikme[1];
+            sleep((int) $gecikme[1] + 1);
+            $p     = $c->giris($kimlik, 'yanlis-parola-' . $i);
+            $sayfa = $c->istek('giris')['govde'];
+        }
+
         // Teşhis: kilit geç gelirse hangi denemenin kimlik doğrulamaya ulaşmadığı görünsün.
         $iz[] = $i . ':' . $p['kod'] . (str_contains($sayfa, 'Kalan deneme') ? '/kalan' : '')
               . (str_contains($sayfa, 'Güvenlik doğrulaması') || $p['kod'] === 419 ? '/csrf' : '')
@@ -332,6 +341,13 @@ test('"Kalan deneme hakkı" var olmayan hesapta da gösteriliyor', function () u
     for ($i = 1; $i <= 4; $i++) {
         $c->giris($kimlik, 'x' . $i);
         $sayfa = $c->istek('giris')['govde'];
+
+        // Kademeli gecikme: bekleyip yinele (bkz. önceki test).
+        if (preg_match('/Lütfen (\d+) saniye bekleyip/u', $sayfa, $gecikme) === 1) {
+            sleep((int) $gecikme[1] + 1);
+            $c->giris($kimlik, 'x' . $i);
+            $sayfa = $c->istek('giris')['govde'];
+        }
 
         if (str_contains($sayfa, 'Çok fazla hatalı deneme')) {
             return null; // IP kilidi: test anlamsız

@@ -10,6 +10,7 @@
  *
  *   1. KİMLİK KİLİDİ — aynı e-posta/kullanıcı adına, aynı KAPSAMDAN
  *      (IP kovası ya da güvenilen cihaz) 5 hatalı denemede 15 dakika.
+ *      Öncesinde her hatadan sonra kademeli gecikme: 1, 2, 4, 8 sn.
  *
  *   2. IP GENELİ YAVAŞLATMA — tek bir IP kovasından FARKLI kimliklere
  *      yapılan hatalı denemeler (parola püskürtme). Sınır aşılınca sert
@@ -79,6 +80,12 @@ final class RateLimiter
     /**
      * Kimlik kilidi: bu denemeden ÖNCEKİ hatalı denemelere göre kalan
      * süre (saniye). 0 → kilit yok.
+     *
+     * KADEMELİ GECİKME (transcript-system, cowork 6. tur K5): sınırdan
+     * önceki her hatalı denemeden sonra 1, 2, 4, 8… saniye beklenir;
+     * sınıra ulaşınca kilit. Beklerken gelen deneme sayılmaz (Auth onu
+     * iptal eder). Gecikme de kilit de (kimlik + kapsam) çiftine bağlıdır:
+     * başka IP'den aynı kullanıcı adı etkilenmez.
      */
     public function lockedFor(string $identifier, string $scope, int $beforeId = PHP_INT_MAX): int
     {
@@ -95,7 +102,8 @@ final class RateLimiter
          * olduğunda kilidi baştan "geçmiş" gösteriyordu. */
         $stmt = $this->db->prepare(
             'SELECT COUNT(*) AS adet,
-                    TIMESTAMPDIFF(SECOND, NOW(), MAX(attempted_at) + INTERVAL :lock SECOND) AS kalan
+                    TIMESTAMPDIFF(SECOND, NOW(), MAX(attempted_at) + INTERVAL :lock SECOND) AS kalan,
+                    TIMESTAMPDIFF(SECOND, MAX(attempted_at), NOW()) AS gecen
                FROM login_attempts
               WHERE identifier = :kimlik AND ip = :kapsam AND id < :once
                 AND attempted_at >= (NOW() - INTERVAL :window SECOND)'
@@ -107,13 +115,28 @@ final class RateLimiter
         $stmt->bindValue(':lock', $lock, PDO::PARAM_INT);
         $stmt->execute();
 
-        $row = $stmt->fetch() ?: [];
+        $row  = $stmt->fetch() ?: [];
+        $adet = (int) ($row['adet'] ?? 0);
 
-        if ((int) ($row['adet'] ?? 0) < $max) {
+        if ($adet >= $max) {
+            return max(0, (int) ($row['kalan'] ?? 0));
+        }
+
+        return self::gradualDelay($adet, (int) ($row['gecen'] ?? 0), $lock);
+    }
+
+    /**
+     * Sınırdan önceki gecikme: $adet hatalı denemeden sonra 2^(adet-1)
+     * saniye (1, 2, 4, 8…), en fazla kilit süresi; son denemeden bu yana
+     * geçen süre düşülür. Veritabanına gitmez (birim testi).
+     */
+    public static function gradualDelay(int $adet, int $gecen, int $lock = 900): int
+    {
+        if ($adet <= 0) {
             return 0;
         }
 
-        return max(0, (int) ($row['kalan'] ?? 0));
+        return max(0, (int) min($lock, 2 ** min(20, $adet - 1)) - $gecen);
     }
 
     /**

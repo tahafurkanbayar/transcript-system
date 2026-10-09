@@ -560,6 +560,79 @@ try {
 
     dogrula('Analist başkasının API anahtarını kendi formundan iptal edemez (anahtar_id IDOR)', $duruyor === 1);
 
+    /* Cowork 6. tur K5: kilit (kullanıcı adı + IP) çiftine bağlı; öncesinde kademeli
+     * gecikme. Geçici bir üyeyle, gerçek giriş kapısından (Auth::verifyCredentials). */
+    $k5Kadi   = 'tk_k5_' . bin2hex(random_bytes(3));
+    $k5Parola = bin2hex(random_bytes(10)) . 'Aa1';
+    $db->prepare("INSERT INTO kullanicilar (ad, soyad, kullanici_adi, eposta, sifre, rol, durum, avatar, telefon, hakkinda)
+                  VALUES ('K5', 'Deneme', :k, :e, :s, 'uye', 'aktif', '', '', '')")
+        ->execute([':k' => $k5Kadi, ':e' => $k5Kadi . '@ornek.test', ':s' => password_hash($k5Parola, PASSWORD_DEFAULT)]);
+    $limiter = new App\Core\RateLimiter($db);
+    $ipDen   = static function (string $ip, string $parola) use ($k5Kadi): array {
+        $_SERVER['REMOTE_ADDR'] = $ip;
+        App\Core\Ip::forget();
+
+        return Auth::verifyCredentials($k5Kadi, $parola, new Request());
+    };
+
+    try {
+        // A IP'si: 5 hatalı deneme (gecikmeyi beklemeden, kayda doğrudan) → kilit.
+        for ($i = 0; $i < 5; $i++) {
+            $limiter->begin($k5Kadi, '203.0.113.10');
+        }
+
+        $aKilitli  = $ipDen('203.0.113.10', $k5Parola);
+        $bGirer    = $ipDen('198.51.100.20', $k5Parola);
+        $limiter->clear($k5Kadi);
+        $ilkHata   = $ipDen('198.51.100.30', 'yanlis-parola');
+        $hemen     = $ipDen('198.51.100.30', $k5Parola);
+        $limiter->begin($k5Kadi, '198.51.100.40');
+        $limiter->begin($k5Kadi, '198.51.100.40');
+        $limiter->begin($k5Kadi, '198.51.100.40');
+        $ucHata    = $limiter->lockedFor($k5Kadi, '198.51.100.40');
+    } finally {
+        $limiter->clear($k5Kadi);
+        $db->prepare('DELETE FROM kullanicilar WHERE kullanici_adi = :k')->execute([':k' => $k5Kadi]);
+        unset($_SERVER['REMOTE_ADDR']);
+        App\Core\Ip::forget();
+    }
+
+    dogrula('K5: A IP\'si kilitliyken (doğru parolayla bile) B IP\'si aynı kullanıcı adıyla girer; hatadan hemen sonra 1 sn, üç hatadan sonra 4 sn gecikme',
+        !$aKilitli['ok'] && str_contains($aKilitli['message'], 'Çok fazla hatalı deneme') && $bGirer['ok']
+        && !$ilkHata['ok'] && !$hemen['ok'] && str_contains($hemen['message'], '1 saniye bekleyip') && in_array($ucHata, [3, 4], true)
+        && App\Core\RateLimiter::gradualDelay(4, 0) === 8 && App\Core\RateLimiter::gradualDelay(2, 5) === 0 && App\Core\RateLimiter::gradualDelay(0, 0) === 0,
+        json_encode([$aKilitli['message'], $bGirer['ok'], $hemen['message'], $ucHata], JSON_UNESCAPED_UNICODE));
+
+    /* K10: "son aktif yönetici" kuralı. Gerçek hesaplara dokunmamak için ayrı
+     * bir bağlantıda AYNI ADLI GEÇİCİ tablo (yalnız o bağlantı görür, gerçek
+     * kullanicilar tablosunun önüne geçer; bağlantı kapanınca silinir). */
+    $kapi = (int) App\Core\Config::get('db.port', 3306);
+    $ayri = new PDO(
+        sprintf('mysql:host=%s;port=%d;dbname=%s;charset=utf8mb4', App\Core\Database::host((string) App\Core\Config::get('db.host'), $kapi), $kapi, (string) App\Core\Config::get('db.name')),
+        (string) App\Core\Config::get('db.user'),
+        (string) App\Core\Config::get('db.pass'),
+        [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]
+    );
+    // "LIKE kullanicilar" aynı adda olmaz (1066); tanım SHOW CREATE TABLE'dan, yabancı anahtarsız.
+    $tanim = (string) $ayri->query('SHOW CREATE TABLE kullanicilar')->fetchColumn(1);
+    $tanim = (string) preg_replace('/,\s*CONSTRAINT [^\n]+/', '', preg_replace('/^CREATE TABLE/', 'CREATE TEMPORARY TABLE', $tanim));
+    $ayri->exec($tanim);
+    $ayri->exec("INSERT INTO kullanicilar (id, ad, soyad, kullanici_adi, eposta, sifre, rol, durum, avatar, telefon, hakkinda)
+                 VALUES (1, 'Tek', 'Yönetici', 'tek', 'tek@ornek.test', 'x', 'admin', 'aktif', '', '', ''),
+                        (2, 'Pasif', 'Yönetici', 'pasif', 'pasif@ornek.test', 'x', 'admin', 'pasif', '', '', '')");
+    $geciciRepo = new UserRepository($ayri);
+    $sonSil   = $geciciRepo->changeAdminSafely(1, static fn () => $ayri->exec('DELETE FROM kullanicilar WHERE id = 1'));
+    $sonRol   = $geciciRepo->changeAdminSafely(1, static fn () => $ayri->exec("UPDATE kullanicilar SET rol = 'uye' WHERE id = 1"));
+    $tekDurdu = (string) $ayri->query('SELECT CONCAT(rol, \'/\', durum) FROM kullanicilar WHERE id = 1')->fetchColumn();
+    $ayri->exec("UPDATE kullanicilar SET durum = 'aktif' WHERE id = 2");
+    $ikinciVarken = $geciciRepo->changeAdminSafely(1, static fn () => $ayri->exec("UPDATE kullanicilar SET rol = 'uye' WHERE id = 1"));
+    $ayri->exec('DROP TEMPORARY TABLE kullanicilar');
+    $ayri = null;
+    $apiKodu = (string) file_get_contents(CY_BASE . '/app/Http/Controllers/Api/UserApiController.php');
+    dogrula('K10: son aktif yönetici silinemez ve rolü düşürülemez (pasif yönetici sayılmaz); ikinci aktif yönetici varken olur; silme, durum ve rol aynı kapıdan',
+        $sonSil === false && $sonRol === false && $tekDurdu === 'admin/aktif' && $ikinciVarken === true
+        && substr_count($apiKodu, 'changeAdminSafely(') === 3 && str_contains($apiKodu, 'son aktif yönetici'));
+
     // Aydınlatma metni sayfası: yalnız yayındaki bir sayfa (veritabanına sorulur; kayıt yapılmaz).
     $ayarlar  = new App\Http\Controllers\SettingsController();
     $kvkk     = static fn (string $slug): ?string => (fn (): ?string => $this->validateSetting(['anahtar' => 'sistem_kvkk_sayfa', 'tip' => 'metin', 'etiket' => 'Aydınlatma'], $slug))->call($ayarlar);
