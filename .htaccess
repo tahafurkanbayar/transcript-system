@@ -118,10 +118,13 @@ DirectoryIndex index.php
 # ---------------------------------------------------------------------
 #  PHP zaten bu başlıkları gönderiyor (App\Core\Response). Buradaki
 #  tanımlar, PHP çalışmadan servis edilen statik dosyaları da kapsar.
+#  Yalnız yanıtta o başlık YOKSA eklenir (expr=-z resp(...)): eskiden
+#  "always set" PHP'ninkinin yanına ikinci bir kopya koyuyordu
+#  ("X-Frame-Options: DENY, DENY"; cowork 5. tur, A13).
 <IfModule mod_headers.c>
-    Header always set X-Content-Type-Options "nosniff"
-    Header always set X-Frame-Options "DENY"
-    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+    Header always set X-Content-Type-Options "nosniff" "expr=-z resp('X-Content-Type-Options')"
+    Header always set X-Frame-Options "DENY" "expr=-z resp('X-Frame-Options')"
+    Header always set Referrer-Policy "strict-origin-when-cross-origin" "expr=-z resp('Referrer-Policy')"
     Header always unset X-Powered-By
     Header unset X-Powered-By
 </IfModule>
