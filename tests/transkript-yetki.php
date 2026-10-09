@@ -512,6 +512,14 @@ try {
     }
 
     dogrula('Analist başkasının API anahtarını kendi formundan iptal edemez (anahtar_id IDOR)', $duruyor === 1);
+
+    // Aydınlatma metni sayfası: yalnız yayındaki bir sayfa (veritabanına sorulur; kayıt yapılmaz).
+    $ayarlar  = new App\Http\Controllers\SettingsController();
+    $kvkk     = static fn (string $slug): ?string => (fn (): ?string => $this->validateSetting(['anahtar' => 'sistem_kvkk_sayfa', 'tip' => 'metin', 'etiket' => 'Aydınlatma'], $slug))->call($ayarlar);
+    $yayinda  = (string) satir($db, "SELECT slug FROM sayfalar WHERE durum = 'yayin' ORDER BY id LIMIT 1");
+    dogrula('Aydınlatma metni alanı var olmayan / yayında olmayan sayfayı kabul etmez (yayındakini eder)',
+        $kvkk('olmayan-sayfa-xyz') !== null && $kvkk('../etc') !== null && $kvkk('') === null && ($yayinda === '' || $kvkk($yayinda) === null),
+        (string) $kvkk('olmayan-sayfa-xyz'));
 } finally {
     temizle($db);
     $db->prepare('DELETE FROM kullanicilar WHERE kullanici_adi = :k')->execute([':k' => DENEME_YONETICI]);

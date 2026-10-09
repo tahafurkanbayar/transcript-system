@@ -76,6 +76,19 @@ $listeSatiri = static function (string $key, array $alanlar, int|string $i, arra
     </div>
 <?php endif; ?>
 
+<?php /* Bir modül ana sayfayı üstlendiyse (HomePage::activeOwner) buradaki ayarlar o an görünmez. */ ?>
+<?php if (($anaSayfaSahibi ?? null) !== null): ?>
+    <div class="cy-alert cy-alert--warning mb-3" role="status">
+        <span class="cy-alert__icon"><?= icon('info', 'cy-icon cy-icon--sm') ?></span>
+        <div class="cy-alert__body">
+            Şu an ana sayfa <strong><?= e($anaSayfaSahibi['ad']) ?></strong> tanıtım sayfası; buradaki ayarlar "Genel vitrin" seçilince geçerli olur.
+            <?php if ($anaSayfaSahibi['yol'] !== ''): ?>
+                <a class="cy-link" href="<?= e(url($anaSayfaSahibi['yol'])) ?>"><?= e($anaSayfaSahibi['ad']) ?> ayarları →</a>
+            <?php endif; ?>
+        </div>
+    </div>
+<?php endif; ?>
+
 <div class="row g-3">
     <div class="col-12 col-xl-8">
         <form method="post" action="<?= e(url('panel/ayarlar/' . $grup)) ?>" novalidate id="ayarlar_formu">
@@ -155,9 +168,29 @@ $listeSatiri = static function (string $key, array $alanlar, int|string $i, arra
                                         </button>
                                     </div>
 
+                                <?php elseif ($key === 'sistem_kvkk_sayfa'): ?>
+                                    <?php /* Serbest metin değil: yayındaki sayfalardan seçilir (SettingsController doğrular). */ ?>
+                                    <?php $sayfalar = $yayindakiSayfalar ?? []; ?>
+                                    <select class="form-select<?= $errorCls ?>" name="<?= e($key) ?>" id="set_<?= e($key) ?>">
+                                        <option value=""<?= $value === '' ? ' selected' : '' ?>>— Seçilmedi —</option>
+                                        <?php foreach ($sayfalar as $slug => $sayfaBaslik): ?>
+                                            <option value="<?= e((string) $slug) ?>"<?= $value === (string) $slug ? ' selected' : '' ?>><?= e((string) $sayfaBaslik) ?> (<?= e((string) $slug) ?>)</option>
+                                        <?php endforeach; ?>
+                                        <?php if ($value !== '' && !array_key_exists($value, $sayfalar)): ?>
+                                            <option value="<?= e($value) ?>" selected><?= e($value) ?> (yayında değil)</option>
+                                        <?php endif; ?>
+                                    </select>
+
                                 <?php elseif ($type === 'uzun_metin'): ?>
                                     <textarea class="form-control<?= $errorCls ?>" name="<?= e($key) ?>"
                                               id="set_<?= e($key) ?>" rows="4"><?= e($value) ?></textarea>
+                                    <?php if ($key === 'seo_robots_ek' && $hasError): ?>
+                                        <?php /* "Disallow: /" yeni eklendiyse bilinçli onay ister (SettingsController::crossErrors). */ ?>
+                                        <div class="form-check mt-2">
+                                            <input class="form-check-input" type="checkbox" value="1" name="seo_robots_onay" id="set_seo_robots_onay">
+                                            <label class="form-check-label small" for="set_seo_robots_onay">Bütün siteyi arama motorlarına kapatan kuralı onaylıyorum</label>
+                                        </div>
+                                    <?php endif; ?>
 
                                 <?php elseif ($type === 'secim'): ?>
                                     <?php $options = json_decode((string) ($row['secenekler'] ?? '[]'), true) ?: []; ?>

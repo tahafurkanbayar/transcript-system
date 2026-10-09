@@ -3,6 +3,38 @@
 Starter'ın sürüm geçmişi kökteki `CHANGELOG.md`'dedir; bu dosya yalnız
 `modules/Transkript/` içindir. Biçim [Keep a Changelog](https://keepachangelog.com/tr/1.1.0/).
 
+## 0.6.3 (2026-10-09): ayar doğrulamaları (cowork 5. tur, 2. prompt)
+
+### Transkript ayarları
+- "Dinlenmeleri sıfırla" onay ister; günlük kotası dolan sağlayıcı varsa
+  açılış saatiyle uyarır (sıfırlamak yeni bir hata getirir).
+- Açıklamadaki `AI_PROVIDERS` örneği gerçek sıradan üretilir (sabit
+  "gemini,openrouter,mistral,groq" metni kalktı); kullanılabilecek adlar listelenir.
+- Model alanının etiketi asıl sağlayıcının adıyla ("Google Gemini modeli");
+  yedeklerin modeli sağlayıcı tablosunda.
+- Ana sayfa kancasına "şu an etkin mi" ve ayar yolu verilir (aşağıda).
+
+### Çekirdek (`SettingsController`, `views/settings/group.php`, `HomePage`)
+- Genel: site adı zorunlu, 2–60; marka ≤ 60, slogan ≤ 120, açıklama ≤ 300
+  (160'ı aşınca "arama sonuçlarında kesilir" bilgisi). Düz metin
+  alanlarından HTML etiketi temizlenir.
+- İletişim: telefon WhatsApp kuralıyla; adres ≤ 500, çalışma saatleri ≤ 120;
+  iletişim e-postası boşsa E-posta ayarlarında gönderen adresi şart
+  (yönetici bildirimleri ikisinden birine gider).
+- SEO: başlık şablonu ≤ 120 ve `%sayfa%` içerir; robots.txt'ye yeni
+  "Disallow: /" onay kutusu işaretlenmeden kaydedilmez.
+- Sistem: aydınlatma metni sayfası serbest metin değil, yayındaki
+  sayfalardan seçilir; var olmayan adres kaydedilemez; onay açıkken sayfa şart.
+- E-posta: SMTP seçiliyken sunucu, port ve gönderen zorunlu; kayıttan sonra
+  sınama düğmesine yönlendirir.
+- PWA: kısa ad ≤ 12, ad ≤ 45. Sosyal: her alan kendi alan adını kabul eder.
+- Ana Sayfa ayarları: bir modül ana sayfayı üstlendiyse üstte şerit
+  ("Şu an ana sayfa Transkript tanıtım sayfası…" + ayar bağlantısı).
+  `HomePage::set()` isteğe bağlı `$aktif` ve `$ayarYolu` alır,
+  `HomePage::activeOwner()` söyler.
+- Hata olursa hiçbir alan kaydedilmez (mevcut davranış).
+- `config/app.php` → `test_sayisi` 352.
+
 ## 0.6.2 (2026-10-09): güvenlik (çekirdek; cowork 5. tur, 3. prompt)
 
 Modül kodu değişmedi; çekirdek düzeltmeleri ve testleri burada kayıtlı.

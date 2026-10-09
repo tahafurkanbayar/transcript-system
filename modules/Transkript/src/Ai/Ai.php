@@ -388,6 +388,12 @@ final class Ai
         return (string) (self::PROVIDERS[$ad]['label'] ?? $ad);
     }
 
+    /** AI_PROVIDERS'a yazılabilecek adlar (ayarlar ekranındaki açıklama için). @return list<string> */
+    public static function saglayiciAdlari(): array
+    {
+        return array_keys(self::PROVIDERS);
+    }
+
     /* =================================================================
      *  ARAYÜZ İÇİN
      * ============================================================== */

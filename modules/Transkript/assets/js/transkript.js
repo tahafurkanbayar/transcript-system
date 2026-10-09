@@ -482,6 +482,17 @@
         });
     });
 
+    /* Onaylı form gönderimi (ayarlar: "Dinlenmeleri sıfırla"). Onaydan
+     * sonra form.submit() çağrılır; tıklama olayı yeniden tetiklenmez. */
+    $(document).on('click', '.js-tk-form-onay', function (e) {
+        var form = this.form;
+
+        if (!form) { return; }
+
+        e.preventDefault();
+        dugmeOnayi(this, function () { form.submit(); });
+    });
+
     /* Üyelerle paylaş / paylaşımı kaldır (yalnız yönetici). */
     $(document).on('click', '.js-tk-paylas', function () {
         kayitIstegi(this, 'Paylaşım değiştirilemedi.', function () {

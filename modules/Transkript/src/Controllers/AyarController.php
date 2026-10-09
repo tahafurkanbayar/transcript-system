@@ -138,6 +138,7 @@ final class AyarController extends Controller
                     default                                                                 => 'hazir',
                 },
                 'sebep'    => $kalan > 0 ? (YedekliSaglayici::SEBEPLER[$kayit['kod'] ?? ''] ?? 'hata') : '',
+                'kod'      => $kalan > 0 ? (string) ($kayit['kod'] ?? '') : '',
                 'acilis'   => $kalan > 0 ? YedekliSaglayici::saat($simdi + $kalan, $simdi) : null,
                 'kalan_dk' => $kalan > 0 ? max(1, (int) ceil($kalan / 60)) : 0,
             ] + ($ozet[$h['ad']] ?? ['son_basari' => null, 'son_hata' => null, 'son_hata_kodu' => null, 'bugun_cagri' => 0, 'bugun_token' => 0]);

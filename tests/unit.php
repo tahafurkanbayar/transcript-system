@@ -1151,6 +1151,66 @@ dogrula('E-posta konusu ve gönderen adı CRLF ile başlık ekleyemez (Bcc / Cc 
     !isset($crlfBaslik['Bcc']) && !isset($crlfBaslik['Cc']) && !isset($crlfBaslik['X-Ek'])
     && !preg_match('/[\r\n]/', $crlfBaslik['Subject'] . $crlfBaslik['From']));
 
+/* Ayar doğrulamaları (cowork 5. tur, A1–A8). Denetleyici veritabanısız
+ * kurulur; sistem_kvkk_sayfa (sayfa tablosu ister) tests/transkript-yetki.php'de. */
+App\Core\Setting::flush();
+$ayarDenetleyici = (new ReflectionClass(App\Http\Controllers\SettingsController::class))->newInstanceWithoutConstructor();
+$ayarHatasi = static fn (string $anahtar, string $tip, string $deger): ?string =>
+    (fn (): ?string => $this->validateSetting(['anahtar' => $anahtar, 'tip' => $tip, 'etiket' => 'Alan'], $deger))->call($ayarDenetleyici);
+$capraz = static function (string $grup, array $degerler, array $post = []) use ($ayarDenetleyici): array {
+    $eskiPost = $_POST;
+    $_POST    = $post;
+
+    try {
+        return (fn (): array => $this->crossErrors($grup, $degerler, new Request()))->call($ayarDenetleyici);
+    } finally {
+        $_POST = $eskiPost;
+    }
+};
+
+dogrula('Site adı zorunlu, 2–60 karakter; marka ≤ 60, slogan ≤ 120, açıklama ≤ 300',
+    str_contains((string) $ayarHatasi('site_adi', 'metin', ''), 'boş bırakılamaz') && $ayarHatasi('site_adi', 'metin', 'A') !== null
+    && $ayarHatasi('site_adi', 'metin', str_repeat('a', 61)) !== null && $ayarHatasi('site_adi', 'metin', 'Transkript') === null
+    && $ayarHatasi('site_marka', 'metin', str_repeat('m', 61)) !== null && $ayarHatasi('site_slogan', 'metin', str_repeat('s', 121)) !== null
+    && $ayarHatasi('site_aciklama', 'uzun_metin', str_repeat('ç', 301)) !== null && $ayarHatasi('site_aciklama', 'uzun_metin', str_repeat('ç', 300)) === null);
+dogrula('Telefon WhatsApp kuralıyla (harf ve HTML yok); adres ≤ 500, çalışma saatleri ≤ 120',
+    $ayarHatasi('iletisim_telefon', 'metin', 'abc<script>') !== null && $ayarHatasi('iletisim_telefon', 'metin', '+90 (555) 123-45-67') === null
+    && $ayarHatasi('iletisim_adres', 'uzun_metin', str_repeat('a', 501)) !== null && $ayarHatasi('iletisim_saatler', 'metin', str_repeat('a', 121)) !== null);
+dogrula('SEO başlık şablonu %sayfa% içerir ve ≤ 120; PWA kısa ad ≤ 12, ad ≤ 45',
+    $ayarHatasi('seo_baslik_sablonu', 'metin', 'Sabit başlık') !== null && $ayarHatasi('seo_baslik_sablonu', 'metin', '%sayfa% · %site%') === null
+    && $ayarHatasi('seo_baslik_sablonu', 'metin', '%sayfa%' . str_repeat('x', 114)) !== null
+    && $ayarHatasi('pwa_kisa_ad', 'metin', 'Transkriptim1') !== null && $ayarHatasi('pwa_ad', 'metin', str_repeat('a', 46)) !== null);
+dogrula('Sosyal: her alan kendi alan adını kabul eder (alt alan adı dahil; benzer ad değil)',
+    $ayarHatasi('sosyal_youtube', 'url', 'https://ornek.com/kanal') !== null && $ayarHatasi('sosyal_youtube', 'url', 'https://www.youtube.com/@kanal') === null
+    && $ayarHatasi('sosyal_youtube', 'url', 'https://youtu.be/abc') === null && $ayarHatasi('sosyal_x', 'url', 'https://twitter.com/a') === null
+    && $ayarHatasi('sosyal_linkedin', 'url', 'https://tr.linkedin.com/in/a') === null && $ayarHatasi('sosyal_linkedin', 'url', 'https://evil-linkedin.com/a') !== null
+    && $ayarHatasi('sosyal_github', 'url', 'javascript:alert(1)') !== null && $ayarHatasi('sosyal_github', 'url', '') === null);
+$smtpHata = $capraz('eposta', ['mail_surucu' => 'smtp', 'mail_host' => '', 'mail_port' => '587', 'mail_gonderen' => '']);
+dogrula('SMTP seçiliyken sunucu ve gönderen zorunlu; "kayıt" yönteminde değil',
+    array_keys($smtpHata) === ['mail_host', 'mail_gonderen'] && $capraz('eposta', ['mail_surucu' => 'kayit', 'mail_host' => '']) === []);
+dogrula('robots.txt\'ye yeni "Disallow: /" onaysız kaydedilmez, onayla kaydedilir; "Disallow: /ozel" serbest',
+    isset($capraz('seo', ['seo_robots_ek' => "User-agent: *\nDisallow: /"])['seo_robots_ek'])
+    && $capraz('seo', ['seo_robots_ek' => "User-agent: *\nDisallow: /"], ['seo_robots_onay' => '1']) === []
+    && $capraz('seo', ['seo_robots_ek' => 'Disallow: /ozel']) === []);
+dogrula('Aydınlatma metni onayı açıkken sayfa seçilmeli; iletişim e-postası boşsa gönderen adresi gerekir',
+    isset($capraz('sistem', ['sistem_kvkk_onay' => '1', 'sistem_kvkk_sayfa' => ''])['sistem_kvkk_sayfa'])
+    && $capraz('sistem', ['sistem_kvkk_onay' => '0', 'sistem_kvkk_sayfa' => '']) === []
+    && isset($capraz('iletisim', ['iletisim_eposta' => ''])['iletisim_eposta']) && $capraz('iletisim', ['iletisim_eposta' => 'a@ornek.com']) === []);
+$duzMetin = (new ReflectionClassConstant(App\Http\Controllers\SettingsController::class, 'DUZ_METIN'))->getValue();
+dogrula('Düz metin ayarlarından HTML etiketi temizlenir (site adı, telefon, adres, PWA adı…)',
+    array_diff(['site_adi', 'site_marka', 'site_slogan', 'site_aciklama', 'iletisim_telefon', 'iletisim_adres', 'pwa_ad', 'pwa_kisa_ad'], $duzMetin) === []
+    && !in_array('seo_analytics', $duzMetin, true));
+
+App\Core\HomePage::reset();
+$anaSayfaAcik = true;
+App\Core\HomePage::set('Modul', static fn (Request $r): bool => true, static function () use (&$anaSayfaAcik): bool { return $anaSayfaAcik; }, 'panel/modul/ayarlar');
+$sahipAcik = App\Core\HomePage::activeOwner();
+$anaSayfaAcik = false;
+$sahipKapali = App\Core\HomePage::activeOwner();
+App\Core\HomePage::reset();
+dogrula('Ana sayfayı modül üstlenince Ayarlar → Ana Sayfa bunu bilir (modül ayarıyla kapalıysa bilmez)',
+    $sahipAcik === ['ad' => 'Modul', 'yol' => 'panel/modul/ayarlar'] && $sahipKapali === null && App\Core\HomePage::activeOwner() === null);
+
 $kullaniciApi = (string) file_get_contents(CY_BASE . '/app/Http/Controllers/Api/UserApiController.php');
 preg_match('#function save\(.*?Auth::can\(#s', $kullaniciApi, $kaydetBasi);
 dogrula('api/kullanicilar/save: action yalnız add | edit, başka değer yetkiden önce 422',

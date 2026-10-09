@@ -19,6 +19,8 @@
  * =====================================================================
  */
 
+use App\Core\View;
+use Modules\Transkript\Ai\Ai;
 use Modules\Transkript\Ai\YedekliSaglayici;
 
 use Modules\Transkript\PanelAyarlari;
@@ -71,7 +73,8 @@ $sayi     = static fn (int $n): string => number_format($n, 0, ',', '.');
                                 ?>
                                 <div class="col-12 col-md-6">
                                     <label class="form-label" for="<?= e($id) ?>">
-                                        <?= e($tanim['etiket']) ?><?php if (isset($tanim['birim'])): ?> <span class="cy-muted small">(<?= e($tanim['birim']) ?>)</span><?php endif; ?>
+                                        <?php /* Model listesi asıl sağlayıcınındır: etiket onun adıyla ("Gemini modeli"). */ ?>
+                                        <?= e($alan === 'ai_model' ? Ai::label() . ' modeli' : $tanim['etiket']) ?><?php if (isset($tanim['birim'])): ?> <span class="cy-muted small">(<?= e($tanim['birim']) ?>)</span><?php endif; ?>
                                     </label>
                                     <?php if ($tanim['tur'] === 'secim'): ?>
                                         <select class="form-select<?= $hata !== null ? ' is-invalid' : '' ?>" id="<?= e($id) ?>" name="<?= e($alan) ?>" aria-describedby="<?= e($id) ?>_aciklama">
@@ -138,8 +141,9 @@ $sayi     = static fn (int $n): string => number_format($n, 0, ',', '.');
             <p class="cy-panel__note mb-0">
                 Anahtarlar yalnızca sunucudaki <span class="cy-mono">.env</span> dosyasında durur; burada değeri gösterilmez ve değiştirilemez.
                 Sağlayıcı <span class="cy-mono">AI_PROVIDER</span>, anahtar <span class="cy-mono">GEMINI_API_KEY</span> / <span class="cy-mono">CLAUDE_API_KEY</span>.
-                Yedek: <span class="cy-mono">AI_PROVIDERS=gemini,openrouter,mistral,groq</span> ve her birinin anahtarı
-                (<span class="cy-mono">OPENROUTER_API_KEY</span> …); biri kota ya da hata verirse sıradaki denenir.
+                Yedek sırası şu an <span class="cy-mono">AI_PROVIDERS=<?= e(implode(',', array_column($durum['zincir'], 'ad'))) ?></span>
+                ve her birinin anahtarı (<span class="cy-mono">OPENROUTER_API_KEY</span> …); biri kota ya da hata verirse sıradaki denenir.
+                Kullanılabilecek adlar: <span class="cy-mono"><?= e(implode(', ', Ai::saglayiciAdlari())) ?></span>.
             </p>
             <?php if ($durum['kuyruk']['takildi']): ?>
                 <p class="cy-panel__note is-warn mt-2 mb-0">İşçiyi başlatmak için proje klasöründe: <code><?= e(KuyrukDurumu::KOMUT_ELLE) ?></code></p>
@@ -155,9 +159,23 @@ $sayi     = static fn (int $n): string => number_format($n, 0, ',', '.');
             <h3 class="cy-section-title mb-1" id="tk-saglayicilar-baslik"><?= icon('zap', 'cy-icon cy-icon--sm') ?> Yapay zekâ sağlayıcıları</h3>
             <p class="cy-muted small mb-0">Sırayla denenir. Dinlenen sağlayıcı açılış saatine kadar atlanır; hepsi dinlenirken analiz hata vermez, en erken açılışta kendiliğinden sürer.</p>
         </div>
+        <?php
+        /* Günlük kotası dolan sağlayıcıyı sıfırlamak işe yaramaz: ilk analizde
+         * aynı hatayı alıp yeniden dinlenir (cowork 5. tur, A11). Onayda söylenir. */
+        $kotaDolu = array_values(array_filter($durum['zincir'], static fn (array $h): bool => ($h['kod'] ?? '') === 'kota_doldu'));
+        $sifirlaOnay = 'Dinlenen ve devre dışı sağlayıcılar hemen yeniden denenecek. Anahtarı ya da modeli düzelttiyseniz kullanın.';
+
+        if ($kotaDolu !== []) {
+            $sifirlaOnay = implode(' ', array_map(
+                static fn (array $h): string => $h['etiket'] . ' günlük kotası ' . $h['acilis'] . ' civarında açılır;',
+                $kotaDolu
+            )) . ' şimdi sıfırlamak ilk analizde aynı hatayı ve yeni bir dinlenmeyi getirir. Yine de sıfırlansın mı?';
+        }
+        ?>
         <form method="post" action="<?= e(url('panel/transkript/ayarlar/dinlenme-sifirla')) ?>">
             <?= csrf_field() ?>
-            <button type="submit" class="btn cy-btn cy-btn--ghost cy-btn--sm" title="Anahtarı ya da modeli düzelttiyseniz beklemeden yeniden denensin">
+            <button type="submit" class="btn cy-btn cy-btn--ghost cy-btn--sm js-tk-form-onay" title="Anahtarı ya da modeli düzelttiyseniz beklemeden yeniden denensin"
+                    data-onay="<?= e($sifirlaOnay) ?>" data-onay-baslik="Dinlenmeleri sıfırla" data-onay-dugme="Evet, sıfırla"<?= $kotaDolu !== [] ? ' data-onay-tehlike="1"' : '' ?>>
                 <?= icon('refresh', 'cy-icon cy-icon--sm') ?> Dinlenmeleri sıfırla
             </button>
         </form>
@@ -252,3 +270,7 @@ $sayi     = static fn (int $n): string => number_format($n, 0, ',', '.');
         </div>
     <?php endif; ?>
 </section>
+
+<?php View::partial('Transkript::_parcalar/onay-penceresi'); ?>
+
+<script src="<?= e(Varliklar::adres('transkript.js')) ?>" defer></script>

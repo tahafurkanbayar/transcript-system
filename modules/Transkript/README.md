@@ -10,7 +10,11 @@ Projeye ait kodun tamamı bu klasördedir; çekirdeğe (`app/`, `config/`,
 isteğiyle:
 
 - Modülün ana sayfayı çizebilmesi için genel kanca: `app/Core/HomePage.php`
-  ve `HomeController`'da üç satır ("Ekranlar → Ana sayfa").
+  ve `HomeController`'da üç satır ("Ekranlar → Ana sayfa"). Kanca "şu an
+  etkin mi" bilgisini de alır; Site Ayarları → Ana Sayfa bunu şeritle söyler.
+- **Site Ayarları doğrulamaları** (`SettingsController`, `views/settings/group.php`,
+  2026-10-09, cowork 5. tur): karakter sınırları, SMTP zorunlu alanları, aydınlatma
+  metni sayfası listeden, sosyal alan adları, robots "Disallow: /" onayı.
 - **Editör'ün kapsamı daraltıldı** (`app/Models/Role.php`, 2026-10-09).
   Editör artık sayfalara, iletişim mesajlarına ve e-posta geçmişine
   giremez; bunlar kişisel veri ve KVKK metni taşıdığı için yalnız
