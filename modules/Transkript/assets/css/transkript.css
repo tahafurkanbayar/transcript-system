@@ -139,9 +139,20 @@ a.tk-zaman.is-oynuyor { background: var(--cy-brand); color: #fff; }
 .tk-transcript > li { display: flex; gap: .6rem; align-items: baseline; padding: .35rem 0; border-top: 1px solid var(--cy-border); line-height: 1.55; }
 .tk-transcript > li:first-child { border-top: 0; }
 .tk-transcript mark { padding: 0 .1rem; border-radius: 3px; background: var(--cy-warning-soft); color: inherit; }
+/* Oynatıcıyla eş zamanlı: o an konuşulan satır */
+.tk-transcript > li.is-aktif { background: var(--cy-brand-50); box-shadow: inset 3px 0 0 var(--cy-brand); padding-left: .5rem; border-radius: var(--cy-radius-xs); }
+.tk-takip { display: flex; }
 
-/* --- Sağ sütun: yapışkan oynatıcı --- */
-.tk-yapiskan { position: sticky; top: calc(var(--cy-topbar-h, 64px) + 1rem); display: grid; gap: .75rem; }
+/* --- Sağ sütun: yalnız oynatıcı yapışkan; paneller altından akar --- */
+.tk-yapiskan {
+    position: sticky; top: calc(var(--cy-topbar-h, 64px) + 1rem); z-index: 3;
+    display: grid; gap: .5rem; padding-bottom: .5rem; background: var(--cy-bg);
+}
+.tk-yan { display: grid; gap: .75rem; }
+.tk-disa__liste { display: flex; flex-wrap: wrap; gap: .4rem; margin-bottom: .5rem; }
+.tk-kisayol { margin-top: .75rem; }
+.tk-kisayol > summary { cursor: pointer; font-size: .85rem; color: var(--cy-text-muted); }
+.tk-kisayol[open] > summary { margin-bottom: .5rem; }
 .tk-oynatici { position: relative; aspect-ratio: 16 / 9; border-radius: var(--cy-radius); overflow: hidden; background: #000; box-shadow: var(--cy-shadow-sm); }
 .tk-oynatici iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
 .tk-oynatici__not { margin: 0; font-size: .8rem; color: var(--cy-text-muted); }
@@ -152,8 +163,8 @@ a.tk-zaman.is-oynuyor { background: var(--cy-brand); color: #fff; }
 /* Telefonda oynatıcı yer kaplamaz: zaman damgası YouTube uygulamasını
  * o saniyeden açar (youtu.be/ID?t=…). Yapışkanlık da kalkar. */
 @media (max-width: 767.98px) {
-    .tk-oynatici, .tk-oynatici__not { display: none; }
-    .tk-yapiskan { position: static; }
+    .tk-oynatici, .tk-oynatici__not, .tk-takip { display: none; }
+    .tk-yapiskan { position: static; padding: 0; }
     .tk-kart { flex-direction: column; }
     .tk-kart__resim { width: 100%; height: auto; aspect-ratio: 16 / 9; }
     .tk-analiz__form { flex-direction: column; }

@@ -78,6 +78,7 @@ Panel: `panel/transkript` (liste), `panel/transkript/{kaynak_id}` (rapor),
 `panel/transkript/analiz` (POST), `panel/transkript/ilerleme/{kaynak_id}`,
 `panel/transkript/{kaynak_id}/transkript` (okuma + arama JSON'u),
 `panel/transkript/varlik/{dosya}` (modülün JS / CSS'i),
+`panel/transkript/{kaynak_id}/indir/{bicim}` (rapor.md, transkript.txt / .srt / .vtt),
 `panel/transkript/{kaynak_id}/sohbet` (POST, sonraki aşama).
 
 API (`Authorization: Bearer cy_…`): hazır olanlar `analiz`, `kaynaklar`
@@ -105,10 +106,18 @@ rozeti, "yalnız kritik ve önemli" filtresi), zaman çizelgesi, teknik bilgiler
 transcript (açılınca yüklenir; arama debounce + `seq` yarış koruması,
 Türkçe katlamalı vurgu). Analiz edilemeyen bölümler varsa aralıkları uyarıda.
 
+**Dışa aktarma ve kısayollar** (rakip analizinden; `docs/RAKIP_ANALIZI.md`):
+rapor Markdown (zaman damgaları `youtu.be?t=` bağlantısı, AI metni
+kaçışlanır), transcript TXT, altyazı SRT / VTT (`Services/DisaAktarim`);
+YouTube açıklamasına yapıştırılacak bölüm listesi (ilk 0:00, en az 3, 10 sn
+kuralı); kısa özeti kopyala; "~N dk okuma"; `panel/transkript?url=…` ile dolu
+açılış ve masaüstü yer imi. Hepsi kayıtlı rapordan üretilir, AI çağrısı yok.
+
 **Oynatıcı:** sağda yapışkan `youtube-nocookie` gömülü oynatıcı. Zaman
 damgasına tıklayınca IFrame Player API'nin `postMessage` komutlarıyla
 (`seekTo`, `playVideo`) o saniyeye atlar; dış betik (`iframe_api`)
-yüklenmez. Telefonda oynatıcı gizlenir, damga `https://youtu.be/ID?t=…`
+yüklenmez. Oynatıcının `infoDelivery` iletileri (anlık zaman) transcript'te o
+an konuşulan satırı vurgular ve listeyi kaydırır. Telefonda oynatıcı gizlenir, damga `https://youtu.be/ID?t=…`
 bağlantısıdır ve YouTube uygulamasını o saniyeden açar.
 
 **Güvenlik:** AI ve transcript metni PHP'de `e()`, JS'de `textContent` ile

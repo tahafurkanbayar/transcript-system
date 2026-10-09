@@ -23,6 +23,7 @@
  */
 
 use Modules\Transkript\HataKodlari;
+use Modules\Transkript\Services\DisaAktarim;
 use Modules\Transkript\Services\RaporVerisi;
 use Modules\Transkript\Varliklar;
 
@@ -77,6 +78,8 @@ $simdiki = $simdiki === 'rapor' ? 'birlestirme' : $simdiki;
 $simdikiSira = array_search($simdiki, $asamaSirasi, true);
 $simdikiSira = $simdikiSira === false ? 0 : $simdikiSira;
 $transcriptDili = ['tr' => 'Türkçe', 'en' => 'İngilizce'];
+$bolumListesi = $rapor !== null ? DisaAktarim::bolumListesi($rapor, $kaynak['sure_sn'] !== null ? (int) $kaynak['sure_sn'] : null) : '';
+$indir = static fn (string $bicim): string => url('panel/transkript/' . $kaynakId . '/indir/' . $bicim);
 ?>
 <link rel="stylesheet" href="<?= e(Varliklar::adres('transkript.css')) ?>">
 
@@ -111,6 +114,9 @@ $transcriptDili = ['tr' => 'Türkçe', 'en' => 'İngilizce'];
                         <span title="Transcript kaynağı"><?= icon('file', 'cy-icon cy-icon--sm') ?>
                             <?= e($transcriptDili[$veri['transcript']['dil']] ?? strtoupper($veri['transcript']['dil'])) ?>
                             <?= $veri['transcript']['otomatik_mi'] ? 'otomatik altyazı' : 'altyazı' ?></span>
+                    <?php endif; ?>
+                    <?php if ($rapor !== null): ?>
+                        <span title="Kısa özet, konular ve önemli noktalar"><?= icon('book', 'cy-icon cy-icon--sm') ?> ~<?= RaporVerisi::okumaDakikasi($rapor) ?> dk okuma</span>
                     <?php endif; ?>
                 </p>
                 <p class="tk-kart__eylem">
@@ -179,8 +185,11 @@ $transcriptDili = ['tr' => 'Türkçe', 'en' => 'İngilizce'];
             <section class="cy-panel mb-3 tk-ozet">
                 <header class="cy-panel__head">
                     <h3 class="cy-panel__title"><?= icon('star', 'cy-icon cy-icon--sm') ?> Kısa özet</h3>
+                    <button type="button" class="cy-btn-icon" title="Kısa özeti kopyala" aria-label="Kısa özeti kopyala"
+                            data-copy-target="#tk_ozet_kopya" data-copy-label="Kısa özet"><?= icon('copy', 'cy-icon cy-icon--sm') ?></button>
                 </header>
                 <div class="tk-metin"><?= $paragraflar((string) ($rapor['summary'] ?? '')) ?></div>
+                <textarea id="tk_ozet_kopya" hidden readonly><?= e((string) ($rapor['summary'] ?? '')) ?></textarea>
             </section>
 
             <!-- AÇILIR BÖLÜMLER -->
@@ -312,6 +321,11 @@ $transcriptDili = ['tr' => 'Türkçe', 'en' => 'İngilizce'];
                     <?= icon('search', 'cy-icon cy-icon--sm') ?>
                     <input type="search" class="form-control js-tk-ara" placeholder="Transcript içinde ara…" aria-label="Transcript içinde ara" maxlength="100" autocomplete="off">
                 </div>
+                <?php if ($youtube): ?>
+                    <label class="tk-anahtar mb-2 tk-takip">
+                        <input type="checkbox" class="form-check-input js-tk-takip" checked> Video oynarken o anki satırı göster
+                    </label>
+                <?php endif; ?>
                 <p class="cy-panel__note mt-0 js-tk-transcript-durum" aria-live="polite">Yükleniyor…</p>
                 <ol class="tk-transcript js-tk-transcript-liste"></ol>
             </details>
@@ -320,8 +334,8 @@ $transcriptDili = ['tr' => 'Türkçe', 'en' => 'İngilizce'];
 
     <!-- SAĞ: yapışkan oynatıcı + analiz bilgisi -->
     <aside class="col-12 col-lg-4 order-2 order-md-1 order-lg-2">
-        <div class="tk-yapiskan">
-            <?php if ($youtube): ?>
+        <?php if ($youtube): ?>
+            <div class="tk-yapiskan">
                 <div class="tk-oynatici">
                     <iframe id="tk_oynatici" src="<?= e(RaporVerisi::gomuluAdres($videoId, $origin)) ?>"
                             title="<?= e((string) ($kaynak['baslik'] ?: 'YouTube videosu')) ?>" loading="lazy"
@@ -329,8 +343,10 @@ $transcriptDili = ['tr' => 'Türkçe', 'en' => 'İngilizce'];
                             referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
                 </div>
                 <p class="tk-oynatici__not">Zaman damgalarına tıklayınca video o andan oynar.</p>
-            <?php endif; ?>
+            </div>
+        <?php endif; ?>
 
+        <div class="tk-yan">
             <?php if ($analiz !== null): ?>
                 <section class="cy-panel tk-bilgi">
                     <h3 class="cy-panel__title mb-2"><?= icon('info', 'cy-icon cy-icon--sm') ?> Bu rapor</h3>
@@ -359,6 +375,32 @@ $transcriptDili = ['tr' => 'Türkçe', 'en' => 'İngilizce'];
                         data-video="<?= e('https://www.youtube.com/watch?v=' . $videoId) ?>" data-yeniden="0">
                     <?= icon('refresh', 'cy-icon cy-icon--sm') ?> Analizi yeniden dene
                 </button>
+            <?php endif; ?>
+
+            <?php if ($rapor !== null || $veri['transcript'] !== null): ?>
+                <!-- DIŞA AKTAR (AI çağrısı yok; kayıtlı rapordan üretilir) -->
+                <section class="cy-panel tk-disa">
+                    <h3 class="cy-panel__title mb-2"><?= icon('save', 'cy-icon cy-icon--sm') ?> Dışa aktar</h3>
+                    <div class="tk-disa__liste">
+                        <?php if ($rapor !== null): ?>
+                            <a class="btn cy-btn cy-btn--ghost cy-btn--sm" href="<?= e($indir('rapor.md')) ?>" download><?= icon('file', 'cy-icon cy-icon--sm') ?> Rapor (Markdown)</a>
+                        <?php endif; ?>
+                        <?php if ($veri['transcript'] !== null): ?>
+                            <a class="btn cy-btn cy-btn--ghost cy-btn--sm" href="<?= e($indir('transkript.txt')) ?>" download><?= icon('file', 'cy-icon cy-icon--sm') ?> Transcript (TXT)</a>
+                            <a class="btn cy-btn cy-btn--ghost cy-btn--sm" href="<?= e($indir('transkript.srt')) ?>" download>Altyazı (SRT)</a>
+                            <a class="btn cy-btn cy-btn--ghost cy-btn--sm" href="<?= e($indir('transkript.vtt')) ?>" download>Altyazı (VTT)</a>
+                        <?php endif; ?>
+                        <?php if ($bolumListesi !== ''): ?>
+                            <button type="button" class="btn cy-btn cy-btn--ghost cy-btn--sm" data-copy-target="#tk_bolum_listesi" data-copy-label="YouTube bölüm listesi">
+                                <?= icon('copy', 'cy-icon cy-icon--sm') ?> YouTube bölümlerini kopyala
+                            </button>
+                        <?php endif; ?>
+                    </div>
+                    <?php if ($bolumListesi !== ''): ?>
+                        <textarea id="tk_bolum_listesi" hidden readonly><?= e($bolumListesi) ?></textarea>
+                        <p class="cy-panel__note mb-0">Bölüm listesi video açıklamasına yapıştırılınca YouTube'da bölümler (chapters) oluşur.</p>
+                    <?php endif; ?>
+                </section>
             <?php endif; ?>
         </div>
     </aside>

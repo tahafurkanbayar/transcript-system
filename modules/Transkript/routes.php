@@ -44,6 +44,10 @@ $router->get('panel/transkript/varlik/{dosya}', KaynakController::class, 'varlik
 $router->get('panel/transkript/{kaynak_id}/transkript', KaynakController::class, 'transkript',
     ['installed', 'auth', 'can:transkript.view']);
 
+// Dışa aktarma: rapor.md, transkript.txt / .srt / .vtt (Services\DisaAktarim)
+$router->get('panel/transkript/{kaynak_id}/indir/{bicim}', KaynakController::class, 'indir',
+    ['installed', 'auth', 'can:transkript.view']);
+
 $router->get('panel/transkript/{kaynak_id}', KaynakController::class, 'goster',
     ['installed', 'auth', 'can:transkript.view']);
 
