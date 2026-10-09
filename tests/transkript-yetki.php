@@ -660,6 +660,22 @@ try {
     dogrula('Aydınlatma metni alanı var olmayan / yayında olmayan sayfayı kabul etmez (yayındakini eder)',
         $kvkk('olmayan-sayfa-xyz') !== null && $kvkk('../etc') !== null && $kvkk('') === null && ($yayinda === '' || $kvkk($yayinda) === null),
         (string) $kvkk('olmayan-sayfa-xyz'));
+
+    /* Cowork 6. tur K9: silinen hesabın kütüphane, sohbet ve ilgi alanı kayıtları
+     * gece görevinde silinir; var olan hesaplarınkine dokunulmaz. (Test kullanıcıları
+     * 99000x gerçek satırsızdır: onların kütüphane kayıtları da sahipsiz sayılır.) */
+    $gercekOnce = (int) satir($db, 'SELECT COUNT(*) FROM transkript_kutuphane t JOIN kullanicilar u ON u.id = t.kullanici_id');
+    $db->prepare('INSERT INTO transkript_kutuphane (kullanici_id, kaynak_id, ekleme_turu) VALUES (999999, :k, \'onbellek\')')->execute([':k' => $k['K3']]);
+    $db->prepare('INSERT INTO transkript_sohbetler (kaynak_id, kullanici_id, baslik) VALUES (:k, 999999, \'Silinmiş hesabın sohbeti\')')->execute([':k' => $k['K3']]);
+    $db->prepare("INSERT INTO transkript_sohbet_mesajlari (sohbet_id, rol, icerik) VALUES (:s, 'user', 'merhaba')")->execute([':s' => (int) $db->lastInsertId()]);
+    $db->exec("INSERT INTO transkript_ilgi_alanlari (kullanici_id, ilgi, agirlik) VALUES (999999, 'test', 1)");
+    $silinen = (new \Modules\Transkript\Services\HesapTemizligi($db))->temizle();
+    $kalan999 = (int) satir($db, 'SELECT (SELECT COUNT(*) FROM transkript_kutuphane WHERE kullanici_id = 999999) + (SELECT COUNT(*) FROM transkript_sohbetler WHERE kullanici_id = 999999)
+        + (SELECT COUNT(*) FROM transkript_ilgi_alanlari WHERE kullanici_id = 999999)');
+    dogrula('K9: silinen hesabın kütüphane, sohbet (+mesaj) ve ilgi alanı kayıtları temizlenir; var olan hesaplarınki kalır',
+        $kalan999 === 0 && ($silinen['transkript_sohbet_mesajlari'] ?? 0) >= 1 && ($silinen['transkript_ilgi_alanlari'] ?? 0) >= 1
+        && (int) satir($db, 'SELECT COUNT(*) FROM transkript_kutuphane t JOIN kullanicilar u ON u.id = t.kullanici_id') === $gercekOnce,
+        json_encode($silinen));
 } finally {
     temizle($db);
     $db->prepare('DELETE FROM kullanicilar WHERE kullanici_adi = :k')->execute([':k' => DENEME_YONETICI]);

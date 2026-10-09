@@ -35,6 +35,7 @@ use App\Core\DashboardCards;
 use App\Core\DashboardPanels;
 use App\Core\Database;
 use App\Core\HomePage;
+use App\Core\Log\Logger;
 use App\Core\Request;
 use App\Core\Queue\Queue;
 use App\Core\Schedule\Schedule;
@@ -47,6 +48,7 @@ use Modules\Transkript\Controllers\AyarController;
 use Modules\Transkript\Repositories\AiKullanimRepository;
 use Modules\Transkript\Repositories\KaynakRepository;
 use Modules\Transkript\Services\AnalizBaslatici;
+use Modules\Transkript\Services\HesapTemizligi;
 use Modules\Transkript\Services\KuyrukDurumu;
 use Modules\Transkript\TranskriptPolicy;
 
@@ -65,6 +67,18 @@ if (PHP_SAPI === 'cli' && (bool) Ayarlar::get('kuyruk.zamanlanmis_gorev', true))
             KuyrukDurumu::imle();
         }
     })->everyMinute()->describe('Transkript analiz işlerini çalıştırır');
+}
+
+/* Silinen hesapların kütüphane, sohbet, ilgi alanı ve kişisel özet
+ * kayıtları her gece silinir (HesapTemizligi; aydınlatma metni bunu söyler). */
+if (PHP_SAPI === 'cli') {
+    Schedule::call('transkript-hesap-temizligi', static function (): void {
+        $silinen = array_filter((new HesapTemizligi(Database::connection()))->temizle());
+
+        if ($silinen !== []) {
+            Logger::info('Silinen hesapların Transkript kayıtları temizlendi', $silinen, 'transkript');
+        }
+    })->daily('03:40')->describe('Silinen hesapların Transkript kişisel kayıtlarını siler');
 }
 
 /* ---------------------------------------------------------------------
