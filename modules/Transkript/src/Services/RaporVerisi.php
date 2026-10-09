@@ -117,6 +117,29 @@ final class RaporVerisi
         ]);
     }
 
+    /**
+     * Raporun okunma süresi (dk): kısa özet, konular ve önemli noktalar,
+     * dakikada ~200 sözcük. "19 dk video → 2 dk okuma" göstergesi.
+     *
+     * @param array<string,mixed> $rapor
+     */
+    public static function okumaDakikasi(array $rapor): int
+    {
+        $metin = (string) ($rapor['summary'] ?? '');
+
+        foreach ((array) ($rapor['topics'] ?? []) as $m) {
+            $metin .= ' ' . ($m['title'] ?? '') . ' ' . ($m['summary'] ?? '');
+        }
+
+        foreach ((array) ($rapor['important_points'] ?? []) as $m) {
+            $metin .= ' ' . ($m['text'] ?? '');
+        }
+
+        $sozcuk = count(preg_split('/\s+/u', trim($metin), -1, PREG_SPLIT_NO_EMPTY) ?: []);
+
+        return max(1, (int) ceil($sozcuk / 200));
+    }
+
     /** "1:02:03" / "12:03" — süre gösterimi */
     public static function sure(?int $saniye): string
     {

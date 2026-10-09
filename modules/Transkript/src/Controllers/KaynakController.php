@@ -34,6 +34,7 @@ use Modules\Transkript\Repositories\SegmentRepository;
 use Modules\Transkript\Services\AnalizBaslatici;
 use Modules\Transkript\Services\AnalizReddedildi;
 use Modules\Transkript\Services\Cleaner;
+use Modules\Transkript\Services\DisaAktarim;
 use Modules\Transkript\Services\KaynakDurumu;
 use Modules\Transkript\Services\RaporVerisi;
 use Modules\Transkript\Services\Search;
@@ -72,6 +73,8 @@ final class KaynakController extends Controller
             'boyut'      => $boyut,
             'istatistik' => $repo->istatistik($policy->canSeeAllCosts() ? null : $user?->id),
             'hepsi'      => $policy->canSeeAllCosts(),
+            // panel/transkript?url=… → kutu dolu gelir (yer imi, paylaşım bağlantısı).
+            'onUrl'      => mb_substr($request->input('url'), 0, 500),
         ]);
     }
 
@@ -125,6 +128,41 @@ final class KaynakController extends Controller
         );
 
         Response::success(count($satirlar) . ' sonuç', ['satirlar' => $satirlar, 'kelimeler' => Search::queryWords($q), 'arama' => true]);
+    }
+
+    /**
+     * GET panel/transkript/{kaynak_id}/indir/{bicim} — rapor.md,
+     * transkript.txt, transkript.srt, transkript.vtt. AI çağrısı yok;
+     * kayıtlı rapordan ve segmentlerden üretilir. Rapor / transcript
+     * yoksa 404.
+     */
+    public function indir(Request $request, string $kaynak_id, string $bicim): void
+    {
+        $kaynak = $this->gorulebilirKaynak($kaynak_id);
+
+        if (!isset(DisaAktarim::BICIMLER[$bicim])) {
+            throw HttpException::notFound();
+        }
+
+        if ($bicim === 'rapor.md') {
+            $veri = (new RaporVerisi($this->db))->getir($kaynak);
+
+            if ($veri['rapor'] === null) {
+                throw HttpException::notFound();
+            }
+
+            $icerik = DisaAktarim::markdown($kaynak, $veri['rapor'], $veri['analiz']);
+        } else {
+            $segmentler = new SegmentRepository($this->db);
+            $metin      = $segmentler->sonMetin((int) $kaynak['id']) ?? throw HttpException::notFound();
+            $satirlar   = $segmentler->segmentler((int) $metin['id']);
+
+            $icerik = $bicim === 'transkript.txt'
+                ? DisaAktarim::metin(Cleaner::fromAyarlar()->hazirla($satirlar))
+                : DisaAktarim::altyazi($satirlar, substr($bicim, -3));
+        }
+
+        self::dosyaGonder($icerik, DisaAktarim::dosyaAdi($kaynak, $bicim), DisaAktarim::BICIMLER[$bicim][0]);
     }
 
     /**
@@ -199,6 +237,25 @@ final class KaynakController extends Controller
         $durum = (new KaynakDurumu($this->db))->getir($this->gorulebilirKaynak($kaynak_id));
 
         Response::success($durum['etiket'], $durum);
+    }
+
+    /** Üretilen metni indirilecek dosya olarak gönderir (ad ASCII; bkz. DisaAktarim::dosyaAdi). */
+    private static function dosyaGonder(string $icerik, string $ad, string $tur): never
+    {
+        while (ob_get_level() > 0) {
+            ob_end_clean();
+        }
+
+        if (!headers_sent()) {
+            header_remove('Pragma');
+            header('Content-Type: ' . $tur);
+            header('Content-Length: ' . strlen($icerik));
+            header('Cache-Control: private, no-store');
+            header('Content-Disposition: attachment; filename="' . $ad . '"; filename*=UTF-8\'\'' . rawurlencode($ad));
+        }
+
+        echo $icerik;
+        exit;
     }
 
     /** Kaynak yoksa ya da kullanıcı göremiyorsa 404 (varlığı da sızmaz). @return array<string,mixed> */
