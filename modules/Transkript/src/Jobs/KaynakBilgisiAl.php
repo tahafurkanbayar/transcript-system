@@ -17,6 +17,7 @@ namespace Modules\Transkript\Jobs;
 use App\Core\Queue\Queue;
 use Modules\Transkript\Kaynak\KaynakHatasi;
 use Modules\Transkript\Kaynak\YoutubeMetadata;
+use Modules\Transkript\Services\AnalizBaslatici;
 use Modules\Transkript\Transcript\TranscriptNotFound;
 
 final class KaynakBilgisiAl extends TranskriptIsi
@@ -36,6 +37,11 @@ final class KaynakBilgisiAl extends TranskriptIsi
             }
 
             $this->kaynaklar()->bilgiyiYaz((int) $kaynak['id'], $bilgi);
+
+            // Süre ancak şimdi öğrenildi (oEmbed vermez, Data API verir).
+            if (AnalizBaslatici::cokUzun($bilgi->sureSn)) {
+                throw new KaynakHatasi('video_cok_uzun', sprintf('Video %d sn; sınır analiz.en_uzun_dk', (int) $bilgi->sureSn));
+            }
         }
 
         $this->birlikte(function (): void {

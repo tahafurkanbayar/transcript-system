@@ -100,7 +100,40 @@ final class UrlParser
     public static function cozumle(string $girdi): string
     {
         return self::videoKimligi($girdi)
-            ?? throw new KaynakHatasi('gecersiz_url', 'YouTube video kimliği çıkarılamadı.');
+            ?? throw new KaynakHatasi(self::neden($girdi), 'YouTube video kimliği çıkarılamadı.');
+    }
+
+    /**
+     * Kimlik çıkmadıysa kullanıcıya hangi mesaj? YouTube alan adındaki
+     * oynatma listesi (/playlist?list=, /embed/videoseries) ve kanal
+     * (/@ad, /channel/, /c/, /user/) bağlantısı ayrı söylenir; gerisi
+     * gecersiz_url. Yalnız mesaj seçer, hiçbir şeyi kabul etmez.
+     */
+    public static function neden(string $girdi): string
+    {
+        $girdi = trim($girdi);
+
+        if (!preg_match('#^[a-z][a-z0-9+.-]*://#i', $girdi)) {
+            $girdi = 'https://' . $girdi;
+        }
+
+        $parca = parse_url($girdi);
+        $alan  = is_array($parca) ? rtrim(strtolower((string) ($parca['host'] ?? '')), '.') : '';
+        $alan  = str_starts_with($alan, 'www.') ? substr($alan, 4) : $alan;
+
+        if (!in_array($alan, self::ALAN_ADLARI, true) || !in_array(strtolower((string) ($parca['scheme'] ?? '')), ['http', 'https'], true)) {
+            return 'gecersiz_url';
+        }
+
+        $yol = array_values(array_filter(explode('/', (string) ($parca['path'] ?? '')), static fn (string $s): bool => $s !== ''));
+        parse_str((string) ($parca['query'] ?? ''), $sorgu);
+        $ilk = strtolower($yol[0] ?? '');
+
+        return match (true) {
+            $ilk === 'playlist', ($yol[1] ?? '') === 'videoseries', isset($sorgu['list']) => 'oynatma_listesi',
+            str_starts_with($ilk, '@'), in_array($ilk, ['channel', 'c', 'user'], true)    => 'kanal_baglantisi',
+            default                                                                     => 'gecersiz_url',
+        };
     }
 
     public static function gecerliKimlik(string $kimlik): bool

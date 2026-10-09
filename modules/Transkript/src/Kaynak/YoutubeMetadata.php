@@ -60,6 +60,40 @@ final class YoutubeMetadata
         return new self(new CurlHttpIstemci(15, false), trim(Env::get('YOUTUBE_API_KEY')));
     }
 
+    /** "Analiz Et" isteğindeki ön kontrol için: yalnız oEmbed, en çok 4 sn. */
+    public static function onKontrolIcin(): self
+    {
+        return new self(new CurlHttpIstemci(4, false));
+    }
+
+    /**
+     * Kayıt açmadan önce videonun varlığı (AnalizBaslatici). Yalnız
+     * oEmbed'e gidilir: anahtar gerekmez, ~100–300 ms.
+     *
+     *   200          → başlık, kanal, küçük resim (liste ilk anda doğru görünür)
+     *   400 / 404    → KaynakHatasi video_bulunamadi
+     *   401 / 403    → KaynakHatasi gizli_video (gizli ya da yerleştirmeye kapalı;
+     *                  iş de aynı kararı verirdi, kuyruğa boşuna girmesin)
+     *   ağ hatası, zaman aşımı, 429, 5xx → null: kontrol atlanır, iş yine
+     *                  kendi denetimini yapar. Sistem oEmbed yüzünden kilitlenmez.
+     *
+     * @throws KaynakHatasi
+     */
+    public function onKontrol(string $videoId): ?VideoBilgisi
+    {
+        try {
+            return $this->oembed($videoId);
+        } catch (KaynakHatasi $e) {
+            if (!$e->yenidenDenenebilir()) {
+                throw $e;
+            }
+
+            Logger::info('oEmbed ön kontrolü atlandı', ['video' => $videoId, 'ayrinti' => $e->getMessage()], 'transkript');
+
+            return null;
+        }
+    }
+
     /**
      * @throws KaynakHatasi gecersiz_url · video_bulunamadi · gizli_video ·
      *                      silinmis_video · metadata_hatasi (geçici)

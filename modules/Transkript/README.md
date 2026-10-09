@@ -143,6 +143,17 @@ ile sunulur. Çekirdeğe dosya eklenmez.
   sunucu isteğinde referer yoktur, Google 403 `API_KEY_HTTP_REFERRER_BLOCKED`
   döner ve her video oEmbed'e (süresiz) düşer. Uygulama kısıtı "Yok" ya da
   sunucunun IP adresi, API kısıtı "YouTube Data API v3" olmalı.
+- **Ön kontrol ("Analiz Et" isteğinde):** video doğrulanmamışsa (kaynak yok
+  ya da başlıksız) kayıt açılmadan önce yalnız oEmbed'e gidilir (en çok 4 sn).
+  400 / 404 → `video_bulunamadi` 422; 401 → `gizli_video` 422 (Data API
+  anahtarı varsa bu kararı iş verir: yerleştirmeye kapalı ama açık video
+  analiz edilebilir); ağ hatası, zaman aşımı, 5xx → kontrol atlanır, iş
+  kendisi denetler. 200 dönerse başlık, kanal ve küçük resim hemen yazılır.
+  Oynatma listesi ve kanal bağlantısı ayrı Türkçe mesaj alır
+  (`oynatma_listesi`, `kanal_baglantisi`).
+- **Süre sınırı:** `analiz.en_uzun_dk` (180; 0 = sınırsız). Süre biliniyorsa
+  istek 422 `video_cok_uzun` ile reddedilir; bilinmiyorsa video bilgisi ya da
+  transcript gelince, yapay zekâya gitmeden analiz kalıcı hatayla durur.
 - `Repositories/KaynakRepository`: `INSERT … ON DUPLICATE KEY UPDATE` ile
   yarışsız bul-ya-da-oluştur; `guncelTamamlanmisAnaliz()` (cache) ve
   `suregelenAnaliz()` (ikinci kez "Analiz Et").

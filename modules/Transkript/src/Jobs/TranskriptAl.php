@@ -24,6 +24,7 @@ use App\Core\Queue\Queue;
 use Modules\Transkript\Ayarlar;
 use Modules\Transkript\Kaynak\Kaynak;
 use Modules\Transkript\Kaynak\KaynakHatasi;
+use Modules\Transkript\Services\AnalizBaslatici;
 use Modules\Transkript\Services\Chunker;
 use Modules\Transkript\Services\Cleaner;
 use Modules\Transkript\Transcript\TranscriptNotFound;
@@ -61,7 +62,13 @@ final class TranskriptAl extends TranskriptIsi
 
         if ($segmentler !== []) {
             // oEmbed süre vermez; liste ve rapor süreyi transcript'ten bilsin.
-            $this->kaynaklar()->sureYoksaYaz($kaynakId, intdiv(max(array_map(static fn ($s): int => $s->bitisMs, $segmentler)), 1000));
+            $sureSn = intdiv(max(array_map(static fn ($s): int => $s->bitisMs, $segmentler)), 1000);
+            $this->kaynaklar()->sureYoksaYaz($kaynakId, $sureSn);
+
+            // Süre sınırı yapay zekâya gitmeden önce (meta veri süre vermediyse ilk fırsat).
+            if (AnalizBaslatici::cokUzun($sureSn)) {
+                throw new KaynakHatasi('video_cok_uzun', sprintf('Transcript %d sn; sınır analiz.en_uzun_dk', $sureSn));
+            }
         }
 
         $parcalar = Chunker::fromAyarlar()->parcala(Cleaner::fromAyarlar()->hazirla($segmentler));

@@ -142,6 +142,11 @@ return [
      * -------------------------------------------------------------- */
     'analiz' => [
         'saatlik_sinir' => 20,
+
+        // Bundan uzun video analiz edilmez (dakika; 0 = sınırsız). Süre
+        // biliniyorsa istekte, bilinmiyorsa video bilgisi ya da transcript
+        // gelince, yapay zekâya gitmeden önce denetlenir.
+        'en_uzun_dk' => 180,
     ],
 
     /* -----------------------------------------------------------------
