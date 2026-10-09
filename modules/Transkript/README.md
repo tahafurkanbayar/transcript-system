@@ -31,6 +31,9 @@ isteğiyle:
 - **Kullanıcı olarak oturum açma** (`Auth`, `Middleware`, `Session`, 2026-10-09):
   yönetici Kullanıcılar ekranından parola sormadan bir üyenin ya da analistin
   gözünden gezer, alttaki banttan döner. Ayrıntı: CHANGELOG 0.6.4.
+- **Cowork 6. tur** (2026-10-10): `/api/v1` 404/405 API zarfıyla (`ErrorHandler`),
+  girişte kademeli gecikme 1-2-4-8 sn (`RateLimiter`, `Auth` mesajı), iletişim
+  sayfası özeti tanımlı kanallardan (`ContactController`). Ayrıntı: CHANGELOG 0.7.0.
 
 ---
 
@@ -134,8 +137,10 @@ açtığı üye hesabının yetkisine bakılır; varsayılan kurulumda misafir v
 rapor okumayı anlatan metni ve "API erişimi için bize yazın" bağlantısını görür.
 
 **Kotalar** (`config.php` → `analiz`; yalnız yeni AI işi açan istek sayılır,
-önbellekten dönen sayılmaz): kullanıcı başına saatte `saatlik_sinir` (20) ve
-günde `gunluk_sinir` (10) analiz; bütün kullanıcılar için günlük
+önbellekten dönen sayılmaz): kullanıcı başına saatte `saatlik_sinir` (5; günlükten
+küçük olmalı, değilse kayıtta uyarı) ve günde `gunluk_sinir` (10) analiz; hiç yapay
+zekâ çağrısı yapılmadan iptal edilen ya da kalıcı hatayla düşen analiz günlük
+haktan düşmez (`AnalizBaslatici::BUGUN_SAYILAN`); bütün kullanıcılar için günlük
 `gunluk_token_tavani` (0 = kapalı) ve `gunluk_maliyet_tavani` (5 USD, ücretli
 katman fiyatıyla tahmin). Aşılınca 429 + `Retry-After` (gün sonuna kadar) ve
 Türkçe mesaj (`gunluk_sinir`, `gunluk_butce`). Yönetici kişisel sınırlardan
@@ -395,7 +400,9 @@ varsayılan (`Ai::varsayilanModel`).
   servise gönderilmez). Anahtarlar veritabanında değil, yalnız `.env`'de.
 - Aşamanın modeli (panel / config / `AI_MODEL`) yalnız ilk sağlayıcıya
   uygulanır; Gemini'nin `thinkingConfig` eki yalnız Gemini'ye gider.
-- **Dinlenme** (Cache, bütün işçiler görür; dinlenen sağlayıcı denenmez):
+- **Dinlenme** (kalıcı dosya `storage/files/transkript-dinlenme.json`, `DinlenmeDeposu`;
+  bütün işçiler görür, önbellek temizlenince kaybolmaz; dinlenen sağlayıcı denenmez.
+  "Dinlenmeleri sıfırla" günlük kotası dolanları kutu işaretlenmedikçe korur):
 
   | Hata | Süre |
   |---|---|
@@ -482,7 +489,7 @@ isteğinde yalnız kayıt açar ve ilk işi kuyruğa bırakır; istek ~30–50 m
 | `suruyor` | Aynı kaynağın analizi sürüyor (ikinci iş açılmaz) | 200 / 202 |
 | `baslatildi` | Yeni analiz; `yeniden=1` yalnız `transkript.admin` | 200 / 202 |
 
-Yeni iş kullanıcı başına saatte `analiz.saatlik_sinir` (20) ile sınırlıdır
+Yeni iş kullanıcı başına saatte `analiz.saatlik_sinir` (5) ile sınırlıdır
 (429 + `Retry-After`); önbellekten dönen istek sayılmaz. Aynı anda gelen iki
 istek kaynak satırı kilitlenerek sıraya girer.
 
