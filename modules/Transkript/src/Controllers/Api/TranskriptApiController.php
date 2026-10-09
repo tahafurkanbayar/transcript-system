@@ -80,8 +80,10 @@ final class TranskriptApiController extends Controller
     }
 
     /**
-     * GET api/v1/transkript/kaynaklar?tur=&durum=&q=&sayfa=&sayfa_boyut=
-     * durum: hazir · suruyor · hata · iptal. Panel listesiyle aynı sorgu ve görünürlük.
+     * GET api/v1/transkript/kaynaklar?tur=&durum=&q=&kapsam=&kullanici=&sayfa=&sayfa_boyut=
+     * durum: hazir · suruyor · hata · iptal. kapsam: kutuphanem · paylasilan
+     * (yönetici dışında boş = kutuphanem). kullanici: kişi kimliği, yalnız
+     * yönetici. Panel listesiyle aynı sorgu ve görünürlük.
      */
     public function kaynaklar(Request $request): void
     {
@@ -90,9 +92,11 @@ final class TranskriptApiController extends Controller
         $boyut  = $request->int('sayfa_boyut', 1, 100) ?? 20;
 
         $liste = (new KaynakRepository(Database::connection()))->liste([
-            'tur'   => $request->input('tur'),
-            'durum' => $request->input('durum'),
-            'q'     => mb_substr($request->input('q'), 0, 100),
+            'tur'       => $request->input('tur'),
+            'durum'     => $request->input('durum'),
+            'q'         => mb_substr($request->input('q'), 0, 100),
+            'kapsam'    => in_array($request->input('kapsam'), KaynakRepository::LISTE_KAPSAMLARI, true) ? $request->input('kapsam') : '',
+            'kullanici' => $policy->isAdmin() ? (int) ($request->int('kullanici', 1) ?? 0) : 0,
         ], $sayfa, $boyut, Auth::id(), $policy->isAdmin());
 
         ApiResponse::paginated(array_map(static fn (array $s): array => [
@@ -109,7 +113,15 @@ final class TranskriptApiController extends Controller
             // İç hata (kota, servis) yalnız yöneticiye ve başlatana adıyla.
             'hata_kodu'   => HataKodlari::gorunenKod($s['hata_kodu'] !== null ? (string) $s['hata_kodu'] : null, $policy->canSeeErrorDetail($s)),
             'tarih'       => (string) $s['created_at'],
-        ], $liste['satirlar']), $liste['toplam'], $sayfa, $boyut);
+        ] + ($policy->isAdmin() ? [
+            // Yalnız yöneticiye "kim": son analizi başlatan ve kütüphanesine ekleyenler.
+            'baslatan'   => $s['kullanici_id'] !== null ? [
+                'kullanici_id' => (int) $s['kullanici_id'],
+                'adi'          => $s['baslatan_adi'] !== null ? (string) $s['baslatan_adi'] : null,
+                'rol'          => $s['baslatan_rol'] !== null ? (string) $s['baslatan_rol'] : null,
+            ] : null,
+            'kutuphanede' => ($s['kutuphane_kisileri'] ?? '') !== '' ? explode('|', (string) $s['kutuphane_kisileri']) : [],
+        ] : []), $liste['satirlar']), $liste['toplam'], $sayfa, $boyut);
     }
 
     /** GET api/v1/transkript/kaynaklar/{kaynak_id} — kaynak kartı + durum + ilerleme */

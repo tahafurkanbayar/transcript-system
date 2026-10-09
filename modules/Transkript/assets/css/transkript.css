@@ -209,3 +209,9 @@ a.tk-zaman.is-oynuyor { background: var(--cy-brand); color: #fff; }
 /* Liste: yöneticinin paylaştığı rapor */
 .tk-paylasilan { background: var(--cy-info-soft); color: var(--cy-info-text); }
 .tk-analiz .cy-panel__head { flex-wrap: wrap; gap: .5rem; }
+
+/* Yönetici listesi: "Kim" sütunu (son analizi başlatan · kütüphanesine ekleyenler). */
+.tk-kim__baslatan { display: block; font-weight: 500; }
+.tk-kim__baslatan small,
+.tk-kim__kutuphane { color: var(--cy-text-muted); }
+.tk-kim__kutuphane { display: block; font-size: .8rem; }

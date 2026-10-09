@@ -10,11 +10,17 @@
  *  tablo. Süren analizin satırı 3 saniyede bir ilerleme ucundan
  *  güncellenir. Bütün metin e() ile basılır.
  *
- *  Yönetici dışındakiler yalnız kütüphanelerindeki ve paylaşılan
- *  raporları görür (TranskriptPolicy); sayaçlar da aynı kapsamı sayar.
+ *  Yönetici herkesin kaydını görür; her satırda "Kim" (son analizi
+ *  başlatan, kütüphanesine ekleyenler) ve kişiye göre süzgeç vardır.
+ *  Öteki roller varsayılan olarak yalnız KENDİ kütüphanelerini görür;
+ *  yöneticinin paylaştıkları "Paylaşılanlar" seçeneğindedir
+ *  (KaynakRepository::kendi). Sayaçlar varsayılan kapsamı sayar.
  *
  *  @var Modules\Transkript\TranskriptPolicy                     $policy
- *  @var array{q:string,durum:string,kapsam:string}               $filtre
+ *  @var array{q:string,durum:string,kapsam:string,kullanici:string} $filtre
+ *  @var list<array{id:int,adi:string,rol:string}>                $kisiler     yönetici süzgeci
+ *  @var int                                                       $paylasilan  öteki roller: paylaşılan rapor sayısı
+ *  @var int                                                       $benId
  *  @var string                                                    $varsayilanDurum  analiz başlatamayana 'hazir'
  *  @var array{satirlar:list<array<string,mixed>>,toplam:int}      $liste
  *  @var int                                                       $sayfa
@@ -27,6 +33,7 @@
  */
 
 use App\Core\View;
+use App\Models\Role;
 use Modules\Transkript\HataKodlari;
 use Modules\Transkript\Services\RaporVerisi;
 use Modules\Transkript\Varliklar;
@@ -43,7 +50,11 @@ $durumAdi = [
 ];
 $varsayilanDurum = $varsayilanDurum ?? '';
 $filtre['kapsam'] ??= '';
-$filtreli = $filtre['q'] !== '' || $filtre['durum'] !== $varsayilanDurum || $filtre['kapsam'] !== '';
+$filtre['kullanici'] ??= '';
+$kisiler    = $kisiler ?? [];
+$paylasilan = (int) ($paylasilan ?? 0);
+$benId      = (int) ($benId ?? 0);
+$filtreli = $filtre['q'] !== '' || $filtre['durum'] !== $varsayilanDurum || $filtre['kapsam'] !== '' || $filtre['kullanici'] !== '';
 $hak      = $hak ?? null;
 $hakDolu  = $hak !== null && $hak['bekleme_sn'] > 0;
 // Adreste taşınan durum: varsayılan "hazir" iken "Tüm durumlar" boş değil "hepsi"dir.
@@ -114,7 +125,7 @@ $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format(
         </details>
     </section>
 <?php else: ?>
-    <p class="cy-panel__note mb-3"><?= icon('info', 'cy-icon cy-icon--sm') ?> Analiz başlatma yetkiniz yok; sizinle paylaşılan raporları okuyabilirsiniz.</p>
+    <p class="cy-panel__note mb-3"><?= icon('info', 'cy-icon cy-icon--sm') ?> Analiz başlatma yetkiniz yok. Yöneticinin sizinle paylaştığı raporlar listedeki “Paylaşılanlar” seçeneğindedir.</p>
 <?php endif; ?>
 
 <?php $analizci = $policy->canAnalyze(); ?>
@@ -122,7 +133,7 @@ $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format(
     <div class="cy-stat">
         <span class="cy-stat__icon cy-stat__icon--success"><?= icon('files') ?></span>
         <span>
-            <?php /* Yönetici herkesin raporunu, öteki roller görebildiğini (kütüphane + paylaşılan) sayar; liste "Raporu hazır" ile aynı sayı. */ ?>
+            <?php /* Yönetici herkesin raporunu, öteki roller kendi kütüphanesini sayar; liste "Raporu hazır" ile aynı sayı. */ ?>
             <span class="cy-stat__label"><?= $hepsi ? 'Raporu hazır video' : 'Raporlarınız' ?></span>
             <span class="cy-stat__value"><?= e($sayi($istatistik['kaynak'])) ?></span>
             <span class="cy-stat__hint"><?php
@@ -131,7 +142,7 @@ $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format(
                     $istatistik['suruyor'] > 0 ? $sayi($istatistik['suruyor']) . ' sürüyor' : '',
                     $istatistik['hata'] > 0 ? $sayi($istatistik['hata']) . ' hata' : '',
                 ]) : [];
-                echo e($durumlar !== [] ? implode(' · ', $durumlar) : ($hepsi ? 'aynı video ikinci kez analiz edilmez' : 'kütüphanenizdeki ve sizinle paylaşılan'));
+                echo e($durumlar !== [] ? implode(' · ', $durumlar) : ($hepsi ? 'aynı video ikinci kez analiz edilmez' : 'kütüphanenizdeki'));
             ?></span>
         </span>
     </div>
@@ -181,12 +192,26 @@ $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format(
             <option value="hata"<?= $filtre['durum'] === 'hata' ? ' selected' : '' ?>>Hata</option>
             <option value="iptal"<?= $filtre['durum'] === 'iptal' ? ' selected' : '' ?>>İptal edildi</option>
         </select>
-        <?php /* Analiz başlatamayanın kütüphanesi boştur; yalnız paylaşılanları görür, süzgeç gereksiz. */ ?>
-        <?php if ($hepsi || $analizci): ?>
+        <?php if ($hepsi): ?>
             <select class="form-select tk-filtre" name="kapsam" aria-label="Kapsama göre filtrele">
-                <option value=""<?= $filtre['kapsam'] === '' ? ' selected' : '' ?>><?= $hepsi ? 'Bütün kayıtlar' : 'Kütüphanem ve paylaşılanlar' ?></option>
+                <option value=""<?= $filtre['kapsam'] === '' ? ' selected' : '' ?>>Herkesin kayıtları</option>
                 <option value="kutuphanem"<?= $filtre['kapsam'] === 'kutuphanem' ? ' selected' : '' ?>>Kütüphanem</option>
                 <option value="paylasilan"<?= $filtre['kapsam'] === 'paylasilan' ? ' selected' : '' ?>>Paylaşılanlar</option>
+            </select>
+            <?php if ($kisiler !== []): ?>
+                <?php /* Kişiye göre: yüklediği, kütüphanesindeki ya da analizini başlattığı kayıtlar. */ ?>
+                <select class="form-select tk-filtre" name="kullanici" aria-label="Kişiye göre filtrele">
+                    <option value="">Bütün kişiler</option>
+                    <?php foreach ($kisiler as $kisi): ?>
+                        <option value="<?= (int) $kisi['id'] ?>"<?= $filtre['kullanici'] === (string) $kisi['id'] ? ' selected' : '' ?>><?= e(($kisi['id'] === $benId ? 'Siz' : $kisi['adi']) . ' (' . Role::label($kisi['rol']) . ')') ?></option>
+                    <?php endforeach; ?>
+                </select>
+            <?php endif; ?>
+        <?php else: ?>
+            <?php /* Varsayılan: yalnız kendi kütüphanesi (kullanıcı kararı); paylaşılanlar ayrı. */ ?>
+            <select class="form-select tk-filtre" name="kapsam" aria-label="Kapsama göre filtrele">
+                <option value=""<?= $filtre['kapsam'] === '' ? ' selected' : '' ?>>Kütüphanem</option>
+                <option value="paylasilan"<?= $filtre['kapsam'] === 'paylasilan' ? ' selected' : '' ?>>Paylaşılanlar<?= $paylasilan > 0 ? ' (' . $sayi($paylasilan) . ')' : '' ?></option>
             </select>
         <?php endif; ?>
         <button type="submit" class="btn cy-btn cy-btn--ghost cy-btn--sm"><?= icon('filter', 'cy-icon cy-icon--sm') ?> Uygula</button>
@@ -200,12 +225,20 @@ $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format(
             <span class="cy-empty__icon"><?= icon($filtreli ? 'search' : 'file') ?></span>
             <p class="mb-0">
                 <?= match (true) {
+                    !$hepsi && $filtre['kapsam'] === 'paylasilan' && $filtre['q'] === '' && $paylasilan === 0
+                                             => 'Sizinle paylaşılan rapor henüz yok. Yönetici bir raporu paylaşınca burada görünür.',
                     $filtreli                => 'Bu filtreyle eşleşen analiz yok.',
                     $hepsi                   => 'Henüz analiz yok. Yukarıdaki kutuya bir YouTube bağlantısı yapıştırarak başlayın.',
                     $policy->canAnalyze()    => 'Kütüphaneniz boş. Yukarıdaki kutuya bir YouTube bağlantısı yapıştırarak başlayın; daha önce analiz edilmiş video hakkınızdan düşmez.',
-                    default                  => 'Sizinle paylaşılan rapor henüz yok. Yönetici bir raporu paylaşınca burada görünür.',
+                    default                  => 'Kütüphanenizde henüz rapor yok.',
                 } ?>
             </p>
+            <?php /* Kendi listesi boş ama yöneticinin paylaştığı rapor var: oraya tek tık. */ ?>
+            <?php if (!$hepsi && $filtre['kapsam'] === '' && $filtre['q'] === '' && $paylasilan > 0): ?>
+                <a class="btn cy-btn cy-btn--ghost cy-btn--sm mt-2" href="<?= e(url('panel/transkript', ['kapsam' => 'paylasilan'] + ($durumParam !== '' ? ['durum' => $durumParam] : []))) ?>">
+                    <?= icon('files', 'cy-icon cy-icon--sm') ?> Yöneticinin paylaştığı <?= e($sayi($paylasilan)) ?> raporu göster
+                </a>
+            <?php endif; ?>
         </div>
     <?php else: ?>
         <div class="cy-table-wrap">
@@ -213,6 +246,7 @@ $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format(
                 <thead>
                     <tr>
                         <th scope="col" data-kart="ana">Kaynak</th>
+                        <?php if ($hepsi): ?><th scope="col">Kim</th><?php endif; ?>
                         <th scope="col">Süre</th>
                         <th scope="col">Durum</th>
                         <th scope="col">Tarih</th>
@@ -249,6 +283,31 @@ $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format(
                                     </span>
                                 </a>
                             </td>
+                            <?php if ($hepsi): ?>
+                                <?php
+                                /* Kim: son analizi başlatan (ad · rol) ve raporu kütüphanesine ekleyenler. */
+                                $baslatanId = $satir['kullanici_id'] !== null ? (int) $satir['kullanici_id'] : null;
+                                $baslatan   = match (true) {
+                                    $baslatanId === null                              => '—',
+                                    $baslatanId === $benId                            => 'Siz',
+                                    trim((string) ($satir['baslatan_adi'] ?? '')) !== '' => (string) $satir['baslatan_adi'],
+                                    default                                           => 'Silinmiş kullanıcı',
+                                };
+                                $okuyanlar = ($satir['kutuphane_kisileri'] ?? '') !== '' ? explode('|', (string) $satir['kutuphane_kisileri']) : [];
+                                $gorunen   = array_slice($okuyanlar, 0, 2);
+                                ?>
+                                <td class="tk-kim">
+                                    <span class="tk-kim__baslatan" title="Son analizi başlatan">
+                                        <?= e($baslatan) ?><?php if (($satir['baslatan_rol'] ?? null) !== null && $baslatanId !== $benId): ?> <small>· <?= e(Role::label((string) $satir['baslatan_rol'])) ?></small><?php endif; ?>
+                                    </span>
+                                    <?php /* Kütüphanesinde yalnız başlatan varsa satır tekrar olmasın. */ ?>
+                                    <?php if ($okuyanlar !== [] && $okuyanlar !== [trim((string) ($satir['baslatan_adi'] ?? ''))]): ?>
+                                        <small class="tk-kim__kutuphane" title="<?= e('Kütüphanesinde: ' . implode(', ', $okuyanlar)) ?>">
+                                            Kütüphanede: <?= e(implode(', ', $gorunen)) ?><?= count($okuyanlar) > 2 ? ' +' . (count($okuyanlar) - 2) : '' ?>
+                                        </small>
+                                    <?php endif; ?>
+                                </td>
+                            <?php endif; ?>
                             <td><span class="cy-mono"><?= e(RaporVerisi::sure($satir['sure_sn'] !== null ? (int) $satir['sure_sn'] : null)) ?></span></td>
                             <td class="js-tk-analiz">
                                 <span class="tk-durum-hucre">
@@ -317,7 +376,7 @@ $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format(
                 'toplam' => $liste['toplam'],
                 'boyut'  => $boyut,
                 'yol'    => 'panel/transkript',
-                'sorgu'  => array_filter(['q' => $filtre['q'], 'durum' => $durumParam, 'kapsam' => $filtre['kapsam']], static fn (string $v): bool => $v !== ''),
+                'sorgu'  => array_filter(['q' => $filtre['q'], 'durum' => $durumParam, 'kapsam' => $filtre['kapsam'], 'kullanici' => $filtre['kullanici']], static fn (string $v): bool => $v !== ''),
             ]); ?>
         </footer>
     <?php endif; ?>
