@@ -87,6 +87,53 @@ return [
     ],
 
     /* -----------------------------------------------------------------
+     *  YAPAY ZEKÂ AŞAMALARI (Services\Pipeline)
+     * -----------------------------------------------------------------
+     *  map     her parça ayrı (paralel); hızlı ve ucuz model yeter
+     *  reduce  parça sonuçlarını tek rapora birleştirir; daha uzun çıktı
+     *
+     *  saglayici / model boşsa .env'deki AI_PROVIDER / AI_MODEL, o da
+     *  boşsa sağlayıcının varsayılanı (Gemini: gemini-2.5-flash).
+     *  Aşamaya ayrı model vermek için buraya yazın, ör.
+     *      'model' => 'gemini-2.5-flash-lite'
+     *
+     *  ÜCRETSİZ KATMAN: Gemini anahtarının projesinde faturalandırma
+     *  kapalıysa istekler ücretsizdir ama dakikalık / günlük kotası
+     *  vardır. Dakika sınırında istek bekleyip yeniden dener; günlük
+     *  kota dolunca analiz "ai_kota_doldu" hatasıyla durur. Maliyet
+     *  sütunları yine ücretli katman fiyatıyla TAHMİN yazılır.
+     *
+     *  gemini_ek: yalnız Gemini'de generationConfig'e eklenir. Düşünme
+     *  (thinking) token'ları çıkış bütçesinden yer ve faturalanır;
+     *  map'te kapalı (0), reduce'ta sınırlı. thinkingBudget 0 yalnız
+     *  Flash modellerinde geçerlidir; Pro'ya geçilirse değiştirin.
+     *
+     *  istem_surumu: prompts/<ad>.<surum>.txt; analizle birlikte saklanır.
+     * -------------------------------------------------------------- */
+    'ai' => [
+        'istem_surumu' => 'v1',
+
+        'map' => [
+            'saglayici'   => '',
+            'model'       => '',
+            'max_token'   => 8192,
+            'zaman_asimi' => 120,
+            'gemini_ek'   => ['thinkingConfig' => ['thinkingBudget' => 0]],
+        ],
+
+        'reduce' => [
+            'saglayici'   => '',
+            'model'       => '',
+            'max_token'   => 24000,
+            'zaman_asimi' => 240,
+            'gemini_ek'   => ['thinkingConfig' => ['thinkingBudget' => 4096]],
+        ],
+
+        // Onarım isteğinde modele geri verilen bozuk yanıtın en çok uzunluğu.
+        'onarim_en_cok_karakter' => 6000,
+    ],
+
+    /* -----------------------------------------------------------------
      *  ANALİZ BAŞLATMA (Services\AnalizBaslatici)
      * -----------------------------------------------------------------
      *  Yeni AI işi açan istek kullanıcı başına saatte bu kadarla

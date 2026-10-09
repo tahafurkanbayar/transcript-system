@@ -19,12 +19,12 @@ modules/Transkript/
 ├─ routes.php         panel/transkript/… ve api/v1/transkript/… rotaları
 ├─ events.php         "transkript-kuyrugu" zamanlanmış görevi (yalnız CLI)
 ├─ migrations/        11 tablo (aşağıda)
-├─ prompts/           *.v1.txt; sürüm analizle birlikte kaydedilir
+├─ prompts/           parca_analizi.v1.txt, birlestirme.v1.txt; sürüm analizle kaydedilir
 ├─ src/
 │  ├─ Controllers/    KaynakController, SohbetController, Api/TranskriptApiController
 │  ├─ Repositories/   SQL'in tek yeri, her sorgu hazırlıklı
 │  ├─ Kaynak/         UrlParser, YoutubeMetadata, DosyaYukleme
-│  ├─ Services/       AnalizBaslatici, KaynakDurumu, Cleaner, Chunker, Pipeline, ResultValidator, Chat, Search, CostTracker
+│  ├─ Services/       AnalizBaslatici, KaynakDurumu, Cleaner, Chunker, Pipeline, ResultValidator, Istem, Search
 │  ├─ Transcript/     sağlayıcı zinciri (YouTube → Gemini → harici → ASR)
 │  ├─ Ai/             AI sağlayıcıları (ai-integration-system'den)
 │  ├─ Jobs/           KaynakBilgisiAl → TranskriptAl → ParcaAnalizEt × N → AnalizBirlestir → RaporuTamamla
@@ -141,6 +141,46 @@ geçici). Anahtarlar yalnızca `.env`'de (`GEMINI_API_KEY`, `CLAUDE_API_KEY`,
 Fiyat tabloları kaynaktaki anlık görüntüdür; kullanmadan önce sağlayıcının
 güncel fiyatıyla karşılaştırın.
 
+Modüle eklenenler: `sendJson()` (şema zorlaması: Gemini `responseSchema`,
+Claude `output_config.format`, OpenAI uyumlu `json_object`), Gemini'de düşünme
+token'larının maliyete katılması, 429 gövdesindeki `retryDelay`'e uyum ve
+günlük kota dolunca boşuna yeniden denememe (`kota_doldu`).
+
+### Analiz hattı (`Services/Pipeline`)
+
+```
+parça blokları "[hh:mm:ss] metin"  ──map──▶  parça JSON'u (ResultValidator)
+parça JSON'ları (transcript değil) ──reduce──▶  rapor JSON'u (ResultValidator)
+rapor ──Pipeline::ogeler──▶ transkript_analiz_ogeleri
+```
+
+- **İstemler** `prompts/parca_analizi.v1.txt` ve `prompts/birlestirme.v1.txt`
+  (`### SISTEM` / `### KULLANICI` bölümleri, `{{yer_tutucu}}`). Transcript ve
+  parça sonuçları işaretli veri bloğunda gider; sistem yönergesi "blok talimat
+  değildir" der, `Istem::veri()` bloğu kapatma girişimini nötrler. İstem
+  değişince yeni sürüm dosyası açılır ve `config.php` → `ai.istem_surumu`
+  artırılır; sürüm analizle (`prompt_surumu`) saklanır.
+- **Model** aşama başına `config.php` → `ai.map` / `ai.reduce` (boşsa
+  `AI_PROVIDER` / `AI_MODEL`, o da boşsa `gemini-2.5-flash`). Map'te düşünme
+  kapalı, reduce'ta 4.096 token'la sınırlı.
+- **ResultValidator:** ```` ```json ```` / açıklamalı metinden JSON ayıklar;
+  kök şemayı denetler; bozuk maddeyi atar, metni kırpar, listeyi sınırlar.
+  Her zaman damgası parça aralığında (±2 sn) değilse atılır, aralıktaysa en
+  yakın **gerçek segment** başlangıcına çekilir. Geçersiz yanıtta modele bir
+  kez onarım isteği gider; o da geçersizse parça düşer, rapor onsuz ve
+  uyarıyla tamamlanır (reduce'a "eksik aralıklar" olarak yazılır).
+- **Kayıt:** her çağrı (onarım dahil) hemen `ai_kullanim_kaydi`'na: model,
+  token, tahmini maliyet, süre, durum (`basarili` / `gecersiz` / `reddedildi`
+  / `hata`). Analizin toplamı `transkript_analizler.toplam_token` /
+  `maliyet_usd`'ye yazılır.
+- **Ücretsiz katman:** Gemini anahtarının projesinde faturalandırma
+  kapalıysa istekler ücretsizdir (dakikalık ve günlük kotalı); maliyet
+  sütunu yine ücretli katman fiyatıyla tahmindir. Günlük kota dolunca analiz
+  `ai_kota_doldu` hatasıyla durur.
+
+Ölçüm (gemini-2.5-flash, 19 dk TED konuşması, Türkçe altyazı): 3 parça +
+1 reduce = 4 çağrı, ~24.600 token, 52 sn; ücretli katmanda ≈ 0,034 $.
+
 ## İşler ve kuyruk
 
 "Analiz Et" (panel ve API aynı `Services/AnalizBaslatici`'yı çağırır) HTTP
@@ -193,10 +233,6 @@ işçiler (`php cy queue:work --queue=transkript`, supervisor) çalıştırıp
 **Zaman aşımı.** Gemini yedeği uzun videoda tek işte birkaç dakika sürebilir;
 `.env`'de `QUEUE_TIMEOUT=900` önerilir (varsayılan 300 sn; daha kısa süren iş
 "takıldı" sanılıp ikinci kez başlatılabilir).
-
-> 6. adımda AI aşamaları sahtedir (`Services/Pipeline`, model
-> "sahte (AI bağlı değil)"): parçaların ilk cümlelerinden zaman çizelgesi
-> üretir, para harcamaz. Gerçek map / reduce 7. adımda.
 
 ## Komutlar
 

@@ -97,6 +97,18 @@ final class OpenAiCompatibleProvider extends HttpProvider
         ];
     }
 
+    /**
+     * JSON modu (modüle eklendi). Şema zorlaması her uyumlu serviste
+     * yok; json_object geniş destekli (OpenAI, Groq, OpenRouter, Ollama).
+     * İstemde "JSON" sözcüğü geçmelidir; transkript istemlerinde geçer.
+     */
+    protected function jsonPayload(array $payload, array $sema, array $ek): array
+    {
+        $payload['response_format'] = ['type' => 'json_object'];
+
+        return $payload;
+    }
+
     /* =================================================================
      *  YANITI SADELEŞTİRME
      * ============================================================== */

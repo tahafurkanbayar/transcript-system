@@ -91,6 +91,30 @@ abstract class HttpProvider implements Provider
         return $this->normalize($this->request($this->payload($messages, $system)));
     }
 
+    /**
+     * JSON yanıt (modüle eklendi): aynı istek, üzerine sağlayıcının
+     * JSON / şema ayarı (jsonPayload). Çok turlu mesaj desteklenir;
+     * onarım isteği bozuk yanıtı "assistant" mesajı olarak geri verir.
+     */
+    public function sendJson(array $messages, string $system, array $sema, array $ek = []): array
+    {
+        return $this->normalize($this->request($this->jsonPayload($this->payload($messages, $system), $sema, $ek)));
+    }
+
+    /**
+     * Sağlayıcının JSON modu / şema zorlaması. Varsayılan: hiçbir şey
+     * eklenmez (yanıt yine ResultValidator'dan geçer).
+     *
+     * @param  array<string,mixed> $payload
+     * @param  array<string,mixed> $sema
+     * @param  array<string,mixed> $ek
+     * @return array<string,mixed>
+     */
+    protected function jsonPayload(array $payload, array $sema, array $ek): array
+    {
+        return $payload;
+    }
+
     /* =================================================================
      *  HTTP + YENİDEN DENEME
      * =================================================================
@@ -153,13 +177,13 @@ abstract class HttpProvider implements Provider
                 return $decoded;
             }
 
-            $retryable = $status === 429 || $status === 529 || $status >= 500;
+            $retryable = $this->retryable($status, $raw);
 
             if ($retryable && $attempt <= static::MAX_RETRIES) {
                 /* SUNUCU "NE KADAR BEKLE" DERSE ONA UYULUR.
                  * Retry-After başlığı varken kendi hesabımızı
                  * dayatmak, hız sınırına tekrar çarpmak demektir. */
-                $this->backoff($attempt, $this->retryAfter($headers));
+                $this->backoff($attempt, $this->retryAfter($headers) ?? $this->retryAfterFromBody($raw));
 
                 continue;
             }
@@ -215,6 +239,21 @@ abstract class HttpProvider implements Provider
         curl_close($curl);
 
         return [$status, is_string($raw) ? $raw : '', $headers, $error, $errno];
+    }
+
+    /** 429, 529 ve 5xx yeniden denenir; alt sınıf daraltabilir (ör. günlük kota). */
+    protected function retryable(int $status, string $raw): bool
+    {
+        return $status === 429 || $status === 529 || $status >= 500;
+    }
+
+    /**
+     * Bekleme süresi başlıkta değil gövdedeyse (Gemini 429:
+     * error.details[].retryDelay = "37s") alt sınıf okur.
+     */
+    protected function retryAfterFromBody(string $raw): ?int
+    {
+        return null;
     }
 
     /** @param array<string,string> $headers */

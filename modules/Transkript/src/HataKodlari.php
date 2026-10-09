@@ -27,6 +27,8 @@ final class HataKodlari
         'rate_limit'            => 'Servis şu an yoğun. Biraz sonra yeniden deneyin.',
         'ai_api_hatasi'         => 'Yapay zekâ servisine ulaşılamadı. Biraz sonra yeniden deneyin.',
         'ai_ayar_eksik'         => 'Yapay zekâ ayarı eksik (anahtar ya da model). Yöneticinize bildirin.',
+        'ai_kota_doldu'         => 'Yapay zekâ servisinin günlük kullanım kotası doldu. Yarın yeniden deneyin ya da yöneticinize bildirin.',
+        'ai_yanit_gecersiz'     => 'Yapay zekâ geçerli bir rapor üretemedi. Biraz sonra yeniden deneyin.',
         'beklenmeyen_hata'      => 'Beklenmeyen bir hata oluştu; ayrıntı kayda geçti.',
     ];
 

@@ -71,6 +71,29 @@ interface Provider
      */
     public function send(array $messages, string $system = ''): array;
 
+    /**
+     * JSON yanıt ister (modüle eklendi). Sağlayıcı destekliyorsa şema
+     * zorlaması açılır: Gemini responseSchema, Claude structured
+     * outputs (output_config.format), OpenAI uyumlu json_object.
+     * Zorlama olsa da yanıt ResultValidator'dan geçmeden kullanılmaz.
+     *
+     * @param array<int,array{role:string,content:string}> $messages
+     * @param array<string,mixed> $sema JSON Schema alt kümesi: type
+     *        (object, array, string, integer, number, boolean),
+     *        properties, required, items, enum, description
+     * @param array<string,mixed> $ek Sağlayıcıya özel ek ayar (Gemini:
+     *        generationConfig'e eklenir, ör. thinkingConfig); tanımayan
+     *        sağlayıcı yok sayar
+     *
+     * @return array{
+     *     text:string, thinking:string, stop_reason:string,
+     *     refusal:?string, usage:array<string,int>, cost:float, model:string
+     * }
+     *
+     * @throws AiHatasi
+     */
+    public function sendJson(array $messages, string $system, array $sema, array $ek = []): array;
+
     /** Bu isteğin gittiği model. */
     public function model(): string;
 }

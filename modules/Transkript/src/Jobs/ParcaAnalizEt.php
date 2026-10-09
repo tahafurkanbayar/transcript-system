@@ -15,7 +15,8 @@
  *    geçici (ağ, hız sınırı)  parça bırakılır, kuyruk yeniden dener (3 deneme)
  *    kalıcı (bozuk yanıt)     parça "hata" olur; rapor o parça olmadan,
  *                             uyarıyla tamamlanır
- *    AI ayarı yok (anahtar)   bütün analiz durur: hiçbir parça işlenemez
+ *    AI ayarı yok / günlük    bütün analiz durur: hiçbir parça işlenemez
+ *    kota doldu
  *    denemeler tükendi        failed(): parça "hata", zincir sürer
  *
  *  SON PARÇA: biten (tamamlanan + hatalı) sayısı toplama ulaşınca
@@ -32,7 +33,7 @@ use App\Core\Log\Logger;
 use App\Core\Queue\Queue;
 use Modules\Transkript\Repositories\AnalizRepository;
 use Modules\Transkript\Services\Cleaner;
-use Modules\Transkript\Services\Pipeline;
+use Modules\Transkript\Transcript\Segment;
 use Throwable;
 
 final class ParcaAnalizEt extends TranskriptIsi
@@ -80,7 +81,7 @@ final class ParcaAnalizEt extends TranskriptIsi
 
             $this->analizler()->parcayiHataylaBitir($this->analizId, $this->parca, $kod . ': ' . $e->getMessage());
 
-            if ($kod === 'ai_ayar_eksik') {
+            if (in_array($kod, self::ANALIZI_DURDURAN, true)) {
                 $this->kaliciHata($kod, $e);
 
                 return;
@@ -100,14 +101,22 @@ final class ParcaAnalizEt extends TranskriptIsi
         $parca = $this->analizler()->parca($this->analizId, $this->parca)
             ?? throw new \RuntimeException('Parça yok: ' . $this->analizId . '/' . $this->parca);
 
-        $bloklar = Cleaner::fromAyarlar()->hazirla(
-            $this->segmentler()->segmentler((int) $analiz['metin_id'], (int) $parca['baslangic_ms'], (int) $parca['bitis_ms'])
+        $segmentler = $this->segmentler()->segmentler((int) $analiz['metin_id'], (int) $parca['baslangic_ms'], (int) $parca['bitis_ms']);
+
+        $sonuc = $this->pipeline()->parcaAnalizEt(
+            $parca,
+            Cleaner::fromAyarlar()->hazirla($segmentler),
+            array_map(static fn (Segment $s): int => $s->baslangicMs, $segmentler),
+            $this->baglam($analiz) + ['toplam' => $this->analizler()->parcaSayilari($this->analizId)['toplam']],
         );
 
-        $sonuc = (new Pipeline())->parcaAnalizEt($parca, $bloklar);
-
-        $this->aiKullanim()->hepsiniKaydet($sonuc['kullanim'], 'analiz', $this->analizId);
         $this->analizler()->parcayiBitir($this->analizId, $this->parca, $sonuc['sonuc']);
+
+        if ($sonuc['uyarilar'] !== []) {
+            Logger::info('Parça sonucu düzeltildi', [
+                'analiz' => $this->analizId, 'parca' => $this->parca, 'model' => $sonuc['model'], 'uyarilar' => $sonuc['uyarilar'],
+            ], 'transkript');
+        }
     }
 
     /** Denemeler tükendi: yalnız bu parça düşer, analiz sürer. */

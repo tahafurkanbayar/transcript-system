@@ -156,6 +156,42 @@ final class ClaudeProvider extends HttpProvider
         return $payload;
     }
 
+    /**
+     * Structured outputs (modüle eklendi): output_config.format ile
+     * yanıt şemaya uyar. Zorunlu tool_choice güncel modellerde 400
+     * verdiği için araç şeması yerine bu yol kullanılır. effort aynı
+     * output_config'te kalır.
+     */
+    protected function jsonPayload(array $payload, array $sema, array $ek): array
+    {
+        $payload['output_config']['format'] = ['type' => 'json_schema', 'schema' => self::sema($sema)];
+
+        return $payload;
+    }
+
+    /**
+     * Claude şemasında her nesne additionalProperties: false ister.
+     *
+     * @param  array<string,mixed> $sema
+     * @return array<string,mixed>
+     */
+    public static function sema(array $sema): array
+    {
+        if (isset($sema['properties']) && is_array($sema['properties'])) {
+            $sema['properties'] = array_map(static fn (array $alt): array => self::sema($alt), $sema['properties']);
+        }
+
+        if (isset($sema['items']) && is_array($sema['items'])) {
+            $sema['items'] = self::sema($sema['items']);
+        }
+
+        if (($sema['type'] ?? '') === 'object') {
+            $sema['additionalProperties'] = false;
+        }
+
+        return $sema;
+    }
+
     /* =================================================================
      *  YANITI SADELEŞTİRME
      * ============================================================== */

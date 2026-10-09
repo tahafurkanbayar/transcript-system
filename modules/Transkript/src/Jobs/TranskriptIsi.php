@@ -47,6 +47,7 @@ use Modules\Transkript\Repositories\AiKullanimRepository;
 use Modules\Transkript\Repositories\AnalizRepository;
 use Modules\Transkript\Repositories\KaynakRepository;
 use Modules\Transkript\Repositories\SegmentRepository;
+use Modules\Transkript\Services\Pipeline;
 use Modules\Transkript\Transcript\TranscriptHatasi;
 use PDO;
 use Throwable;
@@ -58,6 +59,9 @@ abstract class TranskriptIsi extends Job
 
     /** Analizi durduran, yeniden denenmeyecek AI hataları. */
     private const AI_AYAR_HATALARI = ['anahtar_yok', 'ayar_eksik', 'yetkisiz', 'model_bulunamadi'];
+
+    /** Bu kodlarla parça değil bütün analiz durur: kalan parçalar da başarısız olur. */
+    public const ANALIZI_DURDURAN = ['ai_ayar_eksik', 'ai_kota_doldu'];
 
     public function __construct(protected readonly int $analizId)
     {
@@ -176,8 +180,12 @@ abstract class TranskriptIsi extends Job
         return match (true) {
             $e instanceof KaynakHatasi     => $e->yenidenDenenebilir() ? null : $e->kod,
             $e instanceof TranscriptHatasi => $e->yenidenDenenebilir() ? null : $e->kod,
-            $e instanceof AiHatasi         => $e->yenidenDenenebilir() ? null
-                : (in_array($e->kod, self::AI_AYAR_HATALARI, true) ? 'ai_ayar_eksik' : 'ai_api_hatasi'),
+            $e instanceof AiHatasi         => $e->yenidenDenenebilir() ? null : match (true) {
+                in_array($e->kod, self::AI_AYAR_HATALARI, true) => 'ai_ayar_eksik',
+                $e->kod === 'kota_doldu'                        => 'ai_kota_doldu',
+                $e->kod === 'yanit_cozulemedi'                  => 'ai_yanit_gecersiz',
+                default                                         => 'ai_api_hatasi',
+            },
             default                        => null,
         };
     }
@@ -221,5 +229,28 @@ abstract class TranskriptIsi extends Job
     protected function aiKullanim(): AiKullanimRepository
     {
         return new AiKullanimRepository($this->db());
+    }
+
+    protected function pipeline(): Pipeline
+    {
+        return new Pipeline($this->aiKullanim(), $this->analizId);
+    }
+
+    /**
+     * İstemdeki video bilgisi: başlık, kanal, transcript dili.
+     *
+     * @param  array<string,mixed> $analiz
+     * @return array<string,mixed>
+     */
+    protected function baglam(array $analiz): array
+    {
+        $kaynak = $this->kaynaklar()->bul((int) $analiz['kaynak_id']) ?? [];
+        $metin  = $this->segmentler()->metin((int) ($analiz['metin_id'] ?? 0)) ?? [];
+
+        return [
+            'baslik' => $kaynak['baslik'] ?? null,
+            'kanal'  => $kaynak['kanal_adi'] ?? null,
+            'dil'    => $metin['dil'] ?? null,
+        ];
     }
 }

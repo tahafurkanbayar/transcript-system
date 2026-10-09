@@ -173,6 +173,51 @@ final class GeminiProvider extends HttpProvider
     }
 
     /**
+     * JSON modu: responseMimeType + responseSchema (modüle eklendi).
+     * $ek generationConfig'e eklenir (ör. thinkingConfig).
+     */
+    protected function jsonPayload(array $payload, array $sema, array $ek): array
+    {
+        $payload['generationConfig'] = array_merge($payload['generationConfig'] ?? [], $ek, [
+            'responseMimeType' => 'application/json',
+            'responseSchema'   => self::sema($sema),
+        ]);
+
+        return $payload;
+    }
+
+    /**
+     * JSON Schema alt kümesi → Gemini responseSchema (OpenAPI alt kümesi):
+     * tür adı BÜYÜK harf, nesnede propertyOrdering. Gemini alanları
+     * varsayılan olarak alfabetik üretir; sıra verilince "önce özet,
+     * sonra maddeler" düzeni korunur.
+     *
+     * @param  array<string,mixed> $sema
+     * @return array<string,mixed>
+     */
+    public static function sema(array $sema): array
+    {
+        $cikti = [];
+
+        foreach (['type', 'description', 'enum', 'required'] as $anahtar) {
+            if (isset($sema[$anahtar])) {
+                $cikti[$anahtar] = $anahtar === 'type' ? strtoupper((string) $sema['type']) : $sema[$anahtar];
+            }
+        }
+
+        if (isset($sema['properties']) && is_array($sema['properties'])) {
+            $cikti['properties'] = array_map(static fn (array $alt): array => self::sema($alt), $sema['properties']);
+            $cikti['propertyOrdering'] = array_keys($sema['properties']);
+        }
+
+        if (isset($sema['items']) && is_array($sema['items'])) {
+            $cikti['items'] = self::sema($sema['items']);
+        }
+
+        return $cikti;
+    }
+
+    /**
      * Uygulamanın mesaj biçimini Gemini'nin biçimine çevirir.
      *
      * @param  array<int,array{role:string,content:string}> $messages
@@ -206,7 +251,11 @@ final class GeminiProvider extends HttpProvider
         $usage = self::emptyUsage();
 
         $usage['input_tokens']  = (int) ($response['usageMetadata']['promptTokenCount'] ?? 0);
-        $usage['output_tokens'] = (int) ($response['usageMetadata']['candidatesTokenCount'] ?? 0);
+        /* Düşünme token'ları (Gemini 2.5+) candidatesTokenCount'a dahil
+         * DEĞİLDİR ama çıkış fiyatından faturalanır (modüle eklendi);
+         * eklenmezse maliyet olduğundan düşük görünür. */
+        $usage['output_tokens'] = (int) ($response['usageMetadata']['candidatesTokenCount'] ?? 0)
+            + (int) ($response['usageMetadata']['thoughtsTokenCount'] ?? 0);
         $usage['cache_read']    = (int) ($response['usageMetadata']['cachedContentTokenCount'] ?? 0);
 
         /* İSTEM ENGELLENDİYSE HİÇ ADAY GELMEZ.
@@ -336,7 +385,51 @@ final class GeminiProvider extends HttpProvider
             return 'yetkisiz';
         }
 
+        if ($status === 429 && self::gunlukKota($raw)) {
+            return 'kota_doldu';
+        }
+
         return parent::errorCode($status, $raw);
+    }
+
+    /**
+     * Günlük kota dolduysa (ücretsiz katmanda sık) yeniden denemek
+     * boşunadır: gün dönene kadar her istek 429 alır (modüle eklendi).
+     */
+    protected function retryable(int $status, string $raw): bool
+    {
+        return parent::retryable($status, $raw) && !($status === 429 && self::gunlukKota($raw));
+    }
+
+    /** 429 gövdesindeki RetryInfo: "retryDelay": "37s" (modüle eklendi). */
+    protected function retryAfterFromBody(string $raw): ?int
+    {
+        $decoded = json_decode($raw, true);
+
+        foreach ((array) (is_array($decoded) ? ($decoded['error']['details'] ?? []) : []) as $ayrinti) {
+            if (is_array($ayrinti) && is_string($ayrinti['retryDelay'] ?? null)
+                && preg_match('/^(\d+)(?:\.\d+)?s$/', $ayrinti['retryDelay'], $m)) {
+                return (int) $m[1] + 1;
+            }
+        }
+
+        return null;
+    }
+
+    /** QuotaFailure ihlali günlük kotada mı? (quotaId: …PerDay…) */
+    private static function gunlukKota(string $raw): bool
+    {
+        $decoded = json_decode($raw, true);
+
+        foreach ((array) (is_array($decoded) ? ($decoded['error']['details'] ?? []) : []) as $ayrinti) {
+            foreach ((array) (is_array($ayrinti) ? ($ayrinti['violations'] ?? []) : []) as $ihlal) {
+                if (is_array($ihlal) && stripos((string) ($ihlal['quotaId'] ?? ''), 'PerDay') !== false) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     /* =================================================================

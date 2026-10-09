@@ -134,6 +134,21 @@ final class SegmentRepository
         );
     }
 
+    /**
+     * Segment başlangıçları (ms, sıralı). ResultValidator AI'ın verdiği
+     * zamanı en yakın gerçek segmente çeker; 3 saatlik videoda ~5.000
+     * tam sayı, metin okunmaz.
+     *
+     * @return list<int>
+     */
+    public function baslangiclar(int $metinId): array
+    {
+        $statement = $this->db->prepare('SELECT baslangic_ms FROM transkript_segmentler WHERE metin_id = :metin ORDER BY baslangic_ms');
+        $statement->execute([':metin' => $metinId]);
+
+        return array_map('intval', $statement->fetchAll(PDO::FETCH_COLUMN));
+    }
+
     /** Kaynağın en son transcript sürümü. @return array<string,mixed>|null */
     public function sonMetin(int $kaynakId): ?array
     {
