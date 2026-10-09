@@ -3,6 +3,30 @@
 Starter'ın sürüm geçmişi kökteki `CHANGELOG.md`'dedir; bu dosya yalnız
 `modules/Transkript/` içindir. Biçim [Keep a Changelog](https://keepachangelog.com/tr/1.1.0/).
 
+## 0.6.2 (2026-10-09): güvenlik (çekirdek; cowork 5. tur, 3. prompt)
+
+Modül kodu değişmedi; çekirdek düzeltmeleri ve testleri burada kayıtlı.
+
+### Düzeltilenler (çekirdek)
+- Güvenlik başlıkları iki kez gidiyordu (`X-Frame-Options: DENY, DENY`):
+  `.htaccess` artık yalnız yanıtta o başlık yoksa ekler
+  (`expr=-z resp(...)`); PHP sayfası, statik dosya, 403 ve yönlendirmede
+  birer kopya (curl ile denendi). HSTS zaten yalnız HTTPS'te.
+- `api/kullanicilar/save`: `action` yalnız `add` / `edit`; başka değer
+  yetkiden önce 422 (eskiden "add" sayılıyordu).
+
+### Doğrulananlar (yeni testler)
+- Yönetici kendi hesabını silemez (403), pasife alamaz (403), rolünü
+  düşüremez (422); geçici bir yönetici satırında canlı
+  (`tests/transkript-yetki.php`). Son aktif yönetici koruması kodda
+  (`changeAdminSafely`, 409); canlı denenmedi (gerçek yöneticiyi riske atar).
+- Analist başkasının API anahtarını `anahtar_id` ile iptal edemez (canlı).
+- E-posta konusu ve gönderen adı CRLF ile başlık (Bcc / Cc) ekleyemez
+  (`tests/unit.php`).
+- G1 yanlış alarm: giriş kilidi kullanıcı adı + IP çiftine bağlı
+  (`RateLimiter::lockedFor`), ayrıca IP başına 30 deneme sınırı ve
+  güvenilir cihaz muafiyeti var; başka yerden yönetici kilitlenemez.
+
 ## 0.6.1 (2026-10-09): yönetici Kontrol Paneli
 
 ### Eklenenler

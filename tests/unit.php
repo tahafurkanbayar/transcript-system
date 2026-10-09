@@ -1142,6 +1142,20 @@ App\Core\DashboardPanels::forget();
 dogrula('Kontrol Paneli bölümleri: boş / null atlanır, hata veren sağlayıcı paneli çökertmez',
     $panelMisafir === ['<section>bir</section>']);
 
+/* Toplu e-posta konusu başlığa CRLF ile yeni satır (Bcc) ekleyemez
+ * (cowork 5. tur; Mime::encodeHeader → stripNewlines). */
+$crlfMektup = (new App\Core\Mail\Mailable())->to('alici@ornek.com')
+    ->subject("Duyuru\r\nBcc: kurban@ornek.com\r\nX-Ek: 1")->html('<p>Merhaba</p>');
+$crlfBaslik = App\Core\Mail\Mime::build($crlfMektup, ['gonderen@ornek.com', "Site\r\nCc: kurban@ornek.com"])['headers'];
+dogrula('E-posta konusu ve gönderen adı CRLF ile başlık ekleyemez (Bcc / Cc / X-Ek oluşmaz)',
+    !isset($crlfBaslik['Bcc']) && !isset($crlfBaslik['Cc']) && !isset($crlfBaslik['X-Ek'])
+    && !preg_match('/[\r\n]/', $crlfBaslik['Subject'] . $crlfBaslik['From']));
+
+$kullaniciApi = (string) file_get_contents(CY_BASE . '/app/Http/Controllers/Api/UserApiController.php');
+preg_match('#function save\(.*?Auth::can\(#s', $kullaniciApi, $kaydetBasi);
+dogrula('api/kullanicilar/save: action yalnız add | edit, başka değer yetkiden önce 422',
+    str_contains($kaydetBasi[0] ?? '', "in_array(\$action, ['add', 'edit'], true)") && str_contains($kaydetBasi[0] ?? '', '422'));
+
 /* ---------------------------------------------------------------- */
 echo "
 Test sayısı

@@ -44,8 +44,10 @@ use App\Core\Modules\Modules;
 use App\Core\Request;
 use App\Core\Setting;
 use App\Core\Throttle;
+use App\Core\Api\ApiToken;
 use App\Models\Role;
 use App\Models\User;
+use App\Repositories\UserRepository;
 use Modules\Transkript\Ayarlar;
 use Modules\Transkript\Controllers\Api\TranskriptApiController;
 use Modules\Transkript\Repositories\KaynakRepository;
@@ -61,8 +63,17 @@ const ROLLER = [
     'P' => [990004, Role::MEMBER, true],
 ];
 
+/** Çekirdek güvenlik denemesi için GERÇEK satırı olan geçici yönetici (bkz. aşağıda; test sonunda silinir). */
+const DENEME_YONETICI = 'tk_yetki_yonetici';
+
 function kullanici(string $harf): ?User
 {
+    if ($harf === 'R') {
+        $id = (int) Database::connection()->query("SELECT id FROM kullanicilar WHERE kullanici_adi = '" . DENEME_YONETICI . "'")->fetchColumn();
+
+        return $id > 0 ? (new UserRepository(Database::connection()))->find($id) : null;
+    }
+
     if (!isset(ROLLER[$harf])) {
         return null;
     }
@@ -92,9 +103,9 @@ if (($argv[1] ?? '') === '--istek' || ($argv[1] ?? '') === '--api') {
     Throttle::useDirectory((string) $istek['hiz_klasoru']);
     Logger::useDirectory((string) $istek['hiz_klasoru']);
 
-    if (isset(ROLLER[$istek['rol']])) {
-        Auth::actingAs(kullanici($istek['rol']));
-        Ayarlar::set('analiz.uye_baslatabilir', ROLLER[$istek['rol']][2]);
+    if (($kim = kullanici((string) $istek['rol'])) !== null) {
+        Auth::actingAs($kim);
+        Ayarlar::set('analiz.uye_baslatabilir', ROLLER[$istek['rol']][2] ?? false);
     }
 
     ob_start();
@@ -462,8 +473,48 @@ try {
     dogrula('Liste kapsamı: B kendi raporu + paylaşılanlar; üye yalnız paylaşılanlar (test kayıtları içinde)',
         array_values(array_intersect($bListe, $k)) === $beklenenB && array_values(array_intersect($uListe, $k)) === $beklenenU,
         json_encode([$bListe, $uListe, $k]));
+    /* ------------------------------------------------------------ */
+    echo "\nÇekirdek güvenlik: yönetici koruması, API anahtarı, action (cowork 5. tur G2, A12)\n";
+
+    /* Gerçek yönetici hesabı riske atılmaz: korumalar geçici bir yönetici
+     * satırında denenir (bozuk olsalar bile yalnız o satır etkilenirdi). */
+    $kullanicilar = new UserRepository($db);
+    $db->prepare('DELETE FROM kullanicilar WHERE kullanici_adi = :k')->execute([':k' => DENEME_YONETICI]);
+    $kullanicilar->create([
+        'ad' => 'Yetki', 'soyad' => 'Testi', 'kullanici_adi' => DENEME_YONETICI, 'eposta' => 'tk-yetki-yonetici@ornek.test',
+        'sifre' => bin2hex(random_bytes(16)), 'rol' => Role::ADMIN, 'durum' => 'aktif', 'avatar' => '', 'telefon' => '', 'hakkinda' => '',
+    ]);
+    $ben = kullanici('R');
+    $hesap = static fn () => satir($db, 'SELECT CONCAT(rol, \'/\', durum) FROM kullanicilar WHERE id = :id', [':id' => $ben->id]);
+
+    $kendiSil   = istek('R', 'POST', 'api/kullanicilar/delete', ['id' => $ben->id]);
+    $kendiDurum = istek('R', 'POST', 'api/kullanicilar/status', ['id' => $ben->id]);
+    $kendiRol   = istek('R', 'POST', 'api/kullanicilar/save', [
+        'action' => 'edit', 'id' => $ben->id, 'ad' => $ben->ad, 'soyad' => $ben->soyad, 'kullanici_adi' => $ben->kullaniciAdi,
+        'eposta' => $ben->eposta, 'rol' => Role::EDITOR, 'durum' => 'aktif',
+    ]);
+    dogrula('Yönetici kendi hesabını silemez (403), pasife alamaz (403), rolünü düşüremez (422); hesap değişmedi',
+        $kendiSil['kod'] === 403 && $kendiDurum['kod'] === 403 && $kendiRol['kod'] === 422
+        && str_contains(json_encode($kendiRol['json'], JSON_UNESCAPED_UNICODE) ?: '', 'Kendi rolünüzü') && $hesap() === 'admin/aktif',
+        json_encode([$kendiSil['kod'], $kendiDurum['kod'], $kendiRol['kod'], $hesap()]));
+
+    $uydurma = istek('R', 'POST', 'api/kullanicilar/save', ['action' => 'create', 'ad' => 'X']);
+    dogrula('api/kullanicilar/save tanımsız action ("create") → 422 "Geçersiz işlem", kayıt açılmaz',
+        $uydurma['kod'] === 422 && str_contains((string) ($uydurma['json']['description'] ?? ''), 'Geçersiz işlem'), (string) $uydurma['kod']);
+
+    $anahtar = ApiToken::create($ben->id, 'tk-yetki IDOR denemesi', 1);
+
+    try {
+        istek('A', 'POST', 'panel/hesabim/api-anahtari/sil', ['anahtar_id' => $anahtar['id']]);
+        $duruyor = (int) satir($db, 'SELECT COUNT(*) FROM api_anahtarlari WHERE id = :id', [':id' => $anahtar['id']]);
+    } finally {
+        ApiToken::revoke($anahtar['id']);
+    }
+
+    dogrula('Analist başkasının API anahtarını kendi formundan iptal edemez (anahtar_id IDOR)', $duruyor === 1);
 } finally {
     temizle($db);
+    $db->prepare('DELETE FROM kullanicilar WHERE kullanici_adi = :k')->execute([':k' => DENEME_YONETICI]);
     Throttle::useDirectory(null);
 
     $ogeler = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($hizKlasoru, FilesystemIterator::SKIP_DOTS), RecursiveIteratorIterator::CHILD_FIRST);
@@ -476,7 +527,8 @@ try {
 }
 
 $artik = (int) satir($db, "SELECT COUNT(*) FROM transkript_kaynaklar WHERE dis_kimlik LIKE '" . ONEK . "%'");
-dogrula('Test kayıtları silindi', $artik === 0, (string) $artik);
+$artik += (int) satir($db, 'SELECT COUNT(*) FROM kullanicilar WHERE kullanici_adi = :k', [':k' => DENEME_YONETICI]);
+dogrula('Test kayıtları (kaynaklar, geçici yönetici) silindi', $artik === 0, (string) $artik);
 
 printf("\n%d geçti · %d kaldı\n\n", $gecti, $kaldi);
 

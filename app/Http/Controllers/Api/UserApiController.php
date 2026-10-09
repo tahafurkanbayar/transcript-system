@@ -148,7 +148,14 @@ final class UserApiController extends Controller
      * ============================================================== */
     public function save(Request $request): void
     {
-        $action = $request->input('action') === 'edit' ? 'edit' : 'add';
+        /* Yalnız "add" ve "edit". Eskiden tanımsız değer (create, update…)
+         * sessizce "add" sayılıyordu (cowork 5. tur, A12). */
+        $action = $request->input('action');
+
+        if (!in_array($action, ['add', 'edit'], true)) {
+            Response::error('Geçersiz işlem: action yalnız "add" ya da "edit" olabilir.', 422);
+        }
+
         $isEdit = $action === 'edit';
 
         if (!Auth::can($isEdit ? 'users.update' : 'users.create')) {
