@@ -79,6 +79,15 @@ Kural TEK yerdedir: `TranskriptPolicy::canViewSource` (PHP) ve onun SQL
 karşılığı `KaynakRepository::gorunurluk()`. Liste, sayaçlar, Kontrol Paneli
 kartı, rapor sayfası, indirme, ilerleme JSON'u ve API ikisinden birine sorar.
 
+**Liste kimin kaydını gösterir** (kullanıcı kararı, 2026-10-09): yönetici
+herkesinkini görür; her satırda "Kim" (son analizi başlatan · rolü ve raporu
+kütüphanesine ekleyenler) ve kişiye göre süzgeç vardır (API'de
+`?kullanici=`, yanıtta `baslatan` ve `kutuphanede`). Üye ve analist
+varsayılan olarak yalnız **kendi** kütüphanesini görür
+(`KaynakRepository::kendi()`); yöneticinin paylaştıkları ayrı
+"Paylaşılanlar" seçeneğindedir (API'de `?kapsam=paylasilan`). Sayaçlar ve
+Kontrol Paneli kartı varsayılan kapsamı sayar (`kendiIstatistik`).
+
 **"Üyeler analiz başlatabilir"** (Transkript ayarları, varsayılan kapalı)
 rol yetkisi değil ayardır: açıkken üye analistle aynı kurallar ve kotalarla
 analiz başlatır. Bu yüzden analiz başlatan panel uçları rotada yalnız giriş

@@ -71,8 +71,8 @@ if (PHP_SAPI === 'cli' && (bool) Ayarlar::get('kuyruk.zamanlanmis_gorev', true))
  *  KONTROL PANELİ KARTLARI (DashboardCards kancası; çekirdeğe dokunmadan)
  * ---------------------------------------------------------------------
  *  Raporlar: transkript.view olan herkese. Yönetici herkesinkini, öteki
- *  roller GÖREBİLDİĞİNİ (kütüphanesi + paylaşılan; listedeki "Raporu
- *  hazır" ile aynı sayı) görür. Süren ve hatalı sayısı ile bugünkü
+ *  roller KENDİSİNİNKİNİ (kütüphanesi; listedeki "Raporu hazır" ile aynı
+ *  sayı, paylaşılanlar hariç) görür. Süren ve hatalı sayısı ile bugünkü
  *  analiz hakkı yalnız analiz başlatabilene (TranskriptPolicy).
  *  Bugünkü kullanım: yalnız yönetici.
  * ------------------------------------------------------------------ */
@@ -84,7 +84,7 @@ DashboardCards::add('transkript-raporlar', static function (?User $user): ?array
     $db     = Database::connection();
     $policy = new TranskriptPolicy($user);
     $repo   = new KaynakRepository($db);
-    $sayi   = $policy->isAdmin() ? $repo->istatistik(null) : $repo->gorunenIstatistik($user->id);
+    $sayi   = $policy->isAdmin() ? $repo->istatistik(null) : $repo->kendiIstatistik($user->id);
     $hak    = $policy->canAnalyze() ? (new AnalizBaslatici($db, $user))->hakDurumu() : null;
     $alt    = $policy->canAnalyze() ? array_filter([
         $sayi['suruyor'] > 0 ? $sayi['suruyor'] . ' sürüyor' : '',
@@ -97,7 +97,7 @@ DashboardCards::add('transkript-raporlar', static function (?User $user): ?array
         'renk'   => $sayi['hata'] > 0 && $policy->canAnalyze() ? 'warning' : 'success',
         'etiket' => $policy->isAdmin() ? 'Transkript raporu' : 'Transkript raporlarınız',
         'deger'  => $sayi['kaynak'],
-        'ipucu'  => $alt !== [] ? implode(' · ', $alt) : ($policy->isAdmin() ? 'raporu hazır video' : 'kütüphanenizdeki ve sizinle paylaşılan'),
+        'ipucu'  => $alt !== [] ? implode(' · ', $alt) : ($policy->isAdmin() ? 'raporu hazır video' : 'kütüphanenizdeki'),
         'yol'    => 'panel/transkript',
     ];
 });

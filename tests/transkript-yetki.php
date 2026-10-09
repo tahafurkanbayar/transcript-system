@@ -434,7 +434,7 @@ try {
         $admin  = $kim->can('transkript.admin');
         Ayarlar::set('analiz.uye_baslatabilir', false);
         $liste  = $repo->liste(['durum' => 'hazir'], 1, 100, $kim->id, $admin)['toplam'];
-        $sayac  = $admin ? $repo->istatistik(null)['kaynak'] : $repo->gorunenIstatistik($kim->id)['kaynak'];
+        $sayac  = $admin ? $repo->istatistik(null)['kaynak'] : $repo->kendiIstatistik($kim->id)['kaynak'];
         $kart   = null;
 
         foreach (DashboardCards::collect($kim) as $c) {
@@ -462,17 +462,52 @@ try {
         && str_contains($yonetimBolumu, 'Son analizler') && str_contains($yonetimBolumu, 'Yetki testi K5')
         && DashboardPanels::collect(kullanici('A')) === [] && DashboardPanels::collect(kullanici('U')) === []);
 
-    $bListe = array_column($repo->liste([], 1, 100, ROLLER['B'][0], false)['satirlar'], 'id');
-    $uListe = array_column($repo->liste([], 1, 100, ROLLER['U'][0], false)['satirlar'], 'id');
-    sort($bListe);
-    sort($uListe);
-    $beklenenB = [$k['K2'], $k['K3'], $k['K4']];
-    $beklenenU = [$k['K3'], $k['K4']];
-    sort($beklenenB);
-    sort($beklenenU);
-    dogrula('Liste kapsamı: B kendi raporu + paylaşılanlar; üye yalnız paylaşılanlar (test kayıtları içinde)',
-        array_values(array_intersect($bListe, $k)) === $beklenenB && array_values(array_intersect($uListe, $k)) === $beklenenU,
-        json_encode([$bListe, $uListe, $k]));
+    /* Kullanıcı kararı (2026-10-09): üye ve analist varsayılan olarak yalnız
+     * kendi kayıtlarını görür; paylaşılanlar "paylasilan" kapsamında. Yönetici
+     * herkesinkini görür ve kişiye göre süzer. */
+    $kimlikler = static function (array $filtre, string $rol) use ($repo, $k): array {
+        $ids = array_values(array_intersect(array_column($repo->liste($filtre, 1, 100, ROLLER[$rol][0], $rol === 'Y')['satirlar'], 'id'), $k));
+        sort($ids);
+
+        return $ids;
+    };
+    $sirali = static function (array $ids): array { sort($ids); return $ids; };
+    $gercek = [
+        'B'           => $kimlikler([], 'B'),
+        'B paylasilan' => $kimlikler(['kapsam' => 'paylasilan'], 'B'),
+        'U'           => $kimlikler([], 'U'),
+        'U paylasilan' => $kimlikler(['kapsam' => 'paylasilan'], 'U'),
+        'Y'           => $kimlikler([], 'Y'),
+        'Y kisi A'    => $kimlikler(['kullanici' => ROLLER['A'][0]], 'Y'),
+        'B kisi A'    => $kimlikler(['kullanici' => ROLLER['A'][0]], 'B'),
+    ];
+    $beklenen = [
+        'B'           => [$k['K2']],
+        'B paylasilan' => $sirali([$k['K3'], $k['K4']]),
+        'U'           => [],
+        'U paylasilan' => $sirali([$k['K3'], $k['K4']]),
+        'Y'           => $sirali(array_values($k)),
+        'Y kisi A'    => $sirali([$k['K1'], $k['K4'], $k['K5']]),
+        'B kisi A'    => [$k['K2']],
+    ];
+    dogrula('Liste kapsamı: üye ve analist yalnız kendi kaydı (paylaşılan ayrı seçenekte); yönetici herkesi görür, kişiye göre süzer; kişi süzgeci yönetici dışında yok sayılır',
+        $gercek === $beklenen, json_encode(['gercek' => $gercek, 'beklenen' => $beklenen]));
+
+    $yListe = $repo->liste(['kullanici' => ROLLER['A'][0]], 1, 100, ROLLER['Y'][0], true)['satirlar'];
+    $k1Satir = array_values(array_filter($yListe, static fn (array $s): bool => (int) $s['id'] === $k['K1']))[0] ?? [];
+    $bSatir  = $repo->liste([], 1, 100, ROLLER['B'][0], false)['satirlar'][0] ?? [];
+    dogrula('Yönetici satırında "kim" sütunları var (başlatan, kütüphanesindekiler); analistin satırında yok',
+        array_key_exists('baslatan_adi', $k1Satir) && array_key_exists('kutuphane_kisileri', $k1Satir) && (int) $k1Satir['kullanici_id'] === ROLLER['A'][0]
+        && $bSatir !== [] && !array_key_exists('baslatan_adi', $bSatir) && !array_key_exists('kutuphane_kisileri', $bSatir));
+
+    $apiU = istek('U', 'GET', 'api/v1/transkript/kaynaklar', [], ['kapsam' => 'paylasilan', 'sayfa_boyut' => 100], '--api');
+    $apiY = istek('Y', 'GET', 'api/v1/transkript/kaynaklar', [], ['kullanici' => ROLLER['A'][0], 'sayfa_boyut' => 100], '--api');
+    $apiUIds = $sirali(array_values(array_intersect(array_column($apiU['json']['data'] ?? [], 'kaynak_id'), $k)));
+    $apiYIds = $sirali(array_values(array_intersect(array_column($apiY['json']['data'] ?? [], 'kaynak_id'), $k)));
+    dogrula('API: üye ?kapsam=paylasilan ile paylaşılanları alır, "baslatan" görmez; yönetici ?kullanici= ile süzer ve "baslatan" alır',
+        $apiUIds === $beklenen['U paylasilan'] && !array_key_exists('baslatan', ($apiU['json']['data'][0] ?? []))
+        && $apiYIds === $beklenen['Y kisi A'] && array_key_exists('baslatan', ($apiY['json']['data'][0] ?? [])),
+        json_encode([$apiUIds, $apiYIds]));
     /* ------------------------------------------------------------ */
     echo "\nÇekirdek güvenlik: yönetici koruması, API anahtarı, action (cowork 5. tur G2, A12)\n";
 

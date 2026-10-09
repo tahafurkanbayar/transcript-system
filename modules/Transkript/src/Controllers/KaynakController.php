@@ -60,10 +60,14 @@ final class KaynakController extends Controller
         $repo   = new KaynakRepository($this->db);
 
         $varsayilan = self::listeDurumu('', $policy->canAnalyze());
+        $kapsam     = in_array($request->input('kapsam'), KaynakRepository::LISTE_KAPSAMLARI, true) ? $request->input('kapsam') : '';
         $filtre = [
             'q'      => mb_substr($request->input('q'), 0, 100),
             'durum'  => self::listeDurumu($request->input('durum'), $policy->canAnalyze()),
-            'kapsam' => in_array($request->input('kapsam'), KaynakRepository::LISTE_KAPSAMLARI, true) ? $request->input('kapsam') : '',
+            // Yönetici dışında boş = kütüphanem (KaynakRepository::kendi); ikisi aynı adreste kalsın.
+            'kapsam' => !$policy->isAdmin() && $kapsam === 'kutuphanem' ? '' : $kapsam,
+            // Kişiye göre süzgeç yalnız yöneticide.
+            'kullanici' => $policy->isAdmin() ? (string) ($request->int('kullanici', 1) ?? '') : '',
         ];
         $boyut = max(5, min(50, (int) Setting::get('sistem_sayfa_basina', '10') ?: 10));
         $sayfa = $request->int('sayfa', 1, 100000) ?? 1;
@@ -80,13 +84,17 @@ final class KaynakController extends Controller
             'liste'      => $liste,
             'sayfa'      => $sayfa,
             'boyut'      => $boyut,
-            // Yönetici herkesinkini; öteki roller GÖREBİLDİĞİ raporları sayar
-            // (kütüphanesi + paylaşılan; listeyle aynı kapsam). Token / maliyet
+            // Yönetici herkesinkini; öteki roller KENDİ raporlarını sayar
+            // (kütüphanesi; listenin varsayılan kapsamı). Token / maliyet
             // kartları yalnız yöneticide (kullanıcı kararı).
             'istatistik' => $policy->canSeeAllCosts()
                 ? $repo->istatistik(null)
-                : $repo->gorunenIstatistik((int) $user?->id),
+                : $repo->kendiIstatistik((int) $user?->id),
             'hepsi'      => $policy->canSeeAllCosts(),
+            // Yönetici: "Kim" süzgecinin seçenekleri. Öteki roller: paylaşılan rapor sayısı.
+            'kisiler'    => $policy->isAdmin() ? $repo->islemYapanlar() : [],
+            'paylasilan' => $policy->isAdmin() ? 0 : $repo->paylasilanSayisi(),
+            'benId'      => (int) $user?->id,
             // Analiz başlatabilene bugünkü hakkı ("3 / 10 · saatlik 1 / 20").
             'hak'        => $policy->canAnalyze() ? (new AnalizBaslatici($this->db, $user))->hakDurumu() : null,
             // Yönetici: geçici sebeple duran analiz sayısı ("Bekleyenleri yeniden dene").

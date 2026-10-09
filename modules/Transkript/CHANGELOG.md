@@ -3,6 +3,29 @@
 Starter'ın sürüm geçmişi kökteki `CHANGELOG.md`'dedir; bu dosya yalnız
 `modules/Transkript/` içindir. Biçim [Keep a Changelog](https://keepachangelog.com/tr/1.1.0/).
 
+## 0.6.5 (2026-10-09): liste: yöneticide "Kim", üye ve analistte yalnız kendi kayıtları
+
+Kullanıcının isteği: "Yönetici kimin hangi işlemi yaptığını görsün; üye ve
+analist yalnız kendi transkript işlemlerini görsün."
+
+- Yönetici listesinde yeni "Kim" sütunu: son analizi başlatan (ad · rol;
+  kendisiyse "Siz") ve raporu kütüphanesine ekleyenler ("Kütüphanede: A, B +2").
+  Telefonda kartın içinde satır olarak.
+- Yöneticiye kişi süzgeci ("Bütün kişiler" / "Ad (Rol)"): o kişinin yüklediği,
+  kütüphanesindeki ya da analizini başlattığı kayıtlar. Kapsam seçeneğinin
+  adı "Herkesin kayıtları".
+- Üye ve analist varsayılan olarak yalnız kendi kütüphanesini görür
+  (`KaynakRepository::kendi()`); yöneticinin paylaştıkları ayrı
+  "Paylaşılanlar (N)" seçeneğinde. Kendi listesi boşsa "Yöneticinin
+  paylaştığı N raporu göster" bağlantısı çıkar. Rapor sayfasının
+  görünürlüğü değişmedi (paylaşılan rapor açılır).
+- Sayaçlar, Kontrol Paneli kartı ve API aynı kapsamı sayar:
+  `gorunenIstatistik` → `kendiIstatistik` ("kütüphanenizdeki").
+- API `GET api/v1/transkript/kaynaklar`: `kapsam` (kutuphanem · paylasilan),
+  yöneticide `kullanici` süzgeci ve satırda `baslatan` + `kutuphanede`.
+- Testler: `tests/transkript.php` 362 (+2), `tests/transkript-yetki.php` 24 (+2;
+  liste = sayaç = kart = API her rolde).
+
 ## 0.6.4 (2026-10-09): kullanıcı olarak oturum açma (çekirdek)
 
 Modül kodu değişmedi; kullanıcının isteğiyle çekirdeğe eklenen özellik burada kayıtlı.

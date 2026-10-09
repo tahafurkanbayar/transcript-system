@@ -1779,9 +1779,27 @@ $kapsamPdo = new KayitPdo();
 (new KaynakRepository($kapsamPdo))->liste(['kapsam' => 'kutuphanem'], 1, 10, 7, false);
 (new KaynakRepository($kapsamPdo))->liste(['kapsam' => 'paylasilan'], 1, 10, 7, false);
 $kapsamSql = implode("\n", $kapsamPdo->sorgular);
+[$kendiKosulu] = KaynakRepository::kendi(7);
 dogrula('Liste kapsamı: "Kütüphanem" kendi satırları, "Paylaşılanlar" paylasildi = 1; her satır kutuphanede taşır',
-    str_contains($kapsamSql, 'kku.kullanici_id = :kapsam_ben') && str_contains($kapsamSql, 'AND k.paylasildi = 1')
+    str_contains($kapsamSql, $kendiKosulu) && str_contains($kendiKosulu, 'kku.kullanici_id = :kendi_ben')
+    && str_contains($kendiKosulu, 'k.sahip_id = :kendi_sahip') && str_contains($kapsamSql, 'AND k.paylasildi = 1')
     && str_contains($kapsamSql, 'AS kutuphanede'));
+
+// Kullanıcı kararı (2026-10-09): üye ve analist varsayılan olarak yalnız kendi kayıtlarını görür.
+$varsayilanPdo = new KayitPdo();
+(new KaynakRepository($varsayilanPdo))->liste([], 1, 10, 7, false);
+(new KaynakRepository($varsayilanPdo))->liste(['kapsam' => 'uydurma', 'kullanici' => 5], 1, 10, 7, false);
+$varsayilanSql = implode("\n", $varsayilanPdo->sorgular);
+dogrula('Yönetici dışında boş ya da bilinmeyen kapsam = kendi kayıtları; paylaşılanlar karışmaz; kişi süzgeci ve "kim" yok',
+    substr_count($varsayilanSql, $kendiKosulu) === 4 && !str_contains($varsayilanSql, 'AND k.paylasildi = 1')
+    && !str_contains($varsayilanSql, ':kisi_') && !str_contains($varsayilanSql, 'baslatan_adi') && !str_contains($varsayilanSql, 'kutuphane_kisileri'));
+$kimPdo = new KayitPdo();
+(new KaynakRepository($kimPdo))->liste(['kullanici' => '5'], 1, 10, 1, true);
+$kimSql = implode("\n", $kimPdo->sorgular);
+dogrula('Yönetici: herkesin kaydı, satırda başlatan ve kütüphanesindekiler; kişi süzgeci yüklediği, kütüphanesi ya da başlattığı',
+    !str_contains($kimSql, ':kendi_ben') && str_contains($kimSql, 'AS baslatan_adi') && str_contains($kimSql, 'AS baslatan_rol')
+    && str_contains($kimSql, 'AS kutuphane_kisileri') && str_contains($kimSql, 'k.sahip_id = :kisi_sahip')
+    && str_contains($kimSql, 'pku.kullanici_id = :kisi_kutuphane') && str_contains($kimSql, 'pan.kullanici_id = :kisi_analiz'));
 
 /* ---------------------------------------------------------------- */
 echo "\nDışa aktarma (Markdown, YouTube bölümleri, SRT / VTT)\n";
@@ -2282,18 +2300,18 @@ dogrula('İlerleme etiketi de aynı kurala uyar (policy\'siz çağrı ayrıntıl
     && str_contains(KaynakDurumu::etiket(['durum' => 'hata', 'hata_kodu' => 'ai_kota_doldu']), 'kota'));
 
 $sayacPdo = new KayitPdo();
-$gorunenSayi = (new KaynakRepository($sayacPdo))->gorunenIstatistik(4);
+$gorunenSayi = (new KaynakRepository($sayacPdo))->kendiIstatistik(4);
 $uyeSorgu = $sayacPdo->sorgular;
-[$sayacKosulu] = KaynakRepository::gorunurluk(4);
-dogrula('Yönetici dışı sayaç: listeyle aynı görünürlük kuralı, bugün = kütüphaneye eklenen; token / maliyet sorulmaz, 0 döner',
+[$sayacKosulu] = KaynakRepository::kendi(4);
+dogrula('Yönetici dışı sayaç: listenin varsayılanıyla aynı kural (kendi kayıtları), bugün = kütüphaneye eklenen; token / maliyet sorulmaz, 0 döner',
     str_contains($uyeSorgu[0] ?? '', $sayacKosulu) && str_contains($uyeSorgu[1] ?? '', $sayacKosulu)
     && str_contains($uyeSorgu[2] ?? '', 'FROM transkript_kutuphane WHERE kullanici_id = :kullanici AND created_at >= CURDATE()')
     && count($uyeSorgu) === 3
     && !str_contains(implode(' ', $uyeSorgu), 'ai_kullanim_kaydi') && $gorunenSayi['token'] === 0 && $gorunenSayi['maliyet'] === 0.0);
 $panelKodu = (string) file_get_contents(MODUL_YOLU . '/events.php') . $kaynakKodu;
-dogrula('Sayaç rol adına değil yetkiye bağlı: yönetici dışında herkes gorunenIstatistik (editör dahil)',
+dogrula('Sayaç rol adına değil yetkiye bağlı: yönetici dışında herkes kendiIstatistik (editör dahil)',
     !str_contains($panelKodu, 'istatistik($user->id)') && !str_contains($panelKodu, 'istatistik($user?->id)')
-    && substr_count($panelKodu, 'gorunenIstatistik(') === 2);
+    && substr_count($panelKodu, 'kendiIstatistik(') === 2);
 
 dogrula('Liste süzgeci: analiz başlatamayanın varsayılanı "hazir", "hepsi" süzgeçsiz; analiz başlatanın varsayılanı süzgeçsiz',
     KaynakController::listeDurumu('', false) === 'hazir' && KaynakController::listeDurumu('hepsi', false) === ''
@@ -2352,13 +2370,19 @@ preg_match('#function ozet\(.*?\n    }\n#s', (string) file_get_contents(MODUL_YO
 dogrula('API özeti: yönetici dışında toplam_token, maliyet_usd ve raporu başlatan çıkarılır',
     str_contains($ozetGovde[0] ?? '', "if (!\$policy->canSeeAllCosts())")
     && str_contains($ozetGovde[0] ?? '', "unset(\$analiz['toplam_token'], \$analiz['maliyet_usd'], \$analiz['kullanici_id'])"));
-dogrula('Liste boşken üyeye "kutuya yapıştırın" denmez; paylaşım beklediği söylenir',
-    str_contains(App\Core\View::capture('Transkript::index', [
-        'policy' => $prU, 'filtre' => ['q' => '', 'durum' => 'hazir'], 'varsayilanDurum' => 'hazir',
-        'liste' => ['satirlar' => [], 'toplam' => 0], 'sayfa' => 1, 'boyut' => 10,
-        'istatistik' => ['bugun' => 0, 'kaynak' => 0, 'suruyor' => 0, 'hata' => 0, 'token' => 0, 'maliyet' => 0.0],
-        'hepsi' => false, 'onUrl' => '', 'kuyruk' => ['takildi' => false],
-    ]), 'Sizinle paylaşılan rapor henüz yok.'));
+$bosListe = static fn (string $kapsam, int $paylasilan): string => App\Core\View::capture('Transkript::index', [
+    'policy' => $prU, 'filtre' => ['q' => '', 'durum' => 'hazir', 'kapsam' => $kapsam], 'varsayilanDurum' => 'hazir',
+    'liste' => ['satirlar' => [], 'toplam' => 0], 'sayfa' => 1, 'boyut' => 10,
+    'istatistik' => ['bugun' => 0, 'kaynak' => 0, 'suruyor' => 0, 'hata' => 0, 'token' => 0, 'maliyet' => 0.0],
+    'hepsi' => false, 'onUrl' => '', 'kuyruk' => ['takildi' => false], 'paylasilan' => $paylasilan,
+]);
+$bosKendi = $bosListe('', 2);
+dogrula('Liste boşken üyeye "kutuya yapıştırın" denmez; kendi kütüphanesi boşsa paylaşılanlara tek tık, yoksa "paylaşılan yok"',
+    str_contains($bosKendi, 'Kütüphanenizde henüz rapor yok.') && !str_contains($bosKendi, 'yapıştırarak')
+    && str_contains($bosKendi, 'paylaştığı 2 raporu göster') && str_contains($bosKendi, 'kapsam=paylasilan')
+    && str_contains($bosKendi, 'Paylaşılanlar (2)') && !str_contains($bosKendi, 'paylaştığı 0 raporu')
+    && str_contains($bosListe('paylasilan', 0), 'Sizinle paylaşılan rapor henüz yok.')
+    && !str_contains($bosListe('', 0), 'raporu göster'));
 
 $vaatCiz = static fn (bool $girisli, bool $analiz, bool $api): string => App\Core\View::capture('Transkript::anasayfa', [
     'girisli' => $girisli, 'analizEdebilir' => $girisli && $analiz, 'analizVaadi' => $analiz, 'apiAcik' => $api, 'kayitAcik' => true,

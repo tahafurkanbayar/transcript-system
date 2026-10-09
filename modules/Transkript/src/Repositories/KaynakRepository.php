@@ -170,18 +170,47 @@ final class KaynakRepository
         ];
     }
 
+    /**
+     * Kullanıcının KENDİ kaynakları: yüklediği dosya ya da kütüphanesindeki
+     * video (başlattığı ya da önbellekten eklediği). Yönetici dışında liste,
+     * sayaçlar, Kontrol Paneli kartı ve API'nin varsayılan kapsamı budur
+     * (kullanıcı kararı, 2026-10-09: üye ve analist yalnız kendi işlemlerini
+     * görür; yöneticinin paylaştıkları ayrı "Paylaşılanlar" seçeneğinde).
+     *
+     * @return array{0: string, 1: array<string,int>} [koşul, parametreler]
+     */
+    public static function kendi(int $kullaniciId): array
+    {
+        return [
+            '(k.sahip_id = :kendi_sahip OR EXISTS (
+                SELECT 1 FROM transkript_kutuphane kku WHERE kku.kaynak_id = k.id AND kku.kullanici_id = :kendi_ben))',
+            [':kendi_sahip' => $kullaniciId, ':kendi_ben' => $kullaniciId],
+        ];
+    }
+
     /** Liste durum filtresi → son analizin koşulu. İptal edilen "hata" sayılmaz, ayrı süzülür. */
     public const LISTE_DURUMLARI = ['hazir', 'suruyor', 'hata', 'iptal'];
 
-    /** Liste kapsam filtresi: kütüphanem · paylaşılan. Boş: görebildiği her şey. */
+    /**
+     * Liste kapsam filtresi: kütüphanem · paylaşılan. Boş: yöneticide
+     * herkesin kayıtları, öteki rollerde kütüphanem (bkz. kendi()).
+     */
     public const LISTE_KAPSAMLARI = ['kutuphanem', 'paylasilan'];
 
     /**
      * Kaynaklar, son analizleriyle birlikte; en son analiz edilen başta.
      *
      * GÖRÜNÜRLÜK: $hepsi (transkript.admin) her şeyi, öteki roller
-     * gorunurluk() kadarını görür. Her satır "kutuphanede" (görenin
-     * kütüphanesinde mi) ve "paylasildi" taşır; düğmeler buna göre çizilir.
+     * gorunurluk() kadarını görür; onların varsayılan kapsamı da kendi
+     * kayıtlarıdır (kendi()), paylaşılanlar yalnız "paylasilan" kapsamında
+     * gelir. Her satır "kutuphanede" (görenin kütüphanesinde mi) ve
+     * "paylasildi" taşır; düğmeler buna göre çizilir.
+     *
+     * KİM: yöneticiye her satırda son analizi başlatanın adı ve rolü
+     * ("baslatan_*") ile raporu kütüphanesine ekleyenlerin adları
+     * ("kutuphane_kisileri", "|" ile). "kullanici" süzgeci (yalnız
+     * yönetici) o kişinin yüklediği, kütüphanesindeki ya da analizini
+     * başlattığı kaynakları bırakır.
      *
      * ARAMA başlık ve kanal adında, utf8mb4_unicode_ci ile: turkish_ci'de
      * "ai" "AI"yı bulmaz (README, "Arama neden katlanmış sütunda?").
@@ -189,7 +218,7 @@ final class KaynakRepository
      * büyük/küçük harfe duyarlıdır (ascii_bin), yalnız kimlik karakterli
      * sorguda aranır.
      *
-     * @param  array{tur?:string,durum?:string,q?:string,kapsam?:string} $filtre
+     * @param  array{tur?:string,durum?:string,q?:string,kapsam?:string,kullanici?:int|string} $filtre
      * @return array{satirlar: list<array<string,mixed>>, toplam: int}
      */
     public function liste(array $filtre, int $sayfa, int $boyut, ?int $gorenId, bool $hepsi): array
@@ -197,20 +226,32 @@ final class KaynakRepository
         $kosullar     = [];
         $parametreler = [];
         $ben          = (int) $gorenId;
+        $kapsam       = (string) ($filtre['kapsam'] ?? '');
 
         if (!$hepsi) {
             [$kosul, $p] = self::gorunurluk($ben);
             $kosullar[]  = $kosul;
             $parametreler += $p;
+
+            // Yönetici dışında varsayılan kendi kayıtlarıdır; paylaşılanlar ayrı seçenekte.
+            $kapsam = $kapsam === 'paylasilan' ? 'paylasilan' : 'kutuphanem';
         }
 
-        $kapsam = (string) ($filtre['kapsam'] ?? '');
-
         if ($kapsam === 'kutuphanem') {
-            $kosullar[] = 'EXISTS (SELECT 1 FROM transkript_kutuphane kku WHERE kku.kaynak_id = k.id AND kku.kullanici_id = :kapsam_ben)';
-            $parametreler[':kapsam_ben'] = $ben;
+            [$kosul, $p] = self::kendi($ben);
+            $kosullar[]  = $kosul;
+            $parametreler += $p;
         } elseif ($kapsam === 'paylasilan') {
             $kosullar[] = 'k.paylasildi = 1';
+        }
+
+        $kisi = $hepsi ? (int) ($filtre['kullanici'] ?? 0) : 0;
+
+        if ($kisi > 0) {
+            $kosullar[] = '(k.sahip_id = :kisi_sahip
+                OR EXISTS (SELECT 1 FROM transkript_kutuphane pku WHERE pku.kaynak_id = k.id AND pku.kullanici_id = :kisi_kutuphane)
+                OR EXISTS (SELECT 1 FROM transkript_analizler pan WHERE pan.kaynak_id = k.id AND pan.kullanici_id = :kisi_analiz))';
+            $parametreler += [':kisi_sahip' => $kisi, ':kisi_kutuphane' => $kisi, ':kisi_analiz' => $kisi];
         }
 
         $tur = (string) ($filtre['tur'] ?? '');
@@ -245,9 +286,18 @@ final class KaynakRepository
         $say->execute($parametreler);
         $toplam = (int) $say->fetchColumn();
 
+        // Yöneticiye "kim": başlatan (son analiz) ve kütüphanesine ekleyenler.
+        $kim = $hepsi
+            ? "(SELECT CONCAT_WS(' ', bu.ad, bu.soyad) FROM kullanicilar bu WHERE bu.id = a.kullanici_id) AS baslatan_adi,
+               (SELECT bu.rol FROM kullanicilar bu WHERE bu.id = a.kullanici_id) AS baslatan_rol,
+               (SELECT GROUP_CONCAT(CONCAT_WS(' ', ku.ad, ku.soyad) ORDER BY kk.created_at, kk.id SEPARATOR '|')
+                  FROM transkript_kutuphane kk JOIN kullanicilar ku ON ku.id = kk.kullanici_id
+                 WHERE kk.kaynak_id = k.id) AS kutuphane_kisileri,"
+            : '';
+
         $sorgu = $this->db->prepare(
             "SELECT k.id, k.tur, k.dis_kimlik, k.sahip_id, k.baslik, k.kanal_adi, k.sure_sn, k.kucuk_resim, k.yayin_tarihi,
-                    k.durum AS kaynak_durumu, k.paylasildi,
+                    k.durum AS kaynak_durumu, k.paylasildi, $kim
                     EXISTS (SELECT 1 FROM transkript_kutuphane sku WHERE sku.kaynak_id = k.id AND sku.kullanici_id = :satir_ben) AS kutuphanede,
                     a.id AS analiz_id, a.kullanici_id, a.durum, a.asama, a.ilerleme, a.hata_kodu, a.hata_ozeti, a.created_at,
                     (SELECT r.id FROM transkript_analizler r
@@ -323,22 +373,22 @@ final class KaynakRepository
     }
 
     /**
-     * Yönetici olmayanın kutucukları (analist de üye de): GÖREBİLDİĞİ
-     * raporlar, yani gorunurluk() kapsamı: kütüphanesindeki ve paylaşılan
-     * YouTube kayıtları ile kendi dosyaları. Liste, Kontrol Paneli ve API
-     * aynı kapsamı sayar; "kaynak", liste "Raporu hazır" süzgecinin
+     * Yönetici olmayanın kutucukları (analist de üye de): KENDİ raporları,
+     * yani kendi() kapsamı: kütüphanesindeki YouTube kayıtları ile kendi
+     * dosyaları (yöneticinin paylaştıkları sayılmaz). Liste, Kontrol Paneli
+     * ve API aynı kapsamı sayar; "kaynak", liste "Raporu hazır" süzgecinin
      * toplamıyla aynıdır (tests/transkript-yetki.php sınar).
      *
-     *   kaynak   görebildiği, raporu hazır video
+     *   kaynak   kendi, raporu hazır video
      *   bugun    bugün kütüphanesine eklediği video (analiz ya da önbellek)
-     *   suruyor / hata  görebildiği kaynaklardan son analizi süren / hatalı
+     *   suruyor / hata  kendi kaynaklarından son analizi süren / hatalı
      *   token / maliyet  0: yalnız yöneticiye gösterilir (istatistik(null))
      *
      * @return array{bugun:int, token:int, maliyet:float, kaynak:int, suruyor:int, hata:int}
      */
-    public function gorunenIstatistik(int $kullaniciId): array
+    public function kendiIstatistik(int $kullaniciId): array
     {
-        [$kosul, $p] = self::gorunurluk($kullaniciId);
+        [$kosul, $p] = self::kendi($kullaniciId);
 
         $rapor = $this->db->prepare(
             "SELECT COUNT(*) FROM transkript_kaynaklar k
@@ -366,6 +416,35 @@ final class KaynakRepository
             'token'   => 0,
             'maliyet' => 0.0,
         ];
+    }
+
+    /** Yöneticinin üyelerle paylaştığı, raporu hazır video sayısı ("Paylaşılanlar" seçeneği ve boş liste ipucu). */
+    public function paylasilanSayisi(): int
+    {
+        return (int) $this->db->query(
+            "SELECT COUNT(*) FROM transkript_kaynaklar k
+              WHERE k.sahip_id = 0 AND k.paylasildi = 1
+                AND EXISTS (SELECT 1 FROM transkript_analizler r WHERE r.kaynak_id = k.id AND r.guncel_mi = 1 AND r.durum = 'tamamlandi')"
+        )->fetchColumn();
+    }
+
+    /**
+     * Yöneticinin "kullanıcı" süzgeci: Transkript'te kaydı olan kişiler
+     * (kütüphanesi ya da başlattığı analizi olan), adına göre.
+     *
+     * @return list<array{id:int, adi:string, rol:string}>
+     */
+    public function islemYapanlar(): array
+    {
+        $satirlar = $this->db->query(
+            "SELECT u.id, CONCAT_WS(' ', u.ad, u.soyad) AS adi, u.rol
+               FROM kullanicilar u
+              WHERE EXISTS (SELECT 1 FROM transkript_kutuphane ku WHERE ku.kullanici_id = u.id)
+                 OR EXISTS (SELECT 1 FROM transkript_analizler a WHERE a.kullanici_id = u.id)
+              ORDER BY u.ad, u.soyad, u.id"
+        )->fetchAll(PDO::FETCH_ASSOC);
+
+        return array_map(static fn (array $s): array => ['id' => (int) $s['id'], 'adi' => (string) $s['adi'], 'rol' => (string) $s['rol']], $satirlar);
     }
 
     /**
