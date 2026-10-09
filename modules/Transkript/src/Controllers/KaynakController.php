@@ -74,8 +74,14 @@ final class KaynakController extends Controller
             'liste'      => $liste,
             'sayfa'      => $sayfa,
             'boyut'      => $boyut,
-            'istatistik' => $repo->istatistik($policy->canSeeAllCosts() ? null : $user?->id),
+            // Analiz başlatamayan (üye) görebildiği raporları sayar; maliyet kartı yok.
+            'istatistik' => match (true) {
+                $policy->canSeeAllCosts() => $repo->istatistik(null),
+                $policy->canAnalyze()     => $repo->istatistik($user?->id),
+                default                   => $repo->gorunenIstatistik((int) $user?->id),
+            },
             'hepsi'      => $policy->canSeeAllCosts(),
+            'maliyetli'  => $policy->canAnalyze(),
             // panel/transkript?url=… → kutu dolu gelir (yer imi, paylaşım bağlantısı).
             'onUrl'      => mb_substr($request->input('url'), 0, 500),
             'kuyruk'     => (new KuyrukDurumu($this->db))->getir(),

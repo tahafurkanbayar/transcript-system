@@ -63,16 +63,21 @@ if (PHP_SAPI === 'cli' && (bool) Ayarlar::get('kuyruk.zamanlanmis_gorev', true))
 /* ---------------------------------------------------------------------
  *  KONTROL PANELİ KARTLARI (DashboardCards kancası; çekirdeğe dokunmadan)
  * ---------------------------------------------------------------------
- *  Raporlar: transkript.view olan herkese (yönetici herkesinkini, diğerleri
- *  kendi başlattıklarını sayar). Bugünkü kullanım: yalnız yönetici.
+ *  Raporlar: transkript.view olan herkese (yönetici herkesinkini, editör
+ *  kendi başlattıklarını, analiz başlatamayan üye görebildiği raporları
+ *  sayar). Bugünkü kullanım: yalnız yönetici.
  * ------------------------------------------------------------------ */
 DashboardCards::add('transkript-raporlar', static function (?User $user): ?array {
     if ($user === null || !$user->can('transkript.view')) {
         return null;
     }
 
-    $hepsi = $user->can('transkript.admin');
-    $sayi  = (new KaynakRepository(Database::connection()))->istatistik($hepsi ? null : $user->id);
+    $repo  = new KaynakRepository(Database::connection());
+    $sayi  = match (true) {
+        $user->can('transkript.admin')   => $repo->istatistik(null),
+        $user->can('transkript.analyze') => $repo->istatistik($user->id),
+        default                          => $repo->gorunenIstatistik($user->id),   // üye: görebildiği raporlar
+    };
     $alt   = array_filter([
         $sayi['suruyor'] > 0 ? $sayi['suruyor'] . ' sürüyor' : '',
         $sayi['hata'] > 0 ? $sayi['hata'] . ' hata' : '',
