@@ -6,10 +6,13 @@
  *  HTTP isteğinde uzun iş yapılmaz: yalnız kayıt açılır ve ilk iş
  *  (KaynakBilgisiAl) kuyruğa bırakılır. İstek milisaniyeler sürer.
  *
- *  SIRA
- *    1) URL → 11 karakterlik video kimliği (UrlParser); geçersizse ret
- *    2) yetki: transkript.analyze; yeniden=1 yalnız transkript.admin
- *    3) kaynak varsa
+ *  SIRA (önce yetki, sonra girdi, sonra sahiplik, en son durum)
+ *    1) yetki: TranskriptPolicy::canAnalyze (analist, yönetici; ayar
+ *       açıksa üye) → 403, veritabanına gidilmez
+ *    2) URL → 11 karakterlik video kimliği (UrlParser); geçersizse 422
+ *    3) yeniden=1: yönetici her raporu, öteki yalnız KENDİ başlattığı
+ *       güncel raporu yeniden analiz eder → değilse 403
+ *    4) kaynak varsa
  *         analizi sürüyorsa          → SURUYOR (ikinci iş açılmaz)
  *         güncel tamamlanmış analizi → ONBELLEKTEN (AI'a gidilmez)
  *    4) yeni AI işi maliyetlidir: kullanıcı başına saatlik (Throttle)
@@ -32,8 +35,15 @@
  *  sebeple (kota, servis, ayar; HataKodlari::DEVAM_EDILEBILIR) durduysa
  *  "Analiz Et" / "Yeniden dene" yeni analiz açmaz, o analizi sürdürür:
  *  tamamlanan parçalar korunur, yalnız kalanlar AI'a gider. Yeni analiz
- *  sayılmadığı için günlük / saatlik kotaya girmez. Yönetici
- *  "Bekleyenleri yeniden dene" ile hepsini birden sürdürür.
+ *  sayılmadığı için günlük / saatlik kotaya girmez. YALNIZ analizi
+ *  başlatan ya da yönetici sürdürür (TranskriptPolicy::canRetry);
+ *  başkası aynı videoyu gönderirse kendi analizi açılır (kendi
+ *  kotasından). Yönetici "Bekleyenleri yeniden dene" ile hepsini sürdürür.
+ *
+ *  KÜTÜPHANE: her başarılı istek videoyu isteyenin kütüphanesine ekler
+ *  (transkript_kutuphane). Yeni ya da sürdürülen analiz "baslatti";
+ *  önbellekten dönen ya da başkasının süren analizine düşen istek
+ *  "onbellek" (AI çağrısı yok, kotadan düşmez).
  * =====================================================================
  */
 
@@ -61,6 +71,7 @@ use Modules\Transkript\Kaynak\VideoBilgisi;
 use Modules\Transkript\Kaynak\YoutubeMetadata;
 use Modules\Transkript\Repositories\AnalizRepository;
 use Modules\Transkript\Repositories\KaynakRepository;
+use Modules\Transkript\Repositories\KutuphaneRepository;
 use Modules\Transkript\TranskriptPolicy;
 use PDO;
 use Throwable;
@@ -95,30 +106,46 @@ final class AnalizBaslatici
      */
     public function youtube(string $url, bool $yeniden = false): array
     {
-        try {
-            $videoId = UrlParser::cozumle($url);
-        } catch (KaynakHatasi $e) {
-            throw new AnalizReddedildi($e->kod, $e->kullaniciMesaji(), 422);
-        }
-
         $policy = new TranskriptPolicy($this->user);
 
         if (!$policy->canAnalyze()) {
             throw new AnalizReddedildi('yetkisiz', 'Analiz başlatma yetkiniz yok.', 403);
         }
 
-        if ($yeniden && !$policy->canReanalyze()) {
-            throw new AnalizReddedildi('yetkisiz', 'Yeniden analiz yalnızca yöneticilere açıktır.', 403);
+        try {
+            $videoId = UrlParser::cozumle($url);
+        } catch (KaynakHatasi $e) {
+            throw new AnalizReddedildi($e->kod, $e->kullaniciMesaji(), 422);
         }
 
         $kaynaklar = new KaynakRepository($this->db);
         $kaynak    = $kaynaklar->youtubeBul($videoId);
 
+        if ($yeniden && !$policy->isAdmin()
+            && !$policy->canReanalyze($kaynak !== null ? $kaynaklar->guncelTamamlanmisAnaliz((int) $kaynak['id']) : null)) {
+            throw new AnalizReddedildi('yetkisiz', 'Yeniden analiz yalnızca raporu başlatan kişiye ve yöneticilere açıktır.', 403);
+        }
+
+        return $this->kutuphaneyeEkle($this->youtubeKaynagi($videoId, $kaynak, $yeniden));
+    }
+
+    /**
+     * youtube()'un yetki ve girdi denetiminden sonraki kısmı.
+     *
+     * @param  array<string,mixed>|null $kaynak
+     * @return array{sonuc: string, kaynak: array<string,mixed>, analiz: array<string,mixed>}
+     *
+     * @throws AnalizReddedildi
+     */
+    private function youtubeKaynagi(string $videoId, ?array $kaynak, bool $yeniden): array
+    {
+        $kaynaklar = new KaynakRepository($this->db);
+
         if ($kaynak !== null && ($hazir = $this->hazirAnaliz($kaynak, $yeniden)) !== null) {
             return $hazir;
         }
 
-        // Son analiz geçici sebeple durduysa yenisi açılmaz: kaldığı yerden sürer.
+        // Son analiz geçici sebeple durduysa (ve başlatan bu kişiyse) yenisi açılmaz: kaldığı yerden sürer.
         if ($kaynak !== null && !$yeniden && ($devam = $this->devamEt($kaynak)) !== null) {
             return $devam;
         }
@@ -293,7 +320,9 @@ final class AnalizBaslatici
      */
     public function devamEt(array $kaynak): ?array
     {
-        if (!(new TranskriptPolicy($this->user))->canAnalyze()) {
+        $policy = new TranskriptPolicy($this->user);
+
+        if (!$policy->canAnalyze()) {
             return null;
         }
 
@@ -308,7 +337,9 @@ final class AnalizBaslatici
             $son   = $analizler->kaynaginSonAnalizi((int) $kaynak['id']);
             $asama = $son !== null ? explode(':', (string) $son['asama'])[0] : '';
 
-            if ($son !== null && $son['durum'] === 'hata' && HataKodlari::devamEdilebilir($son['hata_kodu'])
+            // Başkasının duran analizine dokunulmaz (yönetici hariç).
+            if ($son !== null && $policy->canRetry($son)
+                && $son['durum'] === 'hata' && HataKodlari::devamEdilebilir($son['hata_kodu'])
                 && isset(self::DEVAM_DURUMU[$asama]) && $analizler->devamEttir((int) $son['id'], self::DEVAM_DURUMU[$asama])) {
                 $analizId = (int) $son['id'];
 
@@ -335,6 +366,92 @@ final class AnalizBaslatici
         Logger::info('Analiz kaldığı yerden sürdürüldü', ['analiz' => $analizId, 'asama' => $asama, 'kullanici' => $this->user?->id], 'transkript');
 
         return ['sonuc' => self::DEVAM_ETTI, 'kaynak' => $kaynak, 'analiz' => $analizler->bul($analizId) ?? ['id' => $analizId, 'durum' => self::DEVAM_DURUMU[$asama], 'ilerleme' => 0]];
+    }
+
+    /**
+     * Kullanıcının bugünkü hakkı (liste ve Kontrol Paneli satırı:
+     * "Bugünkü hakkınız 3 / 10 · saatlik 1 / 20"). Sayaçlar kotaKontrolu
+     * ve sinirKontrolu ile aynıdır; sayaç artırılmaz.
+     *
+     * @return array{muaf: bool, gunluk: int, gunluk_sinir: int, saatlik: int, saatlik_sinir: int, bekleme_sn: int, yenilenme: string}
+     *   bekleme_sn > 0 → hak dolu; yenilenme "HH:MM" (saatlik) ya da "yarın 00:00" (günlük)
+     */
+    public function hakDurumu(?int $simdi = null): array
+    {
+        $simdi ??= time();
+        $policy  = new TranskriptPolicy($this->user);
+        $muaf    = (bool) Ayarlar::get('analiz.yonetici_muaf', true) && $policy->isAdmin();
+        $gunlukSinir  = $muaf ? 0 : max(0, (int) Ayarlar::get('analiz.gunluk_sinir', 10));
+        $saatlikSinir = $muaf ? 0 : max(0, (int) Ayarlar::get('analiz.saatlik_sinir', 20));
+        $gunluk  = 0;
+        $saatlik = 0;
+
+        if ($gunlukSinir > 0) {
+            $sorgu = $this->db->prepare('SELECT COUNT(*) FROM transkript_analizler WHERE kullanici_id = :ben AND created_at >= CURDATE()');
+            $sorgu->execute([':ben' => (int) ($this->user?->id ?? 0)]);
+            $gunluk = (int) $sorgu->fetchColumn();
+        }
+
+        if ($saatlikSinir > 0) {
+            $saatlik = $saatlikSinir - Throttle::remaining('transkript-analiz:' . ($this->user?->id ?? 0), $saatlikSinir, 3600);
+        }
+
+        return self::hakKarari($muaf, $gunluk, $gunlukSinir, $saatlik, $saatlikSinir, $simdi);
+    }
+
+    /**
+     * Saf karar (test edilir). Günlük hak dolduysa yenilenme gece yarısı;
+     * yalnız saatlik dolduysa saat başı (Throttle'ın sabit penceresi).
+     *
+     * @return array{muaf: bool, gunluk: int, gunluk_sinir: int, saatlik: int, saatlik_sinir: int, bekleme_sn: int, yenilenme: string}
+     */
+    public static function hakKarari(bool $muaf, int $gunluk, int $gunlukSinir, int $saatlik, int $saatlikSinir, int $simdi): array
+    {
+        $bekleme   = 0;
+        $yenilenme = '';
+
+        if ($gunlukSinir > 0 && $gunluk >= $gunlukSinir) {
+            $bekleme   = max(60, (int) strtotime('tomorrow', $simdi) - $simdi);
+            $yenilenme = 'yarın 00:00';
+        } elseif ($saatlikSinir > 0 && $saatlik >= $saatlikSinir) {
+            $saatBasi  = (int) (floor($simdi / 3600) * 3600) + 3600;
+            $bekleme   = max(1, $saatBasi - $simdi);
+            $yenilenme = date('H:i', $saatBasi);
+        }
+
+        return [
+            'muaf'          => $muaf,
+            'gunluk'        => $gunluk,
+            'gunluk_sinir'  => $gunlukSinir,
+            'saatlik'       => max(0, $saatlik),
+            'saatlik_sinir' => $saatlikSinir,
+            'bekleme_sn'    => $bekleme,
+            'yenilenme'     => $yenilenme,
+        ];
+    }
+
+    /**
+     * Başarılı isteğin videosunu isteyenin kütüphanesine ekler. Yeni ya da
+     * sürdürülen analiz "baslatti", önbellek ve başkasının süren analizi
+     * "onbellek".
+     *
+     * @param  array{sonuc: string, kaynak: array<string,mixed>, analiz: array<string,mixed>} $sonuc
+     * @return array{sonuc: string, kaynak: array<string,mixed>, analiz: array<string,mixed>}
+     */
+    private function kutuphaneyeEkle(array $sonuc): array
+    {
+        if ($this->user !== null) {
+            $baslatti = in_array($sonuc['sonuc'], [self::BASLATILDI, self::DEVAM_ETTI], true)
+                || (int) ($sonuc['analiz']['kullanici_id'] ?? 0) === $this->user->id;
+
+            (new KutuphaneRepository($this->db))->ekle(
+                $this->user->id,
+                (int) $sonuc['kaynak']['id'],
+                $baslatti ? KutuphaneRepository::BASLATTI : KutuphaneRepository::ONBELLEK,
+            );
+        }
+
+        return $sonuc;
     }
 
     /**

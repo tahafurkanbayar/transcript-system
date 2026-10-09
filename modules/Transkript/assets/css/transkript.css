@@ -200,3 +200,12 @@ a.tk-zaman.is-oynuyor { background: var(--cy-brand); color: #fff; }
 /* Başarısız analizde yöneticiye zincirin özeti (liste ve rapor) */
 .tk-zincir-ozeti { display: block; margin-top: .25rem; font-size: .8rem; color: var(--cy-text-muted); overflow-wrap: anywhere; }
 .tk-saglayici-tablo td, .tk-gunluk td { vertical-align: top; }
+
+/* Yeni analiz: bugünkü hak ("3 / 10 · saatlik 1 / 20"); dolunca uyarı rengi */
+.tk-hak { display: inline-flex; align-items: center; gap: .35rem; margin: 0; padding: .2rem .6rem; border-radius: 999px;
+    font-size: .8125rem; background: var(--cy-info-soft); color: var(--cy-info-text); white-space: nowrap; }
+.tk-hak.is-dolu { background: var(--cy-warning-soft); color: var(--cy-warning-text); }
+
+/* Liste: yöneticinin paylaştığı rapor */
+.tk-paylasilan { background: var(--cy-info-soft); color: var(--cy-info-text); }
+.tk-analiz .cy-panel__head { flex-wrap: wrap; gap: .5rem; }

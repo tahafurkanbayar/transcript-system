@@ -13,6 +13,11 @@
  *
  *  CACHE: YouTube kaynağı herkes için ortaktır (sahip_id = 0). Güncel ve
  *  tamamlanmış bir analizi varsa yeni AI çağrısı yapılmaz.
+ *
+ *  GÖRÜNÜRLÜK kişiseldir: yönetici dışındakiler yalnız kütüphanelerindeki
+ *  (transkript_kutuphane) ve paylaşılan (paylasildi = 1) raporu görür.
+ *  Liste, sayaçlar, Kontrol Paneli ve API bu kuralı TEK yerden alır:
+ *  gorunurluk(). PHP karşılığı TranskriptPolicy::canViewSource().
  * =====================================================================
  */
 
@@ -132,19 +137,51 @@ final class KaynakRepository
             ->execute([':sure' => $sureSn, ':id' => $id]);
     }
 
+    /**
+     * Paylaşımı yazar ("Üyelerle paylaş" / "Paylaşımı kaldır"; yalnız
+     * yönetici, TranskriptPolicy::canShare). Değiştiyse true.
+     */
+    public function paylasimYaz(int $id, bool $paylas): bool
+    {
+        $sorgu = $this->db->prepare('UPDATE transkript_kaynaklar SET paylasildi = :paylas WHERE id = :id');
+        $sorgu->execute([':paylas' => $paylas ? 1 : 0, ':id' => $id]);
+
+        return $sorgu->rowCount() > 0;
+    }
+
     /* =================================================================
-     *  LİSTE (panel/transkript ve api/v1/transkript/kaynaklar)
+     *  GÖRÜNÜRLÜK, LİSTE VE SAYAÇLAR
      * ============================================================== */
+
+    /**
+     * Yönetici olmayanın görebildiği kaynaklar (k takma adıyla): kendi
+     * yüklediği dosya, kütüphanesindeki ya da paylaşılan YouTube kaynağı.
+     * TranskriptPolicy::canViewSource ile AYNI kural; sorguya iki
+     * parametre ekler (yerel hazırlıkta aynı ad iki kez kullanılamaz).
+     *
+     * @return array{0: string, 1: array<string,int>} [koşul, parametreler]
+     */
+    public static function gorunurluk(int $kullaniciId): array
+    {
+        return [
+            '(k.sahip_id = :gor_sahip OR (k.sahip_id = 0 AND (k.paylasildi = 1 OR EXISTS (
+                SELECT 1 FROM transkript_kutuphane gku WHERE gku.kaynak_id = k.id AND gku.kullanici_id = :gor_ben))))',
+            [':gor_sahip' => $kullaniciId, ':gor_ben' => $kullaniciId],
+        ];
+    }
 
     /** Liste durum filtresi → son analizin koşulu. İptal edilen "hata" sayılmaz, ayrı süzülür. */
     public const LISTE_DURUMLARI = ['hazir', 'suruyor', 'hata', 'iptal'];
 
+    /** Liste kapsam filtresi: kütüphanem · paylaşılan. Boş: görebildiği her şey. */
+    public const LISTE_KAPSAMLARI = ['kutuphanem', 'paylasilan'];
+
     /**
      * Kaynaklar, son analizleriyle birlikte; en son analiz edilen başta.
      *
-     * GÖRÜNÜRLÜK (TranskriptPolicy::canViewSource ile aynı kural):
-     * YouTube kaynağı (sahip_id = 0) herkese; yüklenen dosya yalnız
-     * sahibine; $hepsi (transkript.admin) her şeye.
+     * GÖRÜNÜRLÜK: $hepsi (transkript.admin) her şeyi, öteki roller
+     * gorunurluk() kadarını görür. Her satır "kutuphanede" (görenin
+     * kütüphanesinde mi) ve "paylasildi" taşır; düğmeler buna göre çizilir.
      *
      * ARAMA başlık ve kanal adında, utf8mb4_unicode_ci ile: turkish_ci'de
      * "ai" "AI"yı bulmaz (README, "Arama neden katlanmış sütunda?").
@@ -152,17 +189,28 @@ final class KaynakRepository
      * büyük/küçük harfe duyarlıdır (ascii_bin), yalnız kimlik karakterli
      * sorguda aranır.
      *
-     * @param  array{tur?:string,durum?:string,q?:string} $filtre
+     * @param  array{tur?:string,durum?:string,q?:string,kapsam?:string} $filtre
      * @return array{satirlar: list<array<string,mixed>>, toplam: int}
      */
     public function liste(array $filtre, int $sayfa, int $boyut, ?int $gorenId, bool $hepsi): array
     {
         $kosullar     = [];
         $parametreler = [];
+        $ben          = (int) $gorenId;
 
         if (!$hepsi) {
-            $kosullar[] = '(k.sahip_id = 0 OR k.sahip_id = :ben)';
-            $parametreler[':ben'] = (int) $gorenId;
+            [$kosul, $p] = self::gorunurluk($ben);
+            $kosullar[]  = $kosul;
+            $parametreler += $p;
+        }
+
+        $kapsam = (string) ($filtre['kapsam'] ?? '');
+
+        if ($kapsam === 'kutuphanem') {
+            $kosullar[] = 'EXISTS (SELECT 1 FROM transkript_kutuphane kku WHERE kku.kaynak_id = k.id AND kku.kullanici_id = :kapsam_ben)';
+            $parametreler[':kapsam_ben'] = $ben;
+        } elseif ($kapsam === 'paylasilan') {
+            $kosullar[] = 'k.paylasildi = 1';
         }
 
         $tur = (string) ($filtre['tur'] ?? '');
@@ -199,15 +247,21 @@ final class KaynakRepository
 
         $sorgu = $this->db->prepare(
             "SELECT k.id, k.tur, k.dis_kimlik, k.sahip_id, k.baslik, k.kanal_adi, k.sure_sn, k.kucuk_resim, k.yayin_tarihi,
-                    k.durum AS kaynak_durumu,
+                    k.durum AS kaynak_durumu, k.paylasildi,
+                    EXISTS (SELECT 1 FROM transkript_kutuphane sku WHERE sku.kaynak_id = k.id AND sku.kullanici_id = :satir_ben) AS kutuphanede,
                     a.id AS analiz_id, a.kullanici_id, a.durum, a.asama, a.ilerleme, a.hata_kodu, a.hata_ozeti, a.created_at,
                     (SELECT r.id FROM transkript_analizler r
                       WHERE r.kaynak_id = k.id AND r.guncel_mi = 1 AND r.durum = 'tamamlandi'
-                      ORDER BY r.id DESC LIMIT 1) AS rapor_analiz_id
+                      ORDER BY r.id DESC LIMIT 1) AS rapor_analiz_id,
+                    (SELECT r.kullanici_id FROM transkript_analizler r
+                      WHERE r.kaynak_id = k.id AND r.guncel_mi = 1 AND r.durum = 'tamamlandi'
+                      ORDER BY r.id DESC LIMIT 1) AS rapor_kullanici_id
              " . $kaynak . '
              ORDER BY a.id DESC
              LIMIT :limit OFFSET :offset'
         );
+
+        $sorgu->bindValue(':satir_ben', $ben, PDO::PARAM_INT);
 
         foreach ($parametreler as $ad => $deger) {
             $sorgu->bindValue($ad, $deger, is_int($deger) ? PDO::PARAM_INT : PDO::PARAM_STR);
@@ -269,46 +323,44 @@ final class KaynakRepository
     }
 
     /**
-     * Yönetici olmayanın kutucukları (editör de üye de): GÖREBİLDİĞİ
-     * raporlar, yani ortak YouTube kayıtları (sahip_id = 0) ve kendi
-     * dosyaları. Liste de aynı kuralla süzülür; kimse listede 3 rapor
-     * görüp kutucukta "0" okumaz (rol testi: editör kendi başlattığını
-     * sayıyordu).
+     * Yönetici olmayanın kutucukları (analist de üye de): GÖREBİLDİĞİ
+     * raporlar, yani gorunurluk() kapsamı: kütüphanesindeki ve paylaşılan
+     * YouTube kayıtları ile kendi dosyaları. Liste, Kontrol Paneli ve API
+     * aynı kapsamı sayar; "kaynak", liste "Raporu hazır" süzgecinin
+     * toplamıyla aynıdır (tests/transkript-yetki.php sınar).
      *
-     *   bugun  bugün raporu hazırlanan FARKLI video; aynı videonun
-     *          yeniden analizi ikinci kez sayılmaz
+     *   kaynak   görebildiği, raporu hazır video
+     *   bugun    bugün kütüphanesine eklediği video (analiz ya da önbellek)
+     *   suruyor / hata  görebildiği kaynaklardan son analizi süren / hatalı
      *   token / maliyet  0: yalnız yöneticiye gösterilir (istatistik(null))
      *
      * @return array{bugun:int, token:int, maliyet:float, kaynak:int, suruyor:int, hata:int}
      */
     public function gorunenIstatistik(int $kullaniciId): array
     {
-        $p = [':ben' => $kullaniciId];
+        [$kosul, $p] = self::gorunurluk($kullaniciId);
 
         $rapor = $this->db->prepare(
-            "SELECT COUNT(DISTINCT CASE WHEN a.bitti_at >= CURDATE() THEN a.kaynak_id END) AS bugun,
-                    COUNT(DISTINCT CASE WHEN a.guncel_mi = 1 THEN a.kaynak_id END) AS kaynak
-               FROM transkript_analizler a
-               JOIN transkript_kaynaklar k ON k.id = a.kaynak_id
-              WHERE a.durum = 'tamamlandi' AND k.sahip_id IN (0, :ben)"
+            "SELECT COUNT(*) FROM transkript_kaynaklar k
+              WHERE $kosul
+                AND EXISTS (SELECT 1 FROM transkript_analizler r WHERE r.kaynak_id = k.id AND r.guncel_mi = 1 AND r.durum = 'tamamlandi')"
         );
         $rapor->execute($p);
-        $r = $rapor->fetch(PDO::FETCH_ASSOC) ?: [];
+        $kaynak = (int) $rapor->fetchColumn();
 
         $son = $this->db->prepare(
             "SELECT COALESCE(SUM(a.durum NOT IN ('tamamlandi', 'hata')), 0) AS suruyor,
                     COALESCE(SUM(a.durum = 'hata' AND (a.hata_kodu IS NULL OR a.hata_kodu <> 'iptal_edildi')), 0) AS hata
-               FROM transkript_analizler a
-               JOIN transkript_kaynaklar k ON k.id = a.kaynak_id
-              WHERE a.id IN (SELECT MAX(a2.id) FROM transkript_analizler a2 GROUP BY a2.kaynak_id)
-                AND k.sahip_id IN (0, :ben)"
+               FROM transkript_kaynaklar k
+               JOIN transkript_analizler a ON a.id = (SELECT MAX(a2.id) FROM transkript_analizler a2 WHERE a2.kaynak_id = k.id)
+              WHERE $kosul"
         );
         $son->execute($p);
         $s = $son->fetch(PDO::FETCH_ASSOC) ?: [];
 
         return [
-            'bugun'   => (int) ($r['bugun'] ?? 0),
-            'kaynak'  => (int) ($r['kaynak'] ?? 0),
+            'bugun'   => (new KutuphaneRepository($this->db))->bugunEklenen($kullaniciId),
+            'kaynak'  => $kaynak,
             'suruyor' => (int) ($s['suruyor'] ?? 0),
             'hata'    => (int) ($s['hata'] ?? 0),
             'token'   => 0,

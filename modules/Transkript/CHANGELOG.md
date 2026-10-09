@@ -3,6 +3,50 @@
 Starter'ın sürüm geçmişi kökteki `CHANGELOG.md`'dedir; bu dosya yalnız
 `modules/Transkript/` içindir. Biçim [Keep a Changelog](https://keepachangelog.com/tr/1.1.0/).
 
+## 0.6.0 (2026-10-09): kişisel kütüphane, paylaşım, rol modeli
+
+Cowork 5. tur: kayıt açıkken kayıt olan herkes bütün raporları görüyordu.
+Kullanıcı kararı: önbellek ortak, görünürlük kişisel.
+
+### Değişenler
+- Rapor artık yalnız onu kütüphanesine ekleyene (analiz eden ya da
+  önbellekten ekleyen) ve yöneticinin paylaştığına görünür. Yeni tablo
+  `transkript_kutuphane`, yeni sütun `transkript_kaynaklar.paylasildi`
+  (migration `2026_10_09_230014`; var olan analizler başlatanın
+  kütüphanesine geri dolduruldu, hiçbiri paylaşılmadı).
+- Görünürlük kuralı tek yerde: `TranskriptPolicy::canViewSource` ve SQL
+  karşılığı `KaynakRepository::gorunurluk()`; liste, sayaçlar, Kontrol
+  Paneli, rapor, indirme, ilerleme ve API ikisinden birine sorar.
+- Analist (editör) kendi raporunu yeniden analiz eder (haktan düşer),
+  başkasının duran analizini sürdüremez (aynı videoyu gönderirse kendi
+  analizi açılır), kendi kütüphanesinden çıkarır. "Tamamen sil" yalnız
+  yönetici; video kaç kullanıcının kütüphanesindeyse uyarır.
+- Kontrol sırası: yetki → sahiplik (404 / 403) → durum (409 / 422). İptal
+  ucu başlatan olmayana 409 yerine 403; üyenin bozuk bağlantısı 422 yerine 403.
+- Sayaçlar: "Raporlarınız" (kütüphane + paylaşılan) ve "Bugün eklediğiniz".
+- Kontrol Paneli açıklamasındaki "ses / video dosyası yükleme sonraki
+  aşamada" sözü kaldırıldı; ana sayfa API kartı "yönetici onayıyla" demiyor.
+
+### Eklenenler
+- "Üyelerle paylaş" / "Paylaşımı kaldır" (`POST panel/transkript/{id}/paylas`,
+  yönetici) ve listede "Paylaşılan" rozeti.
+- "Kütüphanemden çıkar" (`POST panel/transkript/{id}/kutuphaneden-cikar`).
+- Liste kapsam süzgeci: Kütüphanem · Paylaşılanlar.
+- "Bugünkü hakkınız: 3 / 10 · saatlik 1 / 20" (liste ve Kontrol Paneli);
+  hak dolunca yenilenme saati. Form açık kalır: önbellekteki video hakkı
+  tüketmez.
+- Transkript ayarları → "Üyeler analiz başlatabilir" (varsayılan kapalı).
+  Analiz başlatan panel uçları (analiz, kuyruk/tik, iptal) rotada
+  `transkript.view` ister; kararı `TranskriptPolicy::canAnalyze` verir.
+- `tests/transkript-yetki.php`: veritabanıyla, gerçek rota ve ara
+  katmanlarla rol × eylem × sahiplik → HTTP kodu; Kontrol Paneli = liste =
+  API sayısı; önbellekten ekleme haktan düşmez. `tests/transkript.php`'de
+  19 eylem × 5 rollük karar matrisi.
+
+### Çekirdek
+- `app/Models/Role.php`: `editor` rolünün ekrandaki adı "Analist",
+  açıklaması "analiz yapabilen üye" (kullanıcı kararı).
+
 ## 0.5.0 (2026-10-09): zincir onarımı, erteleme, komut satırısız kuyruk
 
 ### Düzeltilenler

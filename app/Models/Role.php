@@ -9,8 +9,11 @@
  *
  *  ROLLER
  *    admin  → Yönetici. Her şeyi yapabilir.
- *    editor → Editör. Modüllerin kendisine açtığı alanlarda çalışır
- *             (transcript-system: analiz başlatır) ve API anahtarı
+ *    editor → Ekranda "Analist" (transcript-system, 2026-10-10: rol artık
+ *             içerik düzenlemiyor, analiz yapıyor; rol anahtarı "editor"
+ *             kaldı, veritabanı ve module.json değişmedi). Modüllerin
+ *             kendisine açtığı alanlarda çalışır (analiz başlatır,
+ *             kütüphanesini yönetir) ve API anahtarı
  *             alır. Sayfalara, iletişim mesajlarına (ziyaretçinin
  *             kişisel verisi), giden e-posta geçmişine, kullanıcılara
  *             ve ayarlara GİREMEZ (proje kararı, 2026-10-09; starter'da
@@ -73,14 +76,14 @@ final class Role
     /** @var array<string,string> */
     private const LABELS = [
         self::ADMIN  => 'Yönetici',
-        self::EDITOR => 'Editör',
+        self::EDITOR => 'Analist',
         self::MEMBER => 'Üye',
     ];
 
     /** @var array<string,string> */
     private const DESCRIPTIONS = [
         self::ADMIN  => 'Her şeye erişir: kullanıcılar, site ayarları, sistem ve toplu e-posta.',
-        self::EDITOR => 'Modüllerde kendisine açılan işleri yapar (ör. analiz başlatır) ve API anahtarı alır; sayfalara, mesajlara, e-posta geçmişine, kullanıcılara ve ayarlara erişemez.',
+        self::EDITOR => 'Analiz yapabilen üye: video analiz ettirir, kendi kütüphanesini yönetir ve API anahtarı alır; sayfalara, mesajlara, e-posta geçmişine, kullanıcılara ve ayarlara erişemez.',
         self::MEMBER => 'Yalnızca kendi profilini ve açık modüllerde kendisine verilen alanları kullanır.',
     ];
 

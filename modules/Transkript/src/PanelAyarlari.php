@@ -57,6 +57,11 @@ final class PanelAyarlari
             'etiket' => 'En uzun video',
             'aciklama' => 'Bundan uzun video analiz edilmez. 0 = sınır yok.',
         ],
+        'uye_analiz' => [
+            'yol' => ['analiz.uye_baslatabilir'], 'tur' => 'secim',
+            'etiket' => 'Üyeler analiz başlatabilir',
+            'aciklama' => 'Açıksa üye rolü de video analiz ettirir (analistle aynı kotalar). Kapalıyken üye yalnız kendisiyle paylaşılan raporları okur.',
+        ],
         'gunluk_sinir' => [
             'yol' => ['analiz.gunluk_sinir'], 'tur' => 'tamsayi', 'en_az' => 0, 'en_cok' => 10000, 'birim' => 'analiz',
             'etiket' => 'Kullanıcı başına günlük analiz',
@@ -107,6 +112,9 @@ final class PanelAyarlari
 
     /** Tarayıcıdan kuyruk seçeneği → kuyruk.tarayicidan_isle değeri. */
     private const TARAYICI_KUYRUK = ['acik' => true, 'kapali' => false];
+
+    /** Üye analizi seçeneği → analiz.uye_baslatabilir değeri. */
+    private const UYE_ANALIZ = ['acik' => true, 'kapali' => false];
 
     /**
      * Ayarlar::get() sonucunun üstüne panelden girilen değeri yazar. Yol
@@ -165,6 +173,11 @@ final class PanelAyarlari
                 '' => 'Varsayılan (' . (KuyrukDurumu::tarayicidanIslenir(true) ? 'açık' : 'kapalı') . ')',
                 'acik' => 'Açık: işçi yokken panel sayfası işler',
                 'kapali' => 'Kapalı: yalnız kuyruk işçisi',
+            ],
+            'uye_analiz' => [
+                '' => 'Varsayılan (' . (Ayarlar::varsayilan('analiz.uye_baslatabilir', false) ? 'açık' : 'kapalı') . ')',
+                'acik' => 'Açık: üyeler de analiz başlatır',
+                'kapali' => 'Kapalı: yalnız analist ve yönetici',
             ],
             default        => [],
         };
@@ -264,6 +277,7 @@ final class PanelAyarlari
                 'altyazi_dili' => self::ALTYAZI[$ham] ?? ['tr'],
                 'ana_sayfa'    => self::ANA_SAYFA[$ham] ?? true,
                 'tarayici_kuyruk' => self::TARAYICI_KUYRUK[$ham] ?? null,
+                'uye_analiz'   => self::UYE_ANALIZ[$ham] ?? false,
                 default        => $ham,
             },
         };

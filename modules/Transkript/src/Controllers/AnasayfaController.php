@@ -35,6 +35,7 @@ use App\Http\Controllers\Site\HomeController;
 use App\Models\Role;
 use App\Models\User;
 use Modules\Transkript\Ayarlar;
+use Modules\Transkript\TranskriptPolicy;
 use Modules\Transkript\Varliklar;
 
 final class AnasayfaController extends Controller
@@ -45,7 +46,7 @@ final class AnasayfaController extends Controller
     public function goster(Request $request): void
     {
         $kullanici = Auth::user();
-        $analiz    = self::yapabilir($kullanici, 'transkript.analyze');
+        $analiz    = self::analizEdebilir($kullanici);
         $enUzunDk  = max(0, (int) Ayarlar::get('analiz.en_uzun_dk', 180));
         $sss       = self::sss(
             $enUzunDk,
@@ -104,6 +105,18 @@ final class AnasayfaController extends Controller
     public static function yapabilir(?User $kullanici, string $yetki): bool
     {
         return $kullanici !== null ? $kullanici->can($yetki) : Role::can(Role::MEMBER, $yetki);
+    }
+
+    /**
+     * Analiz başlatabilir mi? Rol yetkisi ya da "Üyeler analiz
+     * başlatabilir" ayarı (TranskriptPolicy::canAnalyze); girişsizse
+     * yeni üye hesabının hakkı.
+     */
+    public static function analizEdebilir(?User $kullanici): bool
+    {
+        return $kullanici !== null
+            ? (new TranskriptPolicy($kullanici))->canAnalyze()
+            : Role::can(Role::MEMBER, 'transkript.analyze') || TranskriptPolicy::uyelerBaslatabilir();
     }
 
     /**

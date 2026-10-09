@@ -8,8 +8,12 @@
  *
  *  Yetkiler ROL düzeyindedir; editör ve üyenin yetkileri module.json →
  *  "yetkiler" bloğundan gelir, yönetici her yetkiye sahiptir. Kayda
- *  bağlı kurallar (yüklenen dosya, sohbet, kişisel özet yalnız
- *  sahibine) TranskriptPolicy'dedir.
+ *  bağlı kurallar (kütüphane, paylaşım, analizi başlatan, yüklenen
+ *  dosya, sohbet) TranskriptPolicy'dedir.
+ *
+ *  Analiz başlatan panel uçları (analiz, kuyruk/tik, iptal) rotada
+ *  yalnız transkript.view ister: "Üyeler analiz başlatabilir" ayarı
+ *  rol yetkisi değildir, TranskriptPolicy::canAnalyze denetler (403).
  *
  *  Erişim tablosu tests/transkript.php'de; rota eklenir ya da yetkisi
  *  değişirse oradaki matris de güncellenir.
@@ -42,7 +46,7 @@ $router->get('panel/transkript', KaynakController::class, 'index',
     ['installed', 'auth', 'can:transkript.view']);
 
 $router->post('panel/transkript/analiz', KaynakController::class, 'analiz',
-    ['installed', 'auth', 'csrf', 'can:transkript.analyze']);
+    ['installed', 'auth', 'csrf', 'can:transkript.view']);
 
 $router->get('panel/transkript/ilerleme/{kaynak_id}', KaynakController::class, 'ilerleme',
     ['installed', 'auth', 'can:transkript.view']);
@@ -54,7 +58,7 @@ $router->post('panel/transkript/kuyruk/isle', KaynakController::class, 'kuyruguI
 
 // Komut satırısız kuyruk: işçi yokken açık panel sayfası tek tek iş işletir (KaynakController::kuyrukTik).
 $router->post('panel/transkript/kuyruk/tik', KaynakController::class, 'kuyrukTik',
-    ['installed', 'auth', 'csrf', 'can:transkript.analyze']);
+    ['installed', 'auth', 'csrf', 'can:transkript.view']);
 
 // "Bekleyenleri yeniden dene": geçici sebeple duran analizler kaldığı yerden sürer.
 $router->post('panel/transkript/yeniden-dene', KaynakController::class, 'bekleyenleriSurdur',
@@ -86,12 +90,19 @@ $router->get('panel/transkript/{kaynak_id}', KaynakController::class, 'goster',
     ['installed', 'auth', 'can:transkript.view']);
 
 // Kayıt yönetimi (Services\KayitYonetimi). Kayda bağlı kural TranskriptPolicy'de:
-// ortak YouTube kaynağını yalnız yönetici siler; süren analizi yönetici ya da başlatan iptal eder.
+// ortak YouTube kaynağını yalnız yönetici TAMAMEN siler; kullanıcı kendi
+// kütüphanesinden çıkarır; süren analizi yönetici ya da başlatan iptal eder.
 $router->post('panel/transkript/{kaynak_id}/sil', KaynakController::class, 'sil',
     ['installed', 'auth', 'csrf', 'can:transkript.view']);
 
+$router->post('panel/transkript/{kaynak_id}/kutuphaneden-cikar', KaynakController::class, 'kutuphanedenCikar',
+    ['installed', 'auth', 'csrf', 'can:transkript.view']);
+
+$router->post('panel/transkript/{kaynak_id}/paylas', KaynakController::class, 'paylas',
+    ['installed', 'auth', 'csrf', 'can:transkript.admin']);
+
 $router->post('panel/transkript/{kaynak_id}/iptal', KaynakController::class, 'iptal',
-    ['installed', 'auth', 'csrf', 'can:transkript.analyze']);
+    ['installed', 'auth', 'csrf', 'can:transkript.view']);
 
 $router->post('panel/transkript/{kaynak_id}/sohbet', SohbetController::class, 'sor',
     ['installed', 'auth', 'csrf', 'can:transkript.chat']);

@@ -31,7 +31,9 @@ use App\Core\Response;
 use App\Core\Setting;
 use App\Http\Controller;
 use Modules\Transkript\HataKodlari;
+use Modules\Transkript\Repositories\AnalizRepository;
 use Modules\Transkript\Repositories\KaynakRepository;
+use Modules\Transkript\Repositories\KutuphaneRepository;
 use Modules\Transkript\Repositories\SegmentRepository;
 use Modules\Transkript\Services\AnalizBaslatici;
 use Modules\Transkript\Services\AnalizReddedildi;
@@ -59,8 +61,9 @@ final class KaynakController extends Controller
 
         $varsayilan = self::listeDurumu('', $policy->canAnalyze());
         $filtre = [
-            'q'     => mb_substr($request->input('q'), 0, 100),
-            'durum' => self::listeDurumu($request->input('durum'), $policy->canAnalyze()),
+            'q'      => mb_substr($request->input('q'), 0, 100),
+            'durum'  => self::listeDurumu($request->input('durum'), $policy->canAnalyze()),
+            'kapsam' => in_array($request->input('kapsam'), KaynakRepository::LISTE_KAPSAMLARI, true) ? $request->input('kapsam') : '',
         ];
         $boyut = max(5, min(50, (int) Setting::get('sistem_sayfa_basina', '10') ?: 10));
         $sayfa = $request->int('sayfa', 1, 100000) ?? 1;
@@ -78,12 +81,14 @@ final class KaynakController extends Controller
             'sayfa'      => $sayfa,
             'boyut'      => $boyut,
             // Yönetici herkesinkini; öteki roller GÖREBİLDİĞİ raporları sayar
-            // (rol listesine değil yetkiye bağlı). Token / maliyet kartları
-            // yalnız yöneticide (kullanıcı kararı: üye ve editör görmez).
+            // (kütüphanesi + paylaşılan; listeyle aynı kapsam). Token / maliyet
+            // kartları yalnız yöneticide (kullanıcı kararı).
             'istatistik' => $policy->canSeeAllCosts()
                 ? $repo->istatistik(null)
                 : $repo->gorunenIstatistik((int) $user?->id),
             'hepsi'      => $policy->canSeeAllCosts(),
+            // Analiz başlatabilene bugünkü hakkı ("3 / 10 · saatlik 1 / 20").
+            'hak'        => $policy->canAnalyze() ? (new AnalizBaslatici($this->db, $user))->hakDurumu() : null,
             // Yönetici: geçici sebeple duran analiz sayısı ("Bekleyenleri yeniden dene").
             'bekleyen'   => $policy->isAdmin() ? count($repo->devamEdilebilirKaynaklar()) : 0,
             // panel/transkript?url=… → kutu dolu gelir (yer imi, paylaşım bağlantısı).
@@ -99,6 +104,10 @@ final class KaynakController extends Controller
         $policy = new TranskriptPolicy(Auth::user());
         $veri   = (new RaporVerisi($this->db, $policy))->getir($kaynak);
         $adres  = parse_url(url_full(''));
+        $kutuphane = new KutuphaneRepository($this->db);
+
+        // Kayıt düğmeleri tek sorguyla: kütüphanede mi (çıkar düğmesi)?
+        $kaynak['kutuphanede'] = $kutuphane->iceriyor((int) Auth::id(), (int) $kaynak['id']);
 
         Varliklar::youtubeIzinleri();
 
@@ -109,6 +118,10 @@ final class KaynakController extends Controller
             'policy' => $policy,
             'kuyruk' => (new KuyrukDurumu($this->db))->getir(),
             'surenAnaliz' => (new KaynakRepository($this->db))->suregelenAnaliz((int) $kaynak['id']),
+            // "Analizi yeniden dene" yalnız son analizi başlatana ve yöneticiye (canRetry).
+            'sonAnaliz'   => (new AnalizRepository($this->db))->kaynaginSonAnalizi((int) $kaynak['id']),
+            // Yönetici "Tamamen sil" derken başka kaç kullanıcının kütüphanesinde olduğunu görür.
+            'kutuphaneSayisi' => $policy->isAdmin() ? $kutuphane->sahipSayisi((int) $kaynak['id'], Auth::id()) : 0,
             // Gömülü oynatıcının postMessage hedefi: bu sayfanın kökeni.
             'origin' => ($adres['scheme'] ?? 'http') . '://' . ($adres['host'] ?? 'localhost') . (isset($adres['port']) ? ':' . $adres['port'] : ''),
         ]);
@@ -237,8 +250,8 @@ final class KaynakController extends Controller
         $kaynakId = (int) $sonuc['kaynak']['id'];
 
         Response::success(match ($sonuc['sonuc']) {
-            AnalizBaslatici::ONBELLEKTEN => 'Bu video daha önce analiz edildi.',
-            AnalizBaslatici::SURUYOR     => 'Bu videonun analizi sürüyor.',
+            AnalizBaslatici::ONBELLEKTEN => 'Bu video daha önce analiz edildi; rapor kütüphanenize eklendi (analiz hakkınızdan düşmedi).',
+            AnalizBaslatici::SURUYOR     => 'Bu videonun analizi sürüyor; bitince rapor kütüphanenizde olacak.',
             AnalizBaslatici::DEVAM_ETTI  => 'Analiz kaldığı yerden sürüyor; biten bölümler korundu.',
             default                      => 'Analiz başladı.',
         }, [
@@ -248,6 +261,9 @@ final class KaynakController extends Controller
             'durum'     => (string) $sonuc['analiz']['durum'],
             'ilerleme'  => (int) $sonuc['analiz']['ilerleme'],
             'adres'     => url('panel/transkript/' . $kaynakId),
+            // Önbellekten dönen raporu bu kişi yeniden analiz edebilir mi (yönetici ya da raporu başlatan)?
+            'yeniden_analiz' => $sonuc['sonuc'] === AnalizBaslatici::ONBELLEKTEN
+                && (new TranskriptPolicy(Auth::user()))->canReanalyze($sonuc['analiz']),
         ]);
     }
 
@@ -263,17 +279,22 @@ final class KaynakController extends Controller
     }
 
     /**
-     * POST panel/transkript/{kaynak_id}/sil — kaynak, analizleri, transcript'i
-     * ve bekleyen kuyruk işleri (Services\KayitYonetimi). Ortak YouTube
+     * POST panel/transkript/{kaynak_id}/sil — TAMAMEN sil: kaynak,
+     * analizleri, transcript'i, herkesin kütüphanesindeki satırı ve
+     * bekleyen kuyruk işleri (Services\KayitYonetimi). Ortak YouTube
      * kaynağını yalnız yönetici siler (TranskriptPolicy::canDeleteSource);
-     * harcanan AI maliyeti kayıtlarda kalır.
+     * kullanıcı kendi listesini "Kütüphanemden çıkar" ile temizler.
+     * Harcanan AI maliyeti kayıtlarda kalır.
      */
     public function sil(Request $request, string $kaynak_id): void
     {
         $kaynak = $this->gorulebilirKaynak($kaynak_id);
+        $policy = new TranskriptPolicy(Auth::user());
 
-        if (!(new TranskriptPolicy(Auth::user()))->canDeleteSource($kaynak)) {
-            Response::error('Bu kaydı silme yetkiniz yok. Ortak videoları yalnızca yöneticiler silebilir.', 403);
+        if (!$policy->canDeleteSource($kaynak)) {
+            Response::error($policy->canRemoveFromLibrary($kaynak)
+                ? 'Ortak videoyu yalnızca yöneticiler tamamen silebilir. Listenizden kaldırmak için "Kütüphanemden çıkar"ı kullanın.'
+                : 'Bu kaydı silme yetkiniz yok.', 403);
         }
 
         $sonuc = (new KayitYonetimi($this->db))->sil($kaynak);
@@ -287,21 +308,76 @@ final class KaynakController extends Controller
     }
 
     /**
+     * POST panel/transkript/{kaynak_id}/kutuphaneden-cikar — videoyu
+     * yalnız bu kullanıcının kütüphanesinden çıkarır; ortak kayıt, rapor
+     * ve başkalarının kütüphanesi kalır. Paylaşılan rapor listede görünmeye
+     * devam eder (paylaşımı yönetici kaldırır).
+     */
+    public function kutuphanedenCikar(Request $request, string $kaynak_id): void
+    {
+        $kaynak = $this->gorulebilirKaynak($kaynak_id);
+        $policy = new TranskriptPolicy(Auth::user());
+
+        if (!$policy->canRemoveFromLibrary($kaynak)) {
+            Response::error('Bu video kütüphanenizde değil.', 409);
+        }
+
+        (new KutuphaneRepository($this->db))->cikar((int) Auth::id(), (int) $kaynak['id']);
+
+        Logger::info('Video kütüphaneden çıkarıldı', ['kaynak' => (int) $kaynak['id'], 'kullanici' => Auth::id()], 'transkript');
+
+        Response::success('Video kütüphanenizden çıkarıldı. Rapor silinmedi; aynı bağlantıyı yeniden eklerseniz hakkınızdan düşmez.', [
+            'adres'  => url('panel/transkript'),
+            'gorunur' => (int) ($kaynak['paylasildi'] ?? 0) === 1 || $policy->isAdmin(),
+        ]);
+    }
+
+    /**
+     * POST panel/transkript/{kaynak_id}/paylas — paylas=1 "Üyelerle
+     * paylaş", paylas=0 paylaşımı kaldırır (yalnız yönetici; rota
+     * can:transkript.admin). Paylaşılan rapor transkript.view yetkisi
+     * olan herkesin listesinde görünür.
+     */
+    public function paylas(Request $request, string $kaynak_id): void
+    {
+        $kaynak = $this->gorulebilirKaynak($kaynak_id);
+
+        if ((int) $kaynak['sahip_id'] !== 0) {
+            Response::error('Yüklenen dosyalar paylaşılamaz.', 422);
+        }
+
+        $paylas = $request->bool('paylas');
+
+        (new KaynakRepository($this->db))->paylasimYaz((int) $kaynak['id'], $paylas);
+
+        Logger::info($paylas ? 'Rapor üyelerle paylaşıldı' : 'Rapor paylaşımı kaldırıldı', ['kaynak' => (int) $kaynak['id'], 'kullanici' => Auth::id()], 'transkript');
+
+        Response::success($paylas ? 'Rapor üyelerle paylaşıldı; panele giren herkes görebilir.' : 'Paylaşım kaldırıldı; rapor yalnız kütüphanesine ekleyenlere görünür.', [
+            'adres' => url('panel/transkript/' . (int) $kaynak['id']),
+        ]);
+    }
+
+    /**
      * POST panel/transkript/{kaynak_id}/iptal — kaynağın süren analizini
      * durdurur: analiz "iptal edildi" hatasıyla biter, bekleyen işleri
      * silinir. Yönetici ya da analizi başlatan (canCancelAnalysis).
+     *
+     * Sıra: görmüyorsa 404 → analizi başlatan değilse 403 → süren analiz
+     * yoksa 409 (cowork 5. tur: durum yetkiden önce soruluyordu).
      */
     public function iptal(Request $request, string $kaynak_id): void
     {
         $kaynak = $this->gorulebilirKaynak($kaynak_id);
-        $analiz = (new KaynakRepository($this->db))->suregelenAnaliz((int) $kaynak['id']);
+        $repo   = new KaynakRepository($this->db);
+        $analiz = $repo->suregelenAnaliz((int) $kaynak['id']);
+        $son    = $analiz ?? (new AnalizRepository($this->db))->kaynaginSonAnalizi((int) $kaynak['id']);
+
+        if (!(new TranskriptPolicy(Auth::user()))->canCancelAnalysis($son ?? [])) {
+            Response::error('Bu analizi yalnızca başlatan kişi ya da bir yönetici iptal edebilir.', 403);
+        }
 
         if ($analiz === null) {
             Response::error('Bu kaynağın süren bir analizi yok.', 409);
-        }
-
-        if (!(new TranskriptPolicy(Auth::user()))->canCancelAnalysis($analiz)) {
-            Response::error('Bu analizi yalnızca başlatan kişi ya da bir yönetici iptal edebilir.', 403);
         }
 
         $iptal = (new KayitYonetimi($this->db))->iptal((int) $analiz['id']);
@@ -355,6 +431,11 @@ final class KaynakController extends Controller
      */
     public function kuyrukTik(Request $request): void
     {
+        // Rota yalnız giriş ister; analiz başlatabilen (ayarla üye de) işletir.
+        if (!(new TranskriptPolicy(Auth::user()))->canAnalyze()) {
+            Response::error('Bu işlem için yetkiniz yok.', 403);
+        }
+
         if (!KuyrukDurumu::tarayicidanIslenir()) {
             Response::error('Kuyruğu tarayıcı üzerinden işleme kapalı.', 403);
         }
