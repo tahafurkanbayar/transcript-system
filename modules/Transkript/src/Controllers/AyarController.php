@@ -78,7 +78,7 @@ final class AyarController extends Controller
 
         $this->view('Transkript::ayarlar', [
             'title'         => 'Transkript ayarları',
-            'subtitle'      => 'Yapay zekâ modeli, altyazı tercihi, süre sınırı, kotalar ve maliyet tahmini.',
+            'subtitle'      => 'Yapay zekâ modeli, altyazı tercihi, süre sınırı, kotalar, maliyet tahmini ve ana sayfa.',
             'degerler'      => $degerler,
             'varsayilanlar' => $varsayilanlar,
             'hatalar'       => $hatalar,
@@ -98,6 +98,7 @@ final class AyarController extends Controller
         return match ($alan) {
             'ai_model'     => (string) ($deger ?: Ai::model()),
             'altyazi_dili' => $deger === [] ? 'videonun kendi dili' : 'Türkçe altyazı varsa onu',
+            'ana_sayfa'    => $deger === false ? 'genel vitrin' : 'Transkript tanıtım sayfası',
             'fiyat_giris', 'fiyat_cikis' => (float) $deger > 0 ? '$' . number_format((float) $deger, 2, ',', '.') : 'sağlayıcının fiyat tablosu',
             default        => (string) ((int) $deger === 0 && (float) $deger === 0.0 ? '0 (kapalı)' : str_replace('.', ',', (string) $deger)),
         };

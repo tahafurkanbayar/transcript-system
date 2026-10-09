@@ -19,12 +19,21 @@
 declare(strict_types=1);
 
 use App\Core\Router;
+use Modules\Transkript\Controllers\AnasayfaController;
 use Modules\Transkript\Controllers\Api\TranskriptApiController;
 use Modules\Transkript\Controllers\AyarController;
 use Modules\Transkript\Controllers\KaynakController;
 use Modules\Transkript\Controllers\SohbetController;
 
 /** @var Router $router */
+
+/* ---------------------------------------------------------------------
+ *  ANA SAYFA (sayfanın kendisi çekirdeğin "" rotasında; bkz. events.php)
+ * ------------------------------------------------------------------ */
+// Tanıtım sayfasının CSS / JS'i ziyaretçiye de gerekir; yalnız
+// Varliklar::HERKESE_ACIK listesindekiler sunulur, panel dosyaları değil.
+$router->get('transkript/varlik/{dosya}', AnasayfaController::class, 'varlik',
+    ['installed']);
 
 /* ---------------------------------------------------------------------
  *  PANEL

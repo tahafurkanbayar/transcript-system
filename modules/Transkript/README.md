@@ -6,7 +6,9 @@ noktalar, zaman çizelgesi, teknik bilgiler, iddialar, fikirler. Onaylı plan:
 [docs/TEKNIK_RAPOR.md](../../docs/TEKNIK_RAPOR.md).
 
 Projeye ait kodun tamamı bu klasördedir; çekirdeğe (`app/`, `config/`,
-çekirdek `routes/` ve `views/`) dokunulmaz.
+çekirdek `routes/` ve `views/`) dokunulmaz. Tek istisna, modülün ana sayfayı
+çizebilmesi için eklenen genel kancadır (`app/Core/HomePage.php` ve
+`HomeController`'da üç satır; "Ekranlar → Ana sayfa").
 
 ---
 
@@ -22,7 +24,7 @@ modules/Transkript/
 ├─ prompts/           parca_analizi.vN.txt, birlestirme.vN.txt; sürüm analizle kaydedilir
 ├─ assets/            css/transkript.css, js/transkript.js (Varliklar rotasıyla sunulur)
 ├─ src/
-│  ├─ Controllers/    KaynakController, SohbetController, Api/TranskriptApiController
+│  ├─ Controllers/    KaynakController, AyarController, AnasayfaController, SohbetController, Api/TranskriptApiController
 │  ├─ Repositories/   SQL'in tek yeri, her sorgu hazırlıklı
 │  ├─ Kaynak/         UrlParser, YoutubeMetadata, DosyaYukleme
 │  ├─ Services/       AnalizBaslatici, KaynakDurumu, RaporVerisi, Cleaner, Chunker, Pipeline, ResultValidator, Istem, Search
@@ -113,6 +115,25 @@ API (`Authorization: Bearer cy_…`): hazır olanlar `analiz`, `kaynaklar`
 aşamalarda (501). Ayrıntı ve erişim matrisi: `tests/transkript.php`.
 
 ## Ekranlar
+
+**Ana sayfa (site kökü, herkese açık):** sitenin vitrini modülün tanıtım sayfasıdır
+(`views/anasayfa.php`, `Controllers/AnasayfaController`). Çekirdeğin `""`
+rotası modüle bırakılamadığı için (Router: ilk kayıt kazanır) çekirdeğe tek,
+genel bir kanca eklendi: `App\Core\HomePage`. Modül `events.php`'de çizici
+kaydeder; `HomeController` önce ona sorar, çizici `false` dönerse ya da hata
+verirse çekirdeğin Panel → Ayarlar → Ana Sayfa'dan beslenen genel vitrini
+çizilir. Seçim panelde: Transkript ayarları → Ana sayfa (config:
+`anasayfa.tanitim`). Bölümler: karşılama (kendi kendine oynayan ürün
+önizlemesi), sayılar, nasıl çalışır, raporda neler var (ARIA sekmeli vitrin),
+neden güvenilir, kimler için, SSS (FAQPage JSON-LD), son çağrı. Yalnız çalışan
+özellikleri anlatır; süre sınırı ve günlük kota ayarlardan yazılır. Misafire
+"Hesap oluşturun / Giriş yapın", analiz yetkisi olana URL kutusu
+(`panel/transkript?url=…` kutuyu doldurur, analizi başlatmaz), diğer
+girişlilere "Raporlara git". Hareket `assets/js/anasayfa.js`'te; ekran dışında
+ve arka plan sekmesinde durur, "hareketi azalt" tercihinde hiç başlamaz,
+JavaScript kapalıyken sayfa durağan ama eksiksizdir. CSS / JS girişsiz
+`transkript/varlik/{dosya}` rotasından sunulur (`Varliklar::HERKESE_ACIK`;
+panel dosyaları bu rotadan verilmez).
 
 **Liste (`panel/transkript`):** URL kutusu ve "Analiz Et" (AJAX). Analiz
 edilmiş video girilirse sayfa değişmeden "Bu video daha önce analiz edildi

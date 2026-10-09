@@ -22,6 +22,7 @@ $gruplar = [
     'Yapay zekâ ve transcript' => ['ai_model', 'altyazi_dili', 'en_uzun_dk'],
     'Kotalar'                  => ['gunluk_sinir', 'saatlik_sinir', 'gunluk_token_tavani', 'gunluk_maliyet_tavani'],
     'Maliyet tahmini (1M token)' => ['fiyat_giris', 'fiyat_cikis'],
+    'Ana sayfa'                => ['ana_sayfa'],
 ];
 $tanimli = static fn (bool $var): string => $var
     ? '<span class="cy-pill is-ok">Tanımlı</span>'

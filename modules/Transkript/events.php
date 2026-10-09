@@ -33,10 +33,13 @@ declare(strict_types=1);
 
 use App\Core\DashboardCards;
 use App\Core\Database;
+use App\Core\HomePage;
+use App\Core\Request;
 use App\Core\Queue\Queue;
 use App\Core\Schedule\Schedule;
 use App\Models\User;
 use Modules\Transkript\Ayarlar;
+use Modules\Transkript\Controllers\AnasayfaController;
 use Modules\Transkript\Repositories\KaynakRepository;
 use Modules\Transkript\Services\KuyrukDurumu;
 
@@ -129,3 +132,24 @@ DashboardCards::add('transkript-kuyruk', static function (?User $user): ?array {
         'yol'    => 'panel/transkript',
     ];
 });
+
+/* ---------------------------------------------------------------------
+ *  ANA SAYFA: sitenin vitrini modülün tanıtım sayfasıdır
+ * ---------------------------------------------------------------------
+ *  Çekirdeğin "" rotası modüle bırakılamaz (ilk kayıt kazanır); çekirdek
+ *  HomePage kancasıyla çiziciyi sorar. Ayar kapalıysa (config.php →
+ *  anasayfa.tanitim ya da Transkript ayarları → Ana sayfa) false döner
+ *  ve Panel → Ayarlar → Ana Sayfa'daki genel vitrin görünür. Ayar
+ *  yalnız ana sayfa istenince okunur.
+ * ------------------------------------------------------------------ */
+if (PHP_SAPI !== 'cli') {
+    HomePage::set('Transkript', static function (Request $request): bool {
+        if (!(bool) Ayarlar::get('anasayfa.tanitim', true)) {
+            return false;
+        }
+
+        (new AnasayfaController())->goster($request);
+
+        return true;
+    });
+}

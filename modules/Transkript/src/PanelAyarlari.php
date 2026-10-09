@@ -86,10 +86,18 @@ final class PanelAyarlari
             'etiket' => 'Çıkış fiyatı',
             'aciklama' => 'Düşünme (thinking) token\'ları çıkışa sayılır. Boş: sağlayıcının fiyat tablosu.',
         ],
+        'ana_sayfa' => [
+            'yol' => ['anasayfa.tanitim'], 'tur' => 'secim',
+            'etiket' => 'Sitenin ana sayfası',
+            'aciklama' => 'Tanıtım sayfası Transkript\'i anlatır. Genel vitrin, Panel → Ayarlar → Ana Sayfa\'dan düzenlenen sayfadır.',
+        ],
     ];
 
     /** Altyazı seçeneği → transcript.tercih_diller değeri. */
     private const ALTYAZI = ['tr' => ['tr'], 'orijinal' => []];
+
+    /** Ana sayfa seçeneği → anasayfa.tanitim değeri. */
+    private const ANA_SAYFA = ['tanitim' => true, 'genel' => false];
 
     /**
      * Ayarlar::get() sonucunun üstüne panelden girilen değeri yazar. Yol
@@ -138,6 +146,11 @@ final class PanelAyarlari
                 '' => 'Varsayılan (' . (Ayarlar::varsayilan('transcript.tercih_diller') === [] ? 'videonun kendi dili' : 'Türkçe altyazı varsa onu') . ')',
                 'tr' => 'Türkçe altyazı varsa onu kullan',
                 'orijinal' => 'Videonun kendi dilindeki altyazı',
+            ],
+            'ana_sayfa'    => [
+                '' => 'Varsayılan (' . (Ayarlar::varsayilan('anasayfa.tanitim', true) ? 'Transkript tanıtım sayfası' : 'genel vitrin') . ')',
+                'tanitim' => 'Transkript tanıtım sayfası',
+                'genel' => 'Genel vitrin (Ayarlar → Ana Sayfa)',
             ],
             default        => [],
         };
@@ -233,7 +246,11 @@ final class PanelAyarlari
         return match (self::ALANLAR[$alan]['tur']) {
             'tamsayi' => (int) $ham,
             'ondalik' => (float) str_replace(',', '.', $ham),
-            default   => $alan === 'altyazi_dili' ? (self::ALTYAZI[$ham] ?? ['tr']) : $ham,
+            default   => match ($alan) {
+                'altyazi_dili' => self::ALTYAZI[$ham] ?? ['tr'],
+                'ana_sayfa'    => self::ANA_SAYFA[$ham] ?? true,
+                default        => $ham,
+            },
         };
     }
 

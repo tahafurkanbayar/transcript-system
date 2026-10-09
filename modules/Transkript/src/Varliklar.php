@@ -8,7 +8,9 @@
  *  geliştirme sunucusunda tarayıcıya kapalıdır. Dosyalar
  *  modules/Transkript/assets/ altında durur ve beyaz listeyle
  *  panel/transkript/varlik/{dosya} rotasından sunulur (sürüm damgalı,
- *  uzun önbellek). Çekirdeğe dosya eklenmez.
+ *  uzun önbellek). Çekirdeğe dosya eklenmez. Ana sayfanın iki dosyası
+ *  ziyaretçiye de gerekir; onlar girişsiz transkript/varlik/{dosya}
+ *  rotasından sunulur (HERKESE_ACIK), panel dosyaları sunulmaz.
  *
  *  CSP: çekirdeğin politikası yalnız kendi alan adına izin verir.
  *  Transkript sayfaları YouTube küçük resmi (i.ytimg.com) ve gömülü
@@ -32,7 +34,12 @@ final class Varliklar
     private const DOSYALAR = [
         'transkript.js'  => ['js/transkript.js', 'application/javascript; charset=utf-8'],
         'transkript.css' => ['css/transkript.css', 'text/css; charset=utf-8'],
+        'anasayfa.js'    => ['js/anasayfa.js', 'application/javascript; charset=utf-8'],
+        'anasayfa.css'   => ['css/anasayfa.css', 'text/css; charset=utf-8'],
     ];
+
+    /** Girişsiz sunulanlar (ana sayfa): transkript/varlik/{dosya}. Diğerleri panel rotasından. */
+    private const HERKESE_ACIK = ['anasayfa.js', 'anasayfa.css'];
 
     private const KLASOR = __DIR__ . '/../assets/';
 
@@ -47,8 +54,15 @@ final class Varliklar
     {
         $yol = self::yol($dosya);
 
+        $onek = self::herkeseAcik($dosya) ? 'transkript/varlik/' : 'panel/transkript/varlik/';
+
         // url() parametresiyle: temiz adres kapalıyken adres zaten "?r=…" içerir.
-        return url('panel/transkript/varlik/' . $dosya, $yol !== null ? ['v' => (string) filemtime($yol)] : []);
+        return url($onek . $dosya, $yol !== null ? ['v' => (string) filemtime($yol)] : []);
+    }
+
+    public static function herkeseAcik(string $dosya): bool
+    {
+        return in_array($dosya, self::HERKESE_ACIK, true);
     }
 
     /** Beyaz listedeki dosyanın tam yolu; değilse null. */
