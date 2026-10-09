@@ -47,6 +47,7 @@ use Modules\Transkript\Repositories\AiKullanimRepository;
 use Modules\Transkript\Repositories\AnalizRepository;
 use Modules\Transkript\Repositories\KaynakRepository;
 use Modules\Transkript\Repositories\SegmentRepository;
+use Modules\Transkript\Services\KuyrukDurumu;
 use Modules\Transkript\Services\Pipeline;
 use Modules\Transkript\Transcript\TranscriptHatasi;
 use PDO;
@@ -84,6 +85,8 @@ abstract class TranskriptIsi extends Job
 
     public function handle(): void
     {
+        KuyrukDurumu::imle();
+
         $analiz = $this->analizler()->bul($this->analizId);
 
         if ($analiz === null || in_array($analiz['durum'], AnalizRepository::BITMIS_DURUMLAR, true)) {

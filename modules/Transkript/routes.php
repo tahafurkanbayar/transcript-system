@@ -37,6 +37,11 @@ $router->post('panel/transkript/analiz', KaynakController::class, 'analiz',
 $router->get('panel/transkript/ilerleme/{kaynak_id}', KaynakController::class, 'ilerleme',
     ['installed', 'auth', 'can:transkript.view']);
 
+// İşçi çalışmıyorsa sıradaki işleri istek içinde çalıştırır (yalnız geliştirme
+// ortamında ya da kuyruk.panelden_isle açıkken; bkz. Services\KuyrukDurumu).
+$router->post('panel/transkript/kuyruk/isle', KaynakController::class, 'kuyruguIsle',
+    ['installed', 'auth', 'csrf', 'can:transkript.admin']);
+
 // Modülün JS / CSS dosyaları (modules/ klasörü tarayıcıya kapalı; bkz. Varliklar).
 $router->get('panel/transkript/varlik/{dosya}', KaynakController::class, 'varlik',
     ['installed', 'auth', 'can:transkript.view']);

@@ -18,6 +18,7 @@
  *       ve Türkçe katlamalı vurgulama (CilginYazilim/search-autocomplete,
  *       assets/js/search.js'ten uyarlandı); oynatıcıyla eş zamanlı satır
  *    8) Oynatıcının anlık zamanı (infoDelivery) → o anki transcript satırı
+ *    9) "Kuyruk işçisi çalışmıyor" uyarısı ve "Şimdi işle" (yönetici)
  * ===================================================================== */
 (function ($) {
     'use strict';
@@ -37,6 +38,13 @@
         if (metin !== undefined && metin !== null) { dugum.textContent = String(metin); }
 
         return dugum;
+    }
+
+    /* İlerleme yanıtındaki kuyruk_takili → "Kuyruk işçisi çalışmıyor" uyarısı. */
+    function kuyrukUyarisi(d) {
+        if (d && typeof d.kuyruk_takili === 'boolean') {
+            $('.js-tk-kuyruk-uyari').prop('hidden', !d.kuyruk_takili);
+        }
     }
 
     /* Sekme arka plandayken istek atılmaz; dönünce hemen bir kez bakılır. */
@@ -166,6 +174,8 @@
                 $.getJSON($tr.attr('data-ilerleme')).done(function (d) {
                     var bitti = d.durum === 'tamamlandi' || d.durum === 'hata';
 
+                    kuyrukUyarisi(d);
+
                     $tr.find('.js-tk-cubuk').css('width', d.ilerleme + '%').parent().attr('aria-valuenow', d.ilerleme);
                     $tr.find('.js-tk-etiket').text(d.etiket);
 
@@ -205,6 +215,9 @@
                 $k.find('.js-tk-yuzde').text('%' + d.ilerleme);
                 $k.find('.js-tk-cubuk').css('width', d.ilerleme + '%').parent().attr('aria-valuenow', d.ilerleme);
                 $k.find('.js-tk-parca').text(d.parca && d.parca.toplam > 0 ? d.parca.biten + ' / ' + d.parca.toplam : '');
+                $k.find('.js-tk-sirada-metin').text(d.sirada || '');
+                $k.find('.js-tk-sirada').prop('hidden', !d.sirada);
+                kuyrukUyarisi(d);
 
                 $k.find('.tk-asama').each(function (i) {
                     $(this).toggleClass('is-bitti', i < simdiki).toggleClass('is-suruyor', i === simdiki);
@@ -298,6 +311,35 @@
         }).fail(function (xhr) {
             CY.ajaxError(xhr, 'Analiz başlatılamadı.');
             $b.prop('disabled', false);
+        });
+    });
+
+    /* =================================================================
+     *  9) "ŞİMDİ İŞLE": işçi yokken sıradaki işleri istekte çalıştırır
+     * =================================================================
+     *  Yalnız yöneticiye ve geliştirme ortamında görünür (sunucu da
+     *  denetler). İstek bir AI adımı sürerse 1–2 dakika bekler; bitince
+     *  sayfa yenilenir ve ilerleme yeni durumdan devam eder. */
+    $(document).on('click', '.js-tk-kuyruk-isle', function () {
+        var $b = $(this);
+        var $metin = $b.find('.js-tk-isle-metin');
+        var eski = $metin.text();
+
+        $b.prop('disabled', true);
+        $metin.text('İşleniyor…');
+
+        $.ajax({
+            url: $b.attr('data-url'),
+            method: 'POST',
+            dataType: 'json',
+            data: { csrf_token: CY.token() }
+        }).done(function (res) {
+            CY.notify(res.description, 'success');
+            window.setTimeout(function () { window.location.reload(); }, 700);
+        }).fail(function (xhr) {
+            CY.ajaxError(xhr, 'Kuyruk işlenemedi.');
+            $b.prop('disabled', false);
+            $metin.text(eski);
         });
     });
 

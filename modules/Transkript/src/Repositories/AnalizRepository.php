@@ -353,6 +353,8 @@ final class AnalizRepository
             'parca'     => $this->parcaSayilari((int) $analiz['id']),
             'hata_kodu' => $analiz['hata_kodu'] !== null ? (string) $analiz['hata_kodu'] : null,
             'guncel_mi' => (bool) $analiz['guncel_mi'],
+            // Sırada bekleme süresi; veritabanı oturumu uygulamanın saat dilimindedir.
+            'gecen_sn'  => max(0, time() - (int) strtotime((string) $analiz['created_at'])),
         ];
     }
 }

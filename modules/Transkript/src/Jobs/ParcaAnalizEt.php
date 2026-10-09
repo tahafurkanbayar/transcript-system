@@ -33,6 +33,7 @@ use App\Core\Log\Logger;
 use App\Core\Queue\Queue;
 use Modules\Transkript\Repositories\AnalizRepository;
 use Modules\Transkript\Services\Cleaner;
+use Modules\Transkript\Services\KuyrukDurumu;
 use Modules\Transkript\Transcript\Segment;
 use Throwable;
 
@@ -55,6 +56,8 @@ final class ParcaAnalizEt extends TranskriptIsi
 
     public function handle(): void
     {
+        KuyrukDurumu::imle();
+
         $analiz = $this->analizler()->bul($this->analizId);
 
         if ($analiz === null || in_array($analiz['durum'], AnalizRepository::BITMIS_DURUMLAR, true)) {

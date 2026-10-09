@@ -284,6 +284,47 @@ işçiler (`php cy queue:work --queue=transkript`, supervisor) çalıştırıp
 `.env`'de `QUEUE_TIMEOUT=900` önerilir (varsayılan 300 sn; daha kısa süren iş
 "takıldı" sanılıp ikinci kez başlatılabilir).
 
+### Kuyruk işçisi çalışmıyorsa
+
+İşçi yoksa analiz "Sırada bekliyor %0"da kalır. `Services/KuyrukDurumu`
+bunu fark eder: hazır bekleyen bir "transkript" işi **2 dakikadan** uzun
+süredir sıradaysa ve işçi 2 dakikadır görülmediyse liste ve rapor sayfası
+"Kuyruk işçisi çalışmıyor" uyarısı, kontrol paneli kırmızı bir kart
+gösterir; komutlar yalnız yöneticiye görünür. İşçinin görülmesi: her
+Transkript işi ve `transkript-kuyrugu` görevi her turda önbelleğe nabız yazar;
+zamanlayıcının durum dosyasındaki son çalışma da sayılır. İlerleme JSON'unda
+`isci_calisiyor`, `kuyruk_takili` ve bekleyen analiz için `sirada`
+("12 dakikadır sırada") alanları vardır.
+
+| Ortam | Ne çalıştırılır |
+|---|---|
+| Linux sunucu | cron: `* * * * * cd /yol/site && php cy schedule:run` |
+| Windows / XAMPP, deneme | proje kökündeki `kuyruk-isci.bat`'ı çift tıklayın (her dakika `schedule:run`; pencere kapanınca durur) |
+| Tek seferlik | `php cy queue:work --queue=transkript` (sıradaki işleri bitirip çıkar) |
+
+**Windows'ta oturum açılınca kendiliğinden başlasın (Görev Zamanlayıcı).**
+Komut isteminde (yönetici gerekmez):
+
+```bat
+schtasks /Create /TN "transcript-system kuyruk" /SC ONLOGON /TR "C:\xampp\htdocs\transcript-system\kuyruk-isci.bat"
+schtasks /Run /TN "transcript-system kuyruk"
+schtasks /Delete /TN "transcript-system kuyruk" /F
+```
+
+İlk satır görevi kurar, ikincisi hemen başlatır, üçüncüsü kaldırır. Görev
+oturumunuzda bir konsol penceresi açar; pencereyi kapatmak işçiyi durdurur.
+Penceresiz çalışması için Görev Zamanlayıcı'da görevin özelliklerinde
+"Kullanıcı oturum açmış olsun olmasın çalıştır"ı seçin (Windows parolanızı
+sorar). PHP yolu farklıysa `CY_PHP` ortam değişkeniyle verin.
+
+**"Şimdi işle" düğmesi.** İşçi yokken uyarıdaki düğme (yalnız yönetici,
+`POST panel/transkript/kuyruk/isle`) sıradaki işleri istek içinde ~20 saniye
+boyunca çalıştırır; o anda başlamış bir AI adımı bitene kadar istek sürer.
+Cron'u olmayan barındırma için yedektir (TEKNIK_RAPOR 7. bölüm): geliştirme
+ortamında (`APP_ENV` yayın değilse) açıktır, yayında yalnız `config.php` →
+`kuyruk.panelden_isle = true` ile. Panelden çalışan iş nabız yazmaz; uyarı
+işçi gelene kadar kalır.
+
 ## Komutlar
 
 ```bash

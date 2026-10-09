@@ -21,24 +21,65 @@
  *
  *    Kalıcı işçi (php cy queue:work, supervisor) kullanan kurulumda
  *    config.php → kuyruk.zamanlanmis_gorev = false.
+ *
+ *    Görev her turda "işçi görüldü" nabzı yazar (KuyrukDurumu::imle);
+ *    nabız 2 dakikadır yoksa ve iş sırada bekliyorsa panel "Kuyruk
+ *    işçisi çalışmıyor" uyarısı gösterir. Windows'ta cron yerine proje
+ *    kökündeki kuyruk-isci.bat (README → "Kuyruk işçisi").
  * =====================================================================
  */
 
 declare(strict_types=1);
 
+use App\Core\DashboardCards;
+use App\Core\Database;
 use App\Core\Queue\Queue;
 use App\Core\Schedule\Schedule;
+use App\Models\User;
 use Modules\Transkript\Ayarlar;
+use Modules\Transkript\Services\KuyrukDurumu;
 
 if (PHP_SAPI === 'cli' && (bool) Ayarlar::get('kuyruk.zamanlanmis_gorev', true)) {
     Schedule::call('transkript-kuyrugu', static function (): void {
         $bitis = time() + max(30, (int) Ayarlar::get('kuyruk.butce_sn', 240));
         $sinir = max(1, (int) Ayarlar::get('kuyruk.en_cok_is', 50));
 
+        KuyrukDurumu::imle();
+
         for ($i = 0; $i < $sinir && time() < $bitis; $i++) {
             if (!Queue::runNext('transkript')) {
                 break;
             }
+
+            KuyrukDurumu::imle();
         }
     })->everyMinute()->describe('Transkript analiz işlerini çalıştırır');
 }
+
+/* ---------------------------------------------------------------------
+ *  KONTROL PANELİ: kuyruk işçisi çalışmıyorsa yöneticiye kırmızı kart
+ * ---------------------------------------------------------------------
+ *  Çekirdeğin Sistem → Kuyruklar kartı modülü tanımaz; uyarı çekirdeğe
+ *  dokunmadan DashboardCards kancasıyla eklenir. Sağlayıcı yalnız
+ *  kontrol paneli açılırken çağrılır (tek kısa sorgu).
+ * ------------------------------------------------------------------ */
+DashboardCards::add('transkript-kuyruk', static function (?User $user): ?array {
+    if ($user === null || !$user->can('transkript.admin')) {
+        return null;
+    }
+
+    $durum = (new KuyrukDurumu(Database::connection()))->getir();
+
+    if (!$durum['takildi']) {
+        return null;
+    }
+
+    return [
+        'ikon'   => 'alert',
+        'renk'   => 'danger',
+        'etiket' => 'Kuyruk işçisi çalışmıyor',
+        'deger'  => $durum['bekleyen'] . ' iş sırada',
+        'ipucu'  => KuyrukDurumu::KOMUT_ELLE,
+        'yol'    => 'panel/transkript',
+    ];
+});

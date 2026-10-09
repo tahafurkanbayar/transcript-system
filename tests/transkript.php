@@ -75,6 +75,7 @@ use Modules\Transkript\Services\GecersizSonuc;
 use Modules\Transkript\Services\Istem;
 use Modules\Transkript\Services\Cleaner;
 use Modules\Transkript\Services\KaynakDurumu;
+use Modules\Transkript\Services\KuyrukDurumu;
 use Modules\Transkript\Services\Parca;
 use Modules\Transkript\Services\Pipeline;
 use Modules\Transkript\Services\RaporVerisi;
@@ -204,6 +205,7 @@ $beklenen = [
     'GET panel/transkript'                                   => 'UEY',
     'POST panel/transkript/analiz'                           => 'EY',
     'GET panel/transkript/ilerleme/{kaynak_id}'              => 'UEY',
+    'POST panel/transkript/kuyruk/isle'                      => 'Y',
     'GET panel/transkript/varlik/{dosya}'                    => 'UEY',
     'GET panel/transkript/{kaynak_id}/transkript'            => 'UEY',
     'GET panel/transkript/{kaynak_id}/indir/{bicim}'         => 'UEY',
@@ -1605,6 +1607,42 @@ dogrula('Dosya adı ASCII: Türkçe katlanır, işaretler tire olur',
     && DisaAktarim::dosyaAdi(['baslik' => 'Çılgın Şeyler!', 'dis_kimlik' => 'x'], 'transkript.srt') === 'cilgin-seyler.srt');
 dogrula('Okuma süresi: ~200 sözcük/dk, en az 1 dk',
     RaporVerisi::okumaDakikasi(['summary' => str_repeat('söz ', 450)]) === 3 && RaporVerisi::okumaDakikasi([]) === 1);
+
+/* ---------------------------------------------------------------- */
+echo "\nKuyruk durumu (\"Kuyruk işçisi çalışmıyor\" uyarısı)\n";
+
+$k = static fn (int $bekleyen, int $calisan, int $enEski, ?int $gorulme): array => KuyrukDurumu::karar($bekleyen, $calisan, $enEski, $gorulme);
+dogrula('İşçi hiç görülmedi, iş 3 dk bekliyor → takıldı', $k(2, 0, 180, null)['takildi'] && !$k(2, 0, 180, null)['calisiyor']);
+dogrula('İş yeni (1 dk) → henüz uyarı yok; boşta kalıcı işçi yanlış alarm vermez', !$k(1, 0, 60, null)['takildi'] && !$k(1, 0, 60, 900)['takildi']);
+dogrula('İşçi 1 dk önce görüldü ya da şu an iş çalışıyor → uyarı yok',
+    !$k(3, 0, 600, 60)['takildi'] && $k(3, 0, 600, 60)['calisiyor'] && !$k(3, 1, 600, 3600)['takildi']);
+dogrula('Sırada iş yoksa işçi görülmese de uyarı yok', !$k(0, 0, 0, 7200)['takildi']);
+dogrula('Eşik 2 dakika (sınırda: 120 sn görülme çalışıyor sayılır)', KuyrukDurumu::ESIK_SN === 120 && !$k(1, 0, 120, 120)['takildi'] && $k(1, 0, 120, 121)['takildi']);
+dogrula('"X dakikadır sırada" metni',
+    KuyrukDurumu::siradaMetni(30) === '1 dakikadan kısa süredir sırada'
+    && KuyrukDurumu::siradaMetni(12 * 60 + 5) === '12 dakikadır sırada'
+    && KuyrukDurumu::siradaMetni(75 * 60) === '1 saat 15 dakikadır sırada');
+dogrula('Uyarıdaki komutlar gerçek: queue:work --queue=transkript ve kökteki kuyruk-isci.bat',
+    str_contains((string) file_get_contents(CY_BASE . '/app/Core/Console/Commands/QueueWorkCommand.php'), "'queue:work'")
+    && KuyrukDurumu::KOMUT_ELLE === 'php cy queue:work --queue=transkript'
+    && is_file(CY_BASE . '/' . KuyrukDurumu::KOMUT_WINDOWS)
+    && str_contains((string) file_get_contents(CY_BASE . '/' . KuyrukDurumu::KOMUT_WINDOWS), 'cy schedule:run'));
+dogrula('kuyruk-isci.bat etiket / goto kullanmaz (depo LF saklar) ve timeout yerine ping ile bekler',
+    !preg_match('/^\s*(:\w|goto\b)/mi', (string) file_get_contents(CY_BASE . '/kuyruk-isci.bat'))
+    && str_contains((string) file_get_contents(CY_BASE . '/kuyruk-isci.bat'), 'ping -n 61'));
+
+$eskiOrtam = App\Core\Config::get('app.env');
+App\Core\Config::set('app.env', 'production');
+Ayarlar::set('kuyruk.panelden_isle', false);
+$yayinKapali = !KuyrukDurumu::paneldenIslenebilir();
+Ayarlar::set('kuyruk.panelden_isle', true);
+$yayinAyarla = KuyrukDurumu::paneldenIslenebilir();
+App\Core\Config::set('app.env', 'local');
+Ayarlar::set('kuyruk.panelden_isle', false);
+$yerelAcik = KuyrukDurumu::paneldenIslenebilir();
+App\Core\Config::set('app.env', $eskiOrtam);
+Ayarlar::forget();
+dogrula('"Şimdi işle": yayında kapalı, ayarla açılır; geliştirme ortamında açık', $yayinKapali && $yayinAyarla && $yerelAcik);
 
 Logger::useDirectory(null);
 Setting::flush();

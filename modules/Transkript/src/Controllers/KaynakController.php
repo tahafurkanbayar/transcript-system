@@ -24,6 +24,7 @@ namespace Modules\Transkript\Controllers;
 use App\Core\Auth;
 use App\Core\Exceptions\HttpException;
 use App\Core\Log\Logger;
+use App\Core\Queue\Queue;
 use App\Core\Request;
 use App\Core\Response;
 use App\Core\Setting;
@@ -36,6 +37,7 @@ use Modules\Transkript\Services\AnalizReddedildi;
 use Modules\Transkript\Services\Cleaner;
 use Modules\Transkript\Services\DisaAktarim;
 use Modules\Transkript\Services\KaynakDurumu;
+use Modules\Transkript\Services\KuyrukDurumu;
 use Modules\Transkript\Services\RaporVerisi;
 use Modules\Transkript\Services\Search;
 use Modules\Transkript\TranskriptPolicy;
@@ -75,6 +77,7 @@ final class KaynakController extends Controller
             'hepsi'      => $policy->canSeeAllCosts(),
             // panel/transkript?url=… → kutu dolu gelir (yer imi, paylaşım bağlantısı).
             'onUrl'      => mb_substr($request->input('url'), 0, 500),
+            'kuyruk'     => (new KuyrukDurumu($this->db))->getir(),
         ]);
     }
 
@@ -92,6 +95,7 @@ final class KaynakController extends Controller
             'kaynak' => $kaynak,
             'veri'   => $veri,
             'policy' => new TranskriptPolicy(Auth::user()),
+            'kuyruk' => (new KuyrukDurumu($this->db))->getir(),
             // Gömülü oynatıcının postMessage hedefi: bu sayfanın kökeni.
             'origin' => ($adres['scheme'] ?? 'http') . '://' . ($adres['host'] ?? 'localhost') . (isset($adres['port']) ? ':' . $adres['port'] : ''),
         ]);
@@ -237,6 +241,48 @@ final class KaynakController extends Controller
         $durum = (new KaynakDurumu($this->db))->getir($this->gorulebilirKaynak($kaynak_id));
 
         Response::success($durum['etiket'], $durum);
+    }
+
+    /**
+     * POST panel/transkript/kuyruk/isle — "Şimdi işle" (yalnız yönetici).
+     *
+     * Kuyruk işçisi çalışmayan geliştirme makinesi (cron'suz Windows /
+     * XAMPP) ve cron'u olmayan barındırma için yedek; docs/TEKNIK_RAPOR.md
+     * 7. bölüm. Yayında yalnız kuyruk.panelden_isle açıkken çalışır.
+     * Sıradaki "transkript" işleri ~20 saniye boyunca işlenir; o anda
+     * başlamış bir AI adımı bitene kadar istek sürer. Asıl çözüm işçidir
+     * (php cy schedule:run her dakika; Windows'ta kuyruk-isci.bat).
+     */
+    public function kuyruguIsle(Request $request): void
+    {
+        if (!KuyrukDurumu::paneldenIslenebilir()) {
+            Response::error('Panelden işleme yayın ortamında kapalı. Sunucuda kuyruk işçisini çalıştırın: ' . KuyrukDurumu::KOMUT_ELLE, 403);
+        }
+
+        @set_time_limit(300);
+        ignore_user_abort(true);
+
+        $bitis   = microtime(true) + 20;
+        $islenen = 0;
+
+        try {
+            while ($islenen < 25 && microtime(true) < $bitis && Queue::runNext('transkript')) {
+                $islenen++;
+            }
+        } catch (Throwable $e) {
+            Logger::error('Kuyruk panelden işlenirken hata', ['ayrinti' => $e->getMessage(), 'kullanici' => Auth::id()], 'transkript');
+
+            Response::error(HataKodlari::mesaj('beklenmeyen_hata'), 500);
+        }
+
+        $durum = (new KuyrukDurumu($this->db))->getir();
+
+        Logger::info('Kuyruk panelden işlendi', ['islenen' => $islenen, 'bekleyen' => $durum['bekleyen'], 'kullanici' => Auth::id()], 'transkript');
+
+        Response::success(
+            $islenen === 0 ? 'Sırada çalıştırılacak iş yok.' : $islenen . ' iş çalıştırıldı.' . ($durum['bekleyen'] > 0 ? ' Sırada ' . $durum['bekleyen'] . ' iş daha var.' : ''),
+            ['islenen' => $islenen, 'bekleyen' => $durum['bekleyen']]
+        );
     }
 
     /** Üretilen metni indirilecek dosya olarak gönderir (ad ASCII; bkz. DisaAktarim::dosyaAdi). */

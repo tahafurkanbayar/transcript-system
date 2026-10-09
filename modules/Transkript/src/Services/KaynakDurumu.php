@@ -10,6 +10,9 @@
  *  etiket     kullanıcıya gösterilecek Türkçe aşama / hata metni
  *  rapor_hazir güncel ve tamamlanmış bir rapor var mı? Yeniden analiz
  *             sürerken eski rapor görünmeye devam eder.
+ *  sirada     analiz işçiyi bekliyorsa "12 dakikadır sırada", yoksa null
+ *  isci_calisiyor / kuyruk_takili  KuyrukDurumu: işçi 2 dakikadır
+ *             görülmediyse ve iş bekliyorsa ekran uyarı gösterir.
  *
  *  Teknik ayrıntı (parça hatası, sağlayıcı yanıtı) burada yoktur;
  *  yalnız log'dadır.
@@ -50,6 +53,9 @@ final class KaynakDurumu
         $kaynakId = (int) $kaynak['id'];
         $analiz   = (new AnalizRepository($this->db))->ilerlemeBilgisi($kaynakId);
         $rapor    = (new KaynakRepository($this->db))->guncelTamamlanmisAnaliz($kaynakId);
+        $sirada   = $analiz !== null && $analiz['durum'] === 'bekliyor' && empty($analiz['calisiyor']);
+        $suruyor  = $analiz !== null && !in_array($analiz['durum'], AnalizRepository::BITMIS_DURUMLAR, true);
+        $kuyruk   = $suruyor ? (new KuyrukDurumu($this->db))->getir() : null;
 
         return [
             'kaynak_id'     => $kaynakId,
@@ -71,6 +77,11 @@ final class KaynakDurumu
                 : null,
             'rapor_hazir'   => $rapor !== null,
             'rapor_analiz_id' => $rapor !== null ? (int) $rapor['id'] : null,
+            'sirada_sn'     => $sirada ? (int) $analiz['gecen_sn'] : null,
+            'sirada'        => $sirada ? KuyrukDurumu::siradaMetni((int) $analiz['gecen_sn']) : null,
+            // Analiz bitmişse işçi sorulmaz (sorgu yok, uyarı yok).
+            'isci_calisiyor' => $kuyruk === null || $kuyruk['calisiyor'],
+            'kuyruk_takili'  => $kuyruk !== null && $kuyruk['takildi'],
         ];
     }
 
