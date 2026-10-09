@@ -97,6 +97,18 @@ final class TranskriptPolicy
         return $this->isAdmin() || ($this->canAnalyze() && $this->isUser((int) ($analiz['kullanici_id'] ?? 0)));
     }
 
+    /**
+     * Başarısız analizin iç nedenini (kota, servis, ayar) görmek: yönetici
+     * ya da analizi başlatan. Ötekiler HataKodlari::GENEL metni okur;
+     * videonun kendisinden gelen neden (altyazı yok…) herkese açıktır.
+     *
+     * @param array<string,mixed> $analiz kullanici_id taşıyan analiz satırı
+     */
+    public function canSeeErrorDetail(array $analiz): bool
+    {
+        return $this->isAdmin() || $this->isUser((int) ($analiz['kullanici_id'] ?? 0));
+    }
+
     /** Herkesin maliyetini ve istatistiğini görmek. */
     public function canSeeAllCosts(): bool
     {

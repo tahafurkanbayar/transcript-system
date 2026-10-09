@@ -26,7 +26,6 @@
 
 use App\Core\View;
 use Modules\Transkript\Ayarlar;
-use Modules\Transkript\HataKodlari;
 use Modules\Transkript\Services\DisaAktarim;
 use Modules\Transkript\Services\RaporVerisi;
 use Modules\Transkript\Varliklar;
@@ -174,7 +173,8 @@ $indir = static fn (string $bicim): string => url('panel/transkript/' . $kaynakI
         <?php elseif ($durum['durum'] === 'hata'): ?>
             <div class="cy-panel cy-panel--warn mb-3 tk-uyari" role="alert">
                 <strong><?= icon('alert', 'cy-icon cy-icon--sm') ?> <?= $rapor !== null ? 'Son analiz tamamlanamadı.' : 'Analiz tamamlanamadı.' ?></strong>
-                <span><?= e(HataKodlari::mesaj($durum['hata']['kod'] ?? null)) ?></span>
+                <?php /* İç neden (kota, servis) yalnız yöneticiye ve başlatana; bkz. KaynakDurumu. */ ?>
+                <span><?= e((string) ($durum['hata']['mesaj'] ?? '')) ?></span>
                 <?php if ($rapor !== null): ?><span>Aşağıdaki rapor önceki başarılı analizden.</span><?php endif; ?>
             </div>
         <?php endif; ?>

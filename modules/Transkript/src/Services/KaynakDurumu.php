@@ -15,7 +15,9 @@
  *             görülmediyse ve iş bekliyorsa ekran uyarı gösterir.
  *
  *  Teknik ayrıntı (parça hatası, sağlayıcı yanıtı) burada yoktur;
- *  yalnız log'dadır.
+ *  yalnız log'dadır. Policy verilirse iç hata (kota, servis) yalnız
+ *  yöneticiye ve analizi başlatana adıyla söylenir; öteki görenler
+ *  HataKodlari::GENEL'i okur. Policy'siz çağrı (CLI, test) ayrıntılıdır.
  * =====================================================================
  */
 
@@ -26,6 +28,7 @@ namespace Modules\Transkript\Services;
 use Modules\Transkript\HataKodlari;
 use Modules\Transkript\Repositories\AnalizRepository;
 use Modules\Transkript\Repositories\KaynakRepository;
+use Modules\Transkript\TranskriptPolicy;
 use PDO;
 
 final class KaynakDurumu
@@ -40,7 +43,7 @@ final class KaynakDurumu
         'bitti'       => 'Analiz tamamlandı',
     ];
 
-    public function __construct(private readonly PDO $db)
+    public function __construct(private readonly PDO $db, private readonly ?TranskriptPolicy $policy = null)
     {
     }
 
@@ -56,6 +59,8 @@ final class KaynakDurumu
         $sirada   = $analiz !== null && $analiz['durum'] === 'bekliyor' && empty($analiz['calisiyor']);
         $suruyor  = $analiz !== null && !in_array($analiz['durum'], AnalizRepository::BITMIS_DURUMLAR, true);
         $kuyruk   = $suruyor ? (new KuyrukDurumu($this->db))->getir() : null;
+        $ayrinti  = $analiz === null || $this->policy === null || $this->policy->canSeeErrorDetail($analiz);
+        $hataKodu = HataKodlari::gorunenKod($analiz['hata_kodu'] ?? null, $ayrinti);
 
         return [
             'kaynak_id'     => $kaynakId,
@@ -71,9 +76,9 @@ final class KaynakDurumu
             'asama'         => $analiz['asama'] ?? null,
             'ilerleme'      => $analiz['ilerleme'] ?? 0,
             'parca'         => $analiz['parca'] ?? ['toplam' => 0, 'biten' => 0, 'hatali' => 0],
-            'etiket'        => self::etiket($analiz),
-            'hata'          => ($analiz['hata_kodu'] ?? null) !== null
-                ? ['kod' => $analiz['hata_kodu'], 'mesaj' => HataKodlari::mesaj($analiz['hata_kodu'])]
+            'etiket'        => self::etiket($analiz, $ayrinti),
+            'hata'          => $hataKodu !== null
+                ? ['kod' => $hataKodu, 'mesaj' => HataKodlari::gorunenMesaj($analiz['hata_kodu'], $ayrinti)]
                 : null,
             'rapor_hazir'   => $rapor !== null,
             'rapor_analiz_id' => $rapor !== null ? (int) $rapor['id'] : null,
@@ -89,15 +94,16 @@ final class KaynakDurumu
      * Kullanıcıya gösterilecek tek satır.
      *
      * @param array<string,mixed>|null $analiz AnalizRepository::ilerlemeBilgisi
+     * @param bool $ayrinti iç hata nedeni gösterilsin mi (bkz. HataKodlari::gorunenMesaj)
      */
-    public static function etiket(?array $analiz): string
+    public static function etiket(?array $analiz, bool $ayrinti = true): string
     {
         if ($analiz === null) {
             return 'Henüz analiz edilmedi';
         }
 
         if ($analiz['durum'] === 'hata') {
-            return HataKodlari::mesaj($analiz['hata_kodu'] ?? null);
+            return HataKodlari::gorunenMesaj($analiz['hata_kodu'] ?? null, $ayrinti);
         }
 
         if ($analiz['durum'] === 'bekliyor' && empty($analiz['calisiyor'])) {
