@@ -27,6 +27,13 @@
  *  Yeni analiz güncel DEĞİLDİR; tamamlanınca güncel olur ve eskisini
  *  güncellikten düşürür (AnalizRepository::raporuYaz). Yeniden analiz
  *  sürerken eski rapor görünmeye devam eder.
+ *
+ *  KALDIĞI YERDEN DEVAM (devamEt): kaynağın SON analizi geçici bir
+ *  sebeple (kota, servis, ayar; HataKodlari::DEVAM_EDILEBILIR) durduysa
+ *  "Analiz Et" / "Yeniden dene" yeni analiz açmaz, o analizi sürdürür:
+ *  tamamlanan parçalar korunur, yalnız kalanlar AI'a gider. Yeni analiz
+ *  sayılmadığı için günlük / saatlik kotaya girmez. Yönetici
+ *  "Bekleyenleri yeniden dene" ile hepsini birden sürdürür.
  * =====================================================================
  */
 
@@ -35,12 +42,19 @@ declare(strict_types=1);
 namespace Modules\Transkript\Services;
 
 use App\Core\Env;
+use App\Core\Log\Logger;
+use App\Core\Queue\Job;
 use App\Core\Queue\Queue;
 use App\Core\Throttle;
 use App\Models\User;
 use Modules\Transkript\Ayarlar;
 use Modules\Transkript\HataKodlari;
+use Modules\Transkript\Jobs\AnalizBirlestir;
 use Modules\Transkript\Jobs\KaynakBilgisiAl;
+use Modules\Transkript\Jobs\ParcaAnalizEt;
+use Modules\Transkript\Jobs\RaporuTamamla;
+use Modules\Transkript\Jobs\TranskriptAl;
+use Modules\Transkript\Jobs\TranskriptIsi;
 use Modules\Transkript\Kaynak\KaynakHatasi;
 use Modules\Transkript\Kaynak\UrlParser;
 use Modules\Transkript\Kaynak\VideoBilgisi;
@@ -56,6 +70,16 @@ final class AnalizBaslatici
     public const BASLATILDI  = 'baslatildi';
     public const SURUYOR     = 'suruyor';
     public const ONBELLEKTEN = 'onbellekten';
+    public const DEVAM_ETTI  = 'devam_etti';
+
+    /** Durulan aşama → sürdürülürken yazılacak durum. */
+    private const DEVAM_DURUMU = [
+        'kaynak'      => 'bekliyor',
+        'transkript'  => 'transkript_aliniyor',
+        'parca'       => 'analiz_ediliyor',
+        'birlestirme' => 'analiz_ediliyor',
+        'rapor'       => 'analiz_ediliyor',
+    ];
 
     public function __construct(
         private readonly PDO $db,
@@ -92,6 +116,11 @@ final class AnalizBaslatici
 
         if ($kaynak !== null && ($hazir = $this->hazirAnaliz($kaynak, $yeniden)) !== null) {
             return $hazir;
+        }
+
+        // Son analiz geçici sebeple durduysa yenisi açılmaz: kaldığı yerden sürer.
+        if ($kaynak !== null && !$yeniden && ($devam = $this->devamEt($kaynak)) !== null) {
+            return $devam;
         }
 
         if ($kaynak !== null && self::cokUzun($kaynak['sure_sn'] !== null ? (int) $kaynak['sure_sn'] : null)) {
@@ -252,6 +281,79 @@ final class AnalizBaslatici
                 $bekle,
             );
         }
+    }
+
+    /**
+     * Kaynağın SON analizi geçici bir sebeple durduysa onu kaldığı yerden
+     * sürdürür; değilse null. Kaynak satırı kilitlenir, durum ve işler
+     * aynı işlemde yazılır (iki istek aynı analizi iki kez sürdüremez).
+     *
+     * @param  array<string,mixed> $kaynak
+     * @return array{sonuc: string, kaynak: array<string,mixed>, analiz: array<string,mixed>}|null
+     */
+    public function devamEt(array $kaynak): ?array
+    {
+        if (!(new TranskriptPolicy($this->user))->canAnalyze()) {
+            return null;
+        }
+
+        $analizler = new AnalizRepository($this->db);
+        $analizId  = null;
+
+        $this->db->beginTransaction();
+
+        try {
+            (new KaynakRepository($this->db))->kilitle((int) $kaynak['id']);
+
+            $son   = $analizler->kaynaginSonAnalizi((int) $kaynak['id']);
+            $asama = $son !== null ? explode(':', (string) $son['asama'])[0] : '';
+
+            if ($son !== null && $son['durum'] === 'hata' && HataKodlari::devamEdilebilir($son['hata_kodu'])
+                && isset(self::DEVAM_DURUMU[$asama]) && $analizler->devamEttir((int) $son['id'], self::DEVAM_DURUMU[$asama])) {
+                $analizId = (int) $son['id'];
+
+                foreach ($this->devamIsleri($analizler, $analizId, $asama) as $is) {
+                    Queue::push($is);
+                }
+            }
+
+            $this->db->commit();
+        } catch (Throwable $e) {
+            if ($this->db->inTransaction()) {
+                $this->db->rollBack();
+            }
+
+            throw $e;
+        }
+
+        if ($analizId === null) {
+            return null;
+        }
+
+        TranskriptIsi::ertelemeyiUnut($analizId);
+
+        Logger::info('Analiz kaldığı yerden sürdürüldü', ['analiz' => $analizId, 'asama' => $asama, 'kullanici' => $this->user?->id], 'transkript');
+
+        return ['sonuc' => self::DEVAM_ETTI, 'kaynak' => $kaynak, 'analiz' => $analizler->bul($analizId) ?? ['id' => $analizId, 'durum' => self::DEVAM_DURUMU[$asama], 'ilerleme' => 0]];
+    }
+
+    /**
+     * Durulan aşamanın işleri. Parça aşamasında yalnız bekleyen parçalar;
+     * hepsi bittiyse birleştirme.
+     *
+     * @return list<Job>
+     */
+    private function devamIsleri(AnalizRepository $analizler, int $analizId, string $asama): array
+    {
+        return match ($asama) {
+            'kaynak'      => [new KaynakBilgisiAl($analizId)],
+            'transkript'  => [new TranskriptAl($analizId)],
+            'birlestirme' => [new AnalizBirlestir($analizId)],
+            'rapor'       => [new RaporuTamamla($analizId)],
+            default       => ($bekleyen = $analizler->bekleyenParcalar($analizId)) !== []
+                ? array_map(static fn (int $sira): Job => new ParcaAnalizEt($analizId, $sira), $bekleyen)
+                : ($analizler->asamaGecisi($analizId, 'parca', 'birlestirme') ? [new AnalizBirlestir($analizId)] : []),
+        };
     }
 
     /**

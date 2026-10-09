@@ -27,6 +27,7 @@ namespace Modules\Transkript;
 
 use App\Core\Setting;
 use Modules\Transkript\Ai\Ai;
+use Modules\Transkript\Services\KuyrukDurumu;
 use PDO;
 
 final class PanelAyarlari
@@ -91,6 +92,11 @@ final class PanelAyarlari
             'etiket' => 'Sitenin ana sayfası',
             'aciklama' => 'Tanıtım sayfası Transkript\'i anlatır. Genel vitrin, Panel → Ayarlar → Ana Sayfa\'dan düzenlenen sayfadır.',
         ],
+        'tarayici_kuyruk' => [
+            'yol' => ['kuyruk.tarayicidan_isle'], 'tur' => 'secim',
+            'etiket' => 'Kuyruğu tarayıcı üzerinden işle',
+            'aciklama' => 'Kuyruk işçisi çalışmıyorsa, açık bir panel sayfası işleri arka planda tek tek işletir; komut satırı gerekmez. Sayfa kapalıyken iş ilerlemez; kalıcı çözüm kuyruk-isci-kur.bat.',
+        ],
     ];
 
     /** Altyazı seçeneği → transcript.tercih_diller değeri. */
@@ -98,6 +104,9 @@ final class PanelAyarlari
 
     /** Ana sayfa seçeneği → anasayfa.tanitim değeri. */
     private const ANA_SAYFA = ['tanitim' => true, 'genel' => false];
+
+    /** Tarayıcıdan kuyruk seçeneği → kuyruk.tarayicidan_isle değeri. */
+    private const TARAYICI_KUYRUK = ['acik' => true, 'kapali' => false];
 
     /**
      * Ayarlar::get() sonucunun üstüne panelden girilen değeri yazar. Yol
@@ -151,6 +160,11 @@ final class PanelAyarlari
                 '' => 'Varsayılan (' . (Ayarlar::varsayilan('anasayfa.tanitim', true) ? 'Transkript tanıtım sayfası' : 'genel vitrin') . ')',
                 'tanitim' => 'Transkript tanıtım sayfası',
                 'genel' => 'Genel vitrin (Ayarlar → Ana Sayfa)',
+            ],
+            'tarayici_kuyruk' => [
+                '' => 'Varsayılan (' . (KuyrukDurumu::tarayicidanIslenir(true) ? 'açık' : 'kapalı') . ')',
+                'acik' => 'Açık: işçi yokken panel sayfası işler',
+                'kapali' => 'Kapalı: yalnız kuyruk işçisi',
             ],
             default        => [],
         };
@@ -249,6 +263,7 @@ final class PanelAyarlari
             default   => match ($alan) {
                 'altyazi_dili' => self::ALTYAZI[$ham] ?? ['tr'],
                 'ana_sayfa'    => self::ANA_SAYFA[$ham] ?? true,
+                'tarayici_kuyruk' => self::TARAYICI_KUYRUK[$ham] ?? null,
                 default        => $ham,
             },
         };

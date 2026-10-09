@@ -49,6 +49,15 @@ $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format(
 
 <?php if ($policy->isAdmin()): ?>
     <div class="tk-ust tk-ust--sag mb-3">
+        <?php if (($bekleyen ?? 0) > 0): ?>
+            <?php /* Geçici sebeple (kota, servis) duran analizler kaldığı yerden sürer; biten bölümler korunur. */ ?>
+            <form method="post" action="<?= e(url('panel/transkript/yeniden-dene')) ?>" class="d-inline">
+                <?= csrf_field() ?>
+                <button type="submit" class="btn cy-btn cy-btn--ghost cy-btn--sm" title="Kota ya da servis yüzünden duran analizler kaldığı yerden sürer">
+                    <?= icon('refresh', 'cy-icon cy-icon--sm') ?> Bekleyenleri yeniden dene (<?= (int) $bekleyen ?>)
+                </button>
+            </form>
+        <?php endif; ?>
         <a class="btn cy-btn cy-btn--ghost cy-btn--sm" href="<?= e(url('panel/transkript/ayarlar')) ?>"><?= icon('settings', 'cy-icon cy-icon--sm') ?> Transkript ayarları</a>
     </div>
 <?php endif; ?>
@@ -149,6 +158,7 @@ $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format(
             <option value="hazir"<?= $filtre['durum'] === 'hazir' ? ' selected' : '' ?>>Raporu hazır</option>
             <option value="suruyor"<?= $filtre['durum'] === 'suruyor' ? ' selected' : '' ?>>Sürüyor</option>
             <option value="hata"<?= $filtre['durum'] === 'hata' ? ' selected' : '' ?>>Hata</option>
+            <option value="iptal"<?= $filtre['durum'] === 'iptal' ? ' selected' : '' ?>>İptal edildi</option>
         </select>
         <button type="submit" class="btn cy-btn cy-btn--ghost cy-btn--sm"><?= icon('filter', 'cy-icon cy-icon--sm') ?> Uygula</button>
         <?php if ($filtreli): ?>
@@ -221,13 +231,16 @@ $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format(
                                         </span>
                                     <?php elseif ($satir['rapor_analiz_id'] !== null): ?>
                                         <?php if ($durum === 'hata'): ?>
-                                            <small class="cy-muted">Son deneme: <?= e(HataKodlari::gorunenMesaj($satir['hata_kodu'], $policy->canSeeErrorDetail($satir))) ?> Önceki rapor duruyor.</small>
+                                            <small class="cy-muted">Son deneme: <?= e(HataKodlari::gorunenMesaj($satir['hata_kodu'], $policy->canSeeErrorDetail($satir), $policy->isAdmin())) ?> Önceki rapor duruyor.</small>
                                         <?php else: ?>
                                             <a class="cy-link small" href="<?= e($rapor) ?>"><?= icon('check', 'cy-icon cy-icon--sm') ?> Rapor hazır</a>
                                         <?php endif; ?>
                                     <?php elseif (!$iptal): ?>
                                         <?php /* Kota / servis nedeni yalnız yöneticiye ve başlatana (HataKodlari::gorunenMesaj). */ ?>
-                                        <small class="tk-hata-metni"><?= e(HataKodlari::gorunenMesaj($satir['hata_kodu'], $policy->canSeeErrorDetail($satir))) ?></small>
+                                        <small class="tk-hata-metni"><?= e(HataKodlari::gorunenMesaj($satir['hata_kodu'], $policy->canSeeErrorDetail($satir), $policy->isAdmin())) ?></small>
+                                        <?php if ($policy->isAdmin() && ($satir['hata_ozeti'] ?? null) !== null && $satir['hata_ozeti'] !== ''): ?>
+                                            <small class="tk-zincir-ozeti"><?= e((string) $satir['hata_ozeti']) ?></small>
+                                        <?php endif; ?>
                                     <?php endif; ?>
                                 </span>
                             </td>

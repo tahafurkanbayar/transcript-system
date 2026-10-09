@@ -49,16 +49,43 @@ final class HataKodlari
         'gecersiz_url', 'video_bulunamadi', 'gizli_video', 'silinmis_video', 'oynatma_listesi', 'kanal_baglantisi',
     ];
 
+    /**
+     * Geçici sebeple duran analiz: kaldığı yerden sürdürülebilir (biten
+     * parçalar korunur). Videonun kendisinden gelen hata ve iptal değil.
+     */
+    public const DEVAM_EDILEBILIR = [
+        'ai_kota_doldu', 'ai_ayar_eksik', 'ai_api_hatasi', 'ai_yanit_gecersiz', 'rate_limit',
+        'transkript_api_hatasi', 'metadata_hatasi', 'beklenmeyen_hata',
+    ];
+
+    public static function devamEdilebilir(?string $kod): bool
+    {
+        return $kod !== null && in_array($kod, self::DEVAM_EDILEBILIR, true);
+    }
+
     public static function herkeseAcik(?string $kod): bool
     {
         return $kod !== null && in_array($kod, self::HERKESE_ACIK, true);
     }
 
-    /** $ayrinti yoksa iç hata (kota, servis, ayar) GENEL metne döner. */
-    public static function gorunenMesaj(?string $kod, bool $ayrinti): string
+    /** Yöneticiye: "yöneticinize bildirin" demek yerine nereye bakacağını söyler. */
+    private const YONETICI_MESAJLARI = [
+        'ai_ayar_eksik' => 'Yapay zekâ ayarı eksik ya da geçersiz (anahtar ya da model). Sağlayıcıların durumu: Transkript ayarları → Durum.',
+        'ai_kota_doldu' => 'Yapay zekâ servislerinin kotası doldu ve iş erteleme süresi içinde tamamlanamadı. "Bekleyenleri yeniden dene" ile sürdürebilirsiniz.',
+    ];
+
+    /**
+     * $ayrinti yoksa iç hata (kota, servis, ayar) GENEL metne döner.
+     * $yonetici ise "yöneticinize bildirin" yerine yöneticiye uygun metin.
+     */
+    public static function gorunenMesaj(?string $kod, bool $ayrinti, bool $yonetici = false): string
     {
         if ($kod === null || $kod === '') {
             return '';
+        }
+
+        if ($yonetici && isset(self::YONETICI_MESAJLARI[$kod])) {
+            return self::YONETICI_MESAJLARI[$kod];
         }
 
         return $ayrinti || self::herkeseAcik($kod) ? self::mesaj($kod) : self::GENEL;

@@ -81,7 +81,7 @@ final class TranskriptApiController extends Controller
 
     /**
      * GET api/v1/transkript/kaynaklar?tur=&durum=&q=&sayfa=&sayfa_boyut=
-     * durum: hazir · suruyor · hata. Panel listesiyle aynı sorgu ve görünürlük.
+     * durum: hazir · suruyor · hata · iptal. Panel listesiyle aynı sorgu ve görünürlük.
      */
     public function kaynaklar(Request $request): void
     {

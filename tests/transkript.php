@@ -59,6 +59,7 @@ use Modules\Transkript\Http\HttpIstemci;
 use Modules\Transkript\Http\HttpYanit;
 use Modules\Transkript\Ayarlar;
 use Modules\Transkript\Controllers\AnasayfaController;
+use Modules\Transkript\Controllers\AyarController;
 use Modules\Transkript\Controllers\KaynakController;
 use Modules\Transkript\HataKodlari;
 use Modules\Transkript\Jobs\AnalizBirlestir;
@@ -218,6 +219,9 @@ $beklenen = [
     'POST panel/transkript/kuyruk/isle'                      => 'Y',
     'GET panel/transkript/ayarlar'                           => 'Y',
     'POST panel/transkript/ayarlar'                          => 'Y',
+    'POST panel/transkript/ayarlar/dinlenme-sifirla'         => 'Y',
+    'POST panel/transkript/yeniden-dene'                     => 'Y',
+    'POST panel/transkript/kuyruk/tik'                       => 'EY',
     'GET panel/transkript/varlik/{dosya}'                    => 'UEY',
     'GET panel/transkript/{kaynak_id}/transkript'            => 'UEY',
     'GET panel/transkript/{kaynak_id}/indir/{bicim}'         => 'UEY',
@@ -1917,39 +1921,90 @@ $y1 = $zincir->sendJson([['role' => 'user', 'content' => 'x']], 's', ['type' => 
 dogrula('Birincinin kotası dolunca ikinciden yanıt; düşen deneme ve sebebi kayıtlı',
     $y1['text'] === '{"tamam":1}' && $zincir->sonAd() === 'test-b'
     && array_column($zincir->denemeler(), 'kod') === ['kota_doldu'] && $zincir->denemeler()[0]['ad'] === 'test-a');
-dogrula('Kotası dolan sağlayıcı dinlenir (saatte bir)', YedekliSaglayici::dinlenmeKalan('test-a') > 3500);
+dogrula('Kotası dolan sağlayıcı günlük kotanın sıfırlanmasına (Pasifik gece yarısı) kadar dinlenir',
+    abs(YedekliSaglayici::dinlenmeKalan('test-a') - YedekliSaglayici::kotaSifirlanmasinaKadar(time())) <= 2);
 $y2 = $zincir->sendJson([['role' => 'user', 'content' => 'y']], 's', ['type' => 'object']);
 dogrula('Dinlenen sağlayıcıya bir sonraki çağrıda gidilmez', $y2['text'] === '{"tamam":2}' && count($a->istekler) === 1 && $zincir->denemeler() === []);
 $dinlenmeyiSil();
 
-$hepsi = static function (array $kodlar): string {
+/** Her halka verilen hatayla düşer; [kod, bekleme]. ['rate_limit', 45] → Retry-After 45. */
+$hepsi = static function (array $kodlar): array {
     $halkalar = [];
     foreach ($kodlar as $i => $kod) {
-        $halkalar[] = ['ad' => 'test-' . chr(97 + $i), 'saglayici' => new SahteAi([new AiHatasi('düştü', $kod)])];
+        [$kod, $bekle] = is_array($kod) ? $kod : [$kod, null];
+        $halkalar[] = ['ad' => 'test-' . chr(97 + $i), 'saglayici' => new SahteAi([new AiHatasi('düştü', $kod, 0, null, $bekle)])];
     }
     try {
         (new YedekliSaglayici($halkalar))->sendJson([], '', []);
     } catch (AiHatasi $e) {
-        return $e->kod . ($e->yenidenDenenebilir() ? '+' : '');
+        return [$e->kod, $e->bekleme];
     } finally {
         foreach (array_keys($kodlar) as $i) {
             YedekliSaglayici::dinlenmeyiBitir('test-' . chr(97 + $i));
         }
     }
-    return '';
+    return ['', null];
 };
-dogrula('Hepsi düşerse: biri geçiciyse o kod (iş sonra yeniden dener); hepsi günlük kotaysa kota_doldu; yoksa sonuncunun kodu',
-    $hepsi(['kota_doldu', 'rate_limit']) === 'rate_limit+' && $hepsi(['kota_doldu', 'kota_doldu']) === 'kota_doldu'
-    && $hepsi(['yetkisiz', 'istek_hatasi']) === 'istek_hatasi' && $hepsi(['sunucu', 'yetkisiz']) === 'sunucu+');
+dogrula('Hepsi düşerse ve geçici dinlenen varsa HATA DEĞİL: zincir_dinleniyor, bekleme = en erken açılış (Retry-After dahil)',
+    $hepsi(['kota_doldu', 'rate_limit'])[0] === 'zincir_dinleniyor' && $hepsi(['kota_doldu', 'rate_limit'])[1] === 60
+    && $hepsi(['kota_doldu', 'kota_doldu'])[0] === 'zincir_dinleniyor'
+    && $hepsi([['rate_limit', 45], 'sunucu']) === ['zincir_dinleniyor', 45]
+    && $hepsi(['sunucu', 'yetkisiz']) === ['zincir_dinleniyor', 120]);
+dogrula('Geçici dinlenen yoksa son hata: anahtar / model hatası devre dışıdır (erteleme sebebi değil), 413 ve 400 dinletmez',
+    $hepsi(['yetkisiz', 'istek_hatasi'])[0] === 'istek_hatasi' && $hepsi(['yetkisiz', 'model_bulunamadi'])[0] === 'model_bulunamadi'
+    && $hepsi(['cok_buyuk', 'cok_buyuk'])[0] === 'cok_buyuk');
 
 YedekliSaglayici::dinlendir('test-a', 'rate_limit');
-YedekliSaglayici::dinlendir('test-b', 'rate_limit');
+YedekliSaglayici::dinlendir('test-b', 'kota_doldu');
 $a = new SahteAi([SahteAi::yanit('{"a":1}')]);
 $b = new SahteAi([]);
-$y = (new YedekliSaglayici([['ad' => 'test-a', 'saglayici' => $a], ['ad' => 'test-b', 'saglayici' => $b]]))->sendJson([], '', []);
-dogrula('Hepsi dinleniyorsa yine sırayla denenir; yanıt veren dinlenmeden çıkar',
-    $y['text'] === '{"a":1}' && YedekliSaglayici::dinlenmeKalan('test-a') === 0 && YedekliSaglayici::dinlenmeKalan('test-b') > 0);
+try {
+    (new YedekliSaglayici([['ad' => 'test-a', 'saglayici' => $a], ['ad' => 'test-b', 'saglayici' => $b]]))->sendJson([], '', []);
+    $hepsiDinlenmede = null;
+} catch (AiHatasi $e) {
+    $hepsiDinlenmede = $e;
+}
+dogrula('Hepsi dinleniyorsa hiçbiri denenmez (boşa istek yok); en erken açılışa kadar zincir_dinleniyor',
+    $hepsiDinlenmede?->kod === 'zincir_dinleniyor' && abs((int) $hepsiDinlenmede->bekleme - 60) <= 1 && $a->istekler === [] && $b->istekler === []);
 $dinlenmeyiSil();
+
+YedekliSaglayici::dinlendir('test-a', 'model_bulunamadi', null, null, 'eski-model');
+YedekliSaglayici::dinlendir('test-b', 'rate_limit', null, 45);
+dogrula('Model hatası yalnız o modele bağlı (.env\'de model değişince yeniden denenir); 429 Retry-After kadar dinlenir',
+    YedekliSaglayici::dinlenmeKalan('test-a', null, 'eski-model') > 21000 && YedekliSaglayici::dinlenmeKalan('test-a', null, 'yeni-model') === 0
+    && abs(YedekliSaglayici::dinlenmeKalan('test-b') - 45) <= 1);
+$dinlenmeyiSil();
+
+$utc = static fn (string $t): int => (new DateTimeImmutable($t, new DateTimeZone('UTC')))->getTimestamp();
+dogrula('Günlük kota sıfırlanması: Pasifik gece yarısı + 1 dk (yaz saati 07:00 UTC, kış saati 08:00 UTC)',
+    YedekliSaglayici::kotaSifirlanmasinaKadar($utc('2026-10-09 20:00')) === 11 * 3600 + 60
+    && YedekliSaglayici::kotaSifirlanmasinaKadar($utc('2026-12-01 07:30')) === 30 * 60 + 60);
+
+YedekliSaglayici::dinlendir('test-a', 'kota_doldu');
+YedekliSaglayici::dinlendir('test-b', 'model_bulunamadi', null, null, 'm-b');
+$ozet = YedekliSaglayici::ozet([
+    ['ad' => 'test-a', 'etiket' => 'Google Gemini', 'tanimli' => true, 'model' => 'g'],
+    ['ad' => 'test-b', 'etiket' => 'OpenRouter', 'tanimli' => true, 'model' => 'm-b'],
+    ['ad' => 'test-c', 'etiket' => 'Mistral', 'tanimli' => false, 'model' => 'x'],
+]);
+dogrula('Yöneticiye zincir özeti: sebep, açılış saati, devre dışı, anahtarsız (sağlayıcı mesajı yok)',
+    str_contains($ozet, 'Google Gemini: günlük kota doldu (açılış ') && str_contains($ozet, 'OpenRouter: model yok (404) (devre dışı, açılış ')
+    && str_contains($ozet, 'Mistral: anahtar yok') && substr_count($ozet, ' · ') === 2, $ozet);
+$dinlenmeyiSil();
+
+dogrula('İş ertelemesi: zincir_dinleniyor → bekleme, tek sağlayıcının günlük kotası → sıfırlanmaya kadar; diğer hatalar ertelenmez',
+    TranskriptIsi::erteleme(new AiHatasi('x', 'zincir_dinleniyor', 0, null, 300)) === 300
+    && TranskriptIsi::erteleme(new AiHatasi('x', 'zincir_dinleniyor', 0, null, 5)) === 30
+    && TranskriptIsi::erteleme(new AiHatasi('x', 'kota_doldu'), $utc('2026-10-09 20:00')) === 11 * 3600 + 60
+    && TranskriptIsi::erteleme(new AiHatasi('x', 'rate_limit')) === null && TranskriptIsi::erteleme(new RuntimeException('x')) === null);
+dogrula('Erteleme süresi dolarsa kalıcı kod ai_kota_doldu; ekranda devam saati yazar',
+    TranskriptIsi::kaliciKod(new AiHatasi('x', 'zincir_dinleniyor')) === 'ai_kota_doldu'
+    && str_contains(KaynakDurumu::ertelemeMetni(strtotime('today 23:30'), strtotime('today 20:00')), 'saat 23:30 civarında kendiliğinden sürecek')
+    && str_contains(KaynakDurumu::ertelemeMetni(strtotime('tomorrow 10:01'), strtotime('today 20:00')), 'analiz yarın 10:01 civarında'));
+dogrula('Yöneticiye "yöneticinize bildirin" denmez; ayrıntı için Durum ekranı',
+    !str_contains(HataKodlari::gorunenMesaj('ai_ayar_eksik', true, true), 'Yöneticinize') && str_contains(HataKodlari::gorunenMesaj('ai_ayar_eksik', true, true), 'Durum')
+    && !str_contains(mb_strtolower(HataKodlari::gorunenMesaj('ai_kota_doldu', true, true)), 'yöneticinize')
+    && str_contains(HataKodlari::gorunenMesaj('ai_ayar_eksik', true), 'Yöneticinize'));
 
 $a = new SahteAi([new AiHatasi('400', 'istek_hatasi', 400)]);
 $b = new SahteAi([SahteAi::yanit('{}')]);
@@ -2003,7 +2058,7 @@ $halkalar = $z instanceof YedekliSaglayici ? (new ReflectionProperty(YedekliSagl
 dogrula('Anahtarı olan yedeklerle zincir kurulur; panel modeli yalnız birincile, diğerleri kendi modeli; thinkingConfig yalnız Gemini\'ye',
     $zAd === 'zincir' && $z instanceof YedekliSaglayici && $z->adlar() === ['gemini', 'openrouter', 'groq']
     && $halkalar[0]['saglayici']->model() === 'gemini-2.5-flash-lite'
-    && $halkalar[1]['saglayici']->model() === 'meta-llama/llama-3.3-70b-instruct:free'
+    && $halkalar[1]['saglayici']->model() === 'google/gemma-4-31b-it:free'
     && $halkalar[2]['saglayici']->model() === 'llama-test'
     && $halkalar[0]['ek'] !== [] && $halkalar[1]['ek'] === [] && $halkalar[2]['ek'] === []);
 dogrula('Ayarlar ekranı için durum: sıra, tanımlı, model; anahtar değeri yok',
@@ -2239,6 +2294,129 @@ dogrula('Misafire vaat, kayıt olunca açılacak üye hesabının yetkisinden (t
     AnasayfaController::yapabilir(null, 'transkript.analyze') === Role::can(Role::MEMBER, 'transkript.analyze')
     && AnasayfaController::yapabilir(null, 'profile.api') === Role::can(Role::MEMBER, 'profile.api')
     && AnasayfaController::yapabilir($rE1, 'profile.api') && !AnasayfaController::yapabilir($rU, 'profile.api'));
+
+/* ---------------------------------------------------------------- */
+echo "\nZincir görünürlüğü, yarım işler, komut satırısız kuyruk\n";
+
+YedekliSaglayici::dinlendir('test-a', 'kota_doldu');
+YedekliSaglayici::dinlendir('test-b', 'yetkisiz');
+$tablo = AyarController::zincirTablosu([
+    ['ad' => 'test-a', 'etiket' => 'Google Gemini', 'tanimli' => true, 'model' => 'g', 'ucretsiz' => true, 'konsol' => ''],
+    ['ad' => 'test-b', 'etiket' => 'Groq', 'tanimli' => true, 'model' => 'q', 'ucretsiz' => true, 'konsol' => ''],
+    ['ad' => 'test-c', 'etiket' => 'OpenRouter', 'tanimli' => true, 'model' => 'o', 'ucretsiz' => true, 'konsol' => ''],
+    ['ad' => 'test-d', 'etiket' => 'Mistral', 'tanimli' => false, 'model' => 'm', 'ucretsiz' => true, 'konsol' => ''],
+], ['test-c' => ['son_basari' => '2026-10-09 20:00:00', 'son_hata' => null, 'son_hata_kodu' => null, 'bugun_cagri' => 3, 'bugun_token' => 4200]]);
+$dinlenmeyiSil();
+dogrula('Sağlayıcı tablosu: dinleniyor (açılış saati, kalan dk), devre dışı, hazır, anahtarsız atlandı; kullanım özeti eklenir',
+    array_column($tablo, 'hal') === ['dinleniyor', 'devre_disi', 'hazir', 'atlandi']
+    && $tablo[0]['acilis'] !== null && $tablo[0]['kalan_dk'] > 0 && $tablo[0]['sebep'] === 'günlük kota doldu'
+    && $tablo[1]['sebep'] === 'anahtar geçersiz (401/403)' && $tablo[2]['bugun_cagri'] === 3 && $tablo[3]['bugun_token'] === 0);
+
+$ayarDegerleri = array_fill_keys(array_keys(PanelAyarlari::ALANLAR), '');
+$ayarSayfasi = App\Core\View::capture('Transkript::ayarlar', [
+    'degerler' => $ayarDegerleri, 'varsayilanlar' => array_fill_keys(array_keys(PanelAyarlari::ALANLAR), 'x'), 'hatalar' => [],
+    'cagrilar' => [
+        ['id' => 2, 'created_at' => '2026-10-09 21:00:55', 'saglayici' => 'groq', 'model' => 'llama', 'ref_tur' => 'analiz', 'ref_id' => 28,
+         'giris_token' => 0, 'cikis_token' => 0, 'sure_ms' => 690, 'durum' => 'hata', 'hata_kodu' => 'model_bulunamadi', 'kaynak_id' => 27],
+        ['id' => 1, 'created_at' => '2026-10-09 20:38:26', 'saglayici' => 'gemini', 'model' => 'gemini-2.5-flash', 'ref_tur' => 'analiz', 'ref_id' => 25,
+         'giris_token' => 1621, 'cikis_token' => 881, 'sure_ms' => 5630, 'durum' => 'basarili', 'hata_kodu' => null, 'kaynak_id' => 24],
+    ],
+    'durum' => ['saglayici' => 'Google Gemini', 'zincir' => $tablo, 'ai_anahtar' => true, 'yt_anahtar' => true, 'transcript' => 'youtube', 'istem' => 'v3',
+                'kuyruk' => ['takildi' => false, 'son_gorulme_sn' => 5, 'calisan' => 0]],
+]);
+dogrula('Ayarlar: sağlayıcı tablosu, "Dinlenmeleri sıfırla" (CSRF\'li), son 50 çağrı günlüğü; anahtarsız "Atlandı", hata Türkçe',
+    str_contains($ayarSayfasi, 'Yapay zekâ sağlayıcıları') && str_contains($ayarSayfasi, 'Dinlenmeleri sıfırla')
+    && preg_match('#action="[^"]*ayarlar/dinlenme-sifirla">\s*<input type="hidden" name="csrf_token"#', $ayarSayfasi) === 1
+    && str_contains($ayarSayfasi, 'Atlandı (anahtar yok)') && str_contains($ayarSayfasi, 'Son 50 yapay zekâ çağrısı')
+    && str_contains($ayarSayfasi, 'model yok (404)') && str_contains($ayarSayfasi, 'açılış ') && str_contains($ayarSayfasi, '2.502')
+    && preg_match('#href="[^"]*/panel/transkript/27">\#28</a>#', $ayarSayfasi) === 1
+    && str_contains($ayarSayfasi, 'name="tarayici_kuyruk"'));
+
+$filtrePdo = new KayitPdo();
+(new KaynakRepository($filtrePdo))->liste(['durum' => 'hata'], 1, 10, null, true);
+$hataSorgusu = $filtrePdo->sorgular[0] ?? '';
+$filtrePdo->sorgular = [];
+(new KaynakRepository($filtrePdo))->liste(['durum' => 'iptal'], 1, 10, null, true);
+dogrula('Durum süzgecinde "İptal edildi" ayrı; iptal edilenler "Hata"da ve hata sayacında yok',
+    KaynakController::listeDurumu('iptal', true) === 'iptal' && str_contains($hataSorgusu, "a.hata_kodu <> 'iptal_edildi'")
+    && str_contains($filtrePdo->sorgular[0] ?? '', "a.hata_kodu = 'iptal_edildi'")
+    && substr_count((string) file_get_contents(MODUL_YOLU . '/src/Repositories/KaynakRepository.php'), "a.durum = 'hata' AND (a.hata_kodu IS NULL OR a.hata_kodu <> 'iptal_edildi')), 0) AS hata") === 2);
+
+$devamPdo = new KayitPdo();
+$acildi = (new AnalizRepository($devamPdo))->devamEttir(5, 'analiz_ediliyor');
+dogrula('Kaldığı yerden devam: yalnız "hata"daki analiz açılır; açılmazsa parçalara dokunulmaz (tamamlananlar zaten korunur)',
+    $acildi === false && count($devamPdo->sorgular) === 1 && str_contains($devamPdo->sorgular[0], "WHERE id = :id AND durum = 'hata'")
+    && str_contains((string) file_get_contents(MODUL_YOLU . '/src/Repositories/AnalizRepository.php'), "WHERE analiz_id = :analiz AND durum IN ('hata', 'isleniyor')"));
+dogrula('Sürdürülebilir hatalar: kota, servis, ayar; iptal ve videodan gelen hata değil',
+    HataKodlari::devamEdilebilir('ai_kota_doldu') && HataKodlari::devamEdilebilir('ai_ayar_eksik') && HataKodlari::devamEdilebilir('transkript_api_hatasi')
+    && !HataKodlari::devamEdilebilir('iptal_edildi') && !HataKodlari::devamEdilebilir('transkript_bulunamadi') && !HataKodlari::devamEdilebilir(null));
+
+$eskiOrtam2 = App\Core\Config::get('app.env');
+$tarayici = [];
+foreach (['production' => [null, true, false], 'local' => [null, true, false]] as $ortam => $degerler) {
+    App\Core\Config::set('app.env', $ortam);
+    foreach ($degerler as $deger) {
+        Ayarlar::set('kuyruk.tarayicidan_isle', $deger);
+        $tarayici[] = KuyrukDurumu::tarayicidanIslenir();
+    }
+}
+App\Core\Config::set('app.env', $eskiOrtam2);
+Ayarlar::forget();
+dogrula('Tarayıcıdan kuyruk: varsayılan geliştirmede açık, yayında kapalı; ayar ikisini de ezer',
+    $tarayici === [false, true, false, true, true, false], json_encode($tarayici));
+
+$uyariCiz = static fn (bool $tarayicidan, TranskriptPolicy $p): string => (static function () use ($tarayicidan, $p): string {
+    Ayarlar::set('kuyruk.tarayicidan_isle', $tarayicidan);
+    $html = App\Core\View::capture('Transkript::_parcalar/kuyruk-uyarisi', ['kuyruk' => ['takildi' => true], 'policy' => $p]);
+    Ayarlar::forget();
+    return $html;
+})();
+$tikModu  = $uyariCiz(true, $prY);
+$eskiModu = $uyariCiz(false, $prY);
+dogrula('Uyarı kutusu tarayıcı modunda "tarayıcı üzerinden işleniyor" der, komut göstermez, tik adresini taşır; kapalıyken kurulum dosyasını önerir',
+    str_contains($tikModu, 'Kuyruk tarayıcı üzerinden işleniyor') && preg_match('#data-tik="[^"]*panel/transkript/kuyruk/tik"#', $tikModu) === 1
+    && !str_contains($tikModu, 'queue:work') && !str_contains($tikModu, 'Şimdi işle')
+    && str_contains($eskiModu, 'kuyruk-isci-kur.bat') && !str_contains($uyariCiz(true, $prU), 'data-tik'));
+
+$kaynakKodu2 = (string) file_get_contents(MODUL_YOLU . '/src/Controllers/KaynakController.php');
+preg_match('#function kuyrukTik\(.*?\n    }\n#s', $kaynakKodu2, $tikGovde);
+dogrula('Tik ucu: kilit doluysa 202, tek iş (runNext bir kez), kilit finally ile bırakılır, oturum kilidi açılır, sekme kapansa da sürer',
+    isset($tikGovde[0]) && str_contains($tikGovde[0], "GET_LOCK('transkript_kuyruk_tik', 0)") && str_contains($tikGovde[0], ', 202);')
+    && substr_count($tikGovde[0], 'Queue::runNext(') === 1 && str_contains($tikGovde[0], "RELEASE_LOCK('transkript_kuyruk_tik')")
+    && str_contains($tikGovde[0], 'session_write_close()') && str_contains($tikGovde[0], 'ignore_user_abort(true)')
+    && strpos($tikGovde[0], 'finally') < strpos($tikGovde[0], 'RELEASE_LOCK'));
+
+$surecKomutu = [];
+foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator(MODUL_YOLU, FilesystemIterator::SKIP_DOTS)) as $dosya) {
+    if ($dosya->getExtension() === 'php' && preg_match('/(?<![\w>$:\\\\])(exec|shell_exec|system|passthru|popen|proc_open)\s*\(/', (string) file_get_contents($dosya->getPathname())) === 1) {
+        $surecKomutu[] = basename($dosya->getPathname());
+    }
+}
+$kurBat = (string) @file_get_contents(CY_BASE . '/kuyruk-isci-kur.bat');
+$kurPs  = (string) @file_get_contents(CY_BASE . '/kuyruk-isci-kur.ps1');
+dogrula('Modül PHP\'den süreç / işletim sistemi komutu başlatmaz (exec, shell_exec, popen, proc_open, system)', $surecKomutu === [], implode(', ', $surecKomutu));
+dogrula('kuyruk-isci-kur.bat: etiket / goto yok, ps1\'i çağırır; görev oturum açılınca, gizli, tek örnek, süre sınırsız',
+    $kurBat !== '' && !preg_match('/^\s*(:\w|goto\b)/mi', $kurBat) && str_contains($kurBat, 'kuyruk-isci-kur.ps1') && str_contains($kurBat, '%1')
+    && str_contains($kurPs, '-AtLogOn') && str_contains($kurPs, '-MultipleInstances IgnoreNew') && str_contains($kurPs, '-WindowStyle Hidden')
+    && str_contains($kurPs, '-ExecutionTimeLimit ([TimeSpan]::Zero)') && str_contains($kurPs, 'Unregister-ScheduledTask')
+    && KuyrukDurumu::KOMUT_KUR === 'kuyruk-isci-kur.bat');
+
+$durduCiz = static fn (TranskriptPolicy $p): string => App\Core\View::capture('Transkript::goster', [
+    'kaynak' => ['id' => 25, 'tur' => 'youtube', 'dis_kimlik' => 'abcdefghijk', 'sahip_id' => 0, 'baslik' => 'Örnek', 'kanal_adi' => 'Kanal',
+                 'sure_sn' => 360, 'kucuk_resim' => null, 'yayin_tarihi' => null, 'durum' => 'normal'],
+    'veri' => [
+        'durum'  => ['durum' => 'hata', 'asama' => 'parca', 'ilerleme' => 80, 'etiket' => 'x', 'sirada' => null,
+                     'parca' => ['toplam' => 1, 'biten' => 1, 'hatali' => 1],
+                     'hata' => ['kod' => 'ai_kota_doldu', 'mesaj' => 'Kota doldu.'] + ($p->isAdmin() ? ['ozet' => 'Google Gemini: günlük kota doldu (açılış yarın 10:01)'] : [])],
+        'rapor' => null, 'analiz' => null, 'eksik' => [], 'transcript' => null,
+    ],
+    'policy' => $p, 'origin' => 'http://localhost', 'kuyruk' => ['takildi' => false], 'surenAnaliz' => null,
+]);
+$durduYon = $durduCiz($prY);
+dogrula('Hatayla duran analizde adımlar görünür: durulan aşama kırmızı (is-hata), "1 hatalı"; yöneticiye zincir özeti',
+    str_contains($durduYon, 'Analiz bu aşamada durdu') && preg_match('#tk-asama is-hata" data-asama="parca"#', $durduYon) === 1
+    && str_contains($durduYon, '1 / 1 · 1 hatalı') && str_contains($durduYon, 'Google Gemini: günlük kota doldu')
+    && !str_contains($durduCiz($prU), 'Google Gemini: günlük kota doldu'));
 
 // Cowork'ün tarayıcıda doğrulayamadığı iki çekirdek noktası (kaynak denetimi; canlı deneme ayrıca yapıldı).
 $profilKodu = (string) file_get_contents(CY_BASE . '/app/Http/Controllers/ProfileController.php');

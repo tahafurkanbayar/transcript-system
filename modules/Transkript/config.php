@@ -100,7 +100,8 @@ return [
      *  ÜCRETSİZ KATMAN: Gemini anahtarının projesinde faturalandırma
      *  kapalıysa istekler ücretsizdir ama dakikalık / günlük kotası
      *  vardır. Dakika sınırında istek bekleyip yeniden dener; günlük
-     *  kota dolunca analiz "ai_kota_doldu" hatasıyla durur. Maliyet
+     *  kota dolunca iş kota yenilenene kadar ERTELENİR (hata olmaz,
+     *  biten parçalar korunur; en çok erteleme_gun gün). Maliyet
      *  sütunları yine ücretli katman fiyatıyla TAHMİN yazılır.
      *
      *  gemini_ek: yalnız Gemini'de generationConfig'e eklenir. Düşünme
@@ -117,20 +118,28 @@ return [
      *  MISTRAL_API_KEY, GROQ_API_KEY, CEREBRAS_API_KEY) tanımlı olmayan
      *  atlanır. Aşamanın modeli yalnız ilkine uygulanır; diğerleri
      *  <AD>_MODEL (ör. GROQ_MODEL) ya da varsayılanını kullanır.
-     *  yedek.dinlenme_sn: hata veren sağlayıcı bu kadar saniye sona
-     *  alınır (bütün işçiler için); 0 ya da listede yoksa dinlenmez.
+     *  yedek.dinlenme_sn: hata veren sağlayıcı bu kadar saniye denenmez
+     *  (bütün işçiler için); 0 ya da listede yoksa dinlenmez. Günlük
+     *  kota bu listeye bakmaz: kota_saat_dilimi'nde gece yarısına kadar.
+     *  Hepsi dinlenirken iş hata vermez, en erken açılışa ertelenir.
+     *  Anahtar ve model hatası "devre dışı"dır; Transkript ayarları →
+     *  Durum'daki "Dinlenmeleri sıfırla" ile hemen yeniden denenir.
      * -------------------------------------------------------------- */
     'ai' => [
         'yedek' => [
             'dinlenme_sn' => [
-                'kota_doldu'       => 3600,   // günlük kota: saatte bir yeniden bakılır
-                'rate_limit'       => 60,     // dakikalık sınır
-                'yetkisiz'         => 1800,   // anahtar geçersiz / faturalandırma kapalı
-                'model_bulunamadi' => 1800,   // model kaldırılmış
+                'kota_doldu'       => 3600,   // yalnız sıfırlama saati hesaplanamazsa
+                'rate_limit'       => 60,     // sağlayıcı Retry-After vermediyse
+                'yetkisiz'         => 21600,  // anahtar geçersiz / faturalandırma kapalı: devre dışı
+                'model_bulunamadi' => 21600,  // model kaldırılmış: devre dışı (yalnız o model)
                 'sunucu'           => 120,
                 'baglanti'         => 120,
                 'zaman_asimi'      => 120,
             ],
+            // Gemini ücretsiz kotası Pasifik saatiyle gece yarısı yenilenir.
+            'kota_saat_dilimi' => 'America/Los_Angeles',
+            // İş en çok bu kadar gün ertelenir; sonra hatayla biter.
+            'erteleme_gun'     => 2,
         ],
 
         'istem_surumu' => 'v3',
@@ -200,12 +209,20 @@ return [
      *  sıradaki işleri istek içinde çalıştırır (en çok ~20 sn; bir AI
      *  adımı sürerse istek daha uzun sürer). Geliştirme ortamında
      *  (APP_ENV yayın değilse) bu ayar olmadan da açıktır.
+     *
+     *  tarayicidan_isle: komut satırı açmadan. İşçi görülmüyorsa ve iş
+     *  bekliyorsa, açık panel sayfasının ilerleme yoklaması arka planda
+     *  POST panel/transkript/kuyruk/tik atar; sunucu veritabanı kilidiyle
+     *  TEK bir işi çalıştırır (sekme kapansa da o işi bitirir). null:
+     *  geliştirme ortamında açık, yayında kapalı. Transkript ayarlarından
+     *  değiştirilir. Kalıcı çözüm işçidir (kuyruk-isci-kur.bat).
      * -------------------------------------------------------------- */
     'kuyruk' => [
         'zamanlanmis_gorev' => true,
         'butce_sn'          => 240,
         'en_cok_is'         => 50,
         'panelden_isle'     => false,
+        'tarayicidan_isle'  => null,
     ],
 
     /* -----------------------------------------------------------------

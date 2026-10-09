@@ -23,6 +23,7 @@ namespace Modules\Transkript\Controllers;
 
 use App\Core\Auth;
 use App\Core\Exceptions\HttpException;
+use App\Core\Flash;
 use App\Core\Log\Logger;
 use App\Core\Queue\Queue;
 use App\Core\Request;
@@ -83,6 +84,8 @@ final class KaynakController extends Controller
                 ? $repo->istatistik(null)
                 : $repo->gorunenIstatistik((int) $user?->id),
             'hepsi'      => $policy->canSeeAllCosts(),
+            // Yönetici: geçici sebeple duran analiz sayısı ("Bekleyenleri yeniden dene").
+            'bekleyen'   => $policy->isAdmin() ? count($repo->devamEdilebilirKaynaklar()) : 0,
             // panel/transkript?url=… → kutu dolu gelir (yer imi, paylaşım bağlantısı).
             'onUrl'      => mb_substr($request->input('url'), 0, 500),
             'kuyruk'     => (new KuyrukDurumu($this->db))->getir(),
@@ -236,6 +239,7 @@ final class KaynakController extends Controller
         Response::success(match ($sonuc['sonuc']) {
             AnalizBaslatici::ONBELLEKTEN => 'Bu video daha önce analiz edildi.',
             AnalizBaslatici::SURUYOR     => 'Bu videonun analizi sürüyor.',
+            AnalizBaslatici::DEVAM_ETTI  => 'Analiz kaldığı yerden sürüyor; biten bölümler korundu.',
             default                      => 'Analiz başladı.',
         }, [
             'sonuc'     => $sonuc['sonuc'],
@@ -309,6 +313,79 @@ final class KaynakController extends Controller
         Response::success($iptal ? 'Analiz iptal edildi.' : 'Analiz bu arada bitti; iptal edilecek bir şey kalmadı.', [
             'adres' => url('panel/transkript/' . (int) $kaynak['id']),
         ]);
+    }
+
+    /**
+     * POST panel/transkript/yeniden-dene — "Bekleyenleri yeniden dene"
+     * (yalnız yönetici). Son analizi geçici sebeple (kota, servis, ayar)
+     * duran her kaynak kaldığı yerden sürer; biten parçalar korunur.
+     * AI çağrısı burada yapılmaz, işler kuyruğa girer.
+     */
+    public function bekleyenleriSurdur(Request $request): void
+    {
+        $baslatici = new AnalizBaslatici($this->db, Auth::user());
+        $adet      = 0;
+
+        foreach ((new KaynakRepository($this->db))->devamEdilebilirKaynaklar() as $kaynak) {
+            if ($baslatici->devamEt($kaynak) !== null) {
+                $adet++;
+            }
+        }
+
+        Logger::info('Bekleyen analizler sürdürüldü', ['adet' => $adet, 'kullanici' => Auth::id()], 'transkript');
+
+        $adet > 0
+            ? Flash::success($adet . ' analiz kaldığı yerden sürüyor; biten bölümler korundu.')
+            : Flash::info('Sürdürülecek analiz yok.');
+
+        Response::redirect(url('panel/transkript'));
+    }
+
+    /**
+     * POST panel/transkript/kuyruk/tik — komut satırısız kuyruk.
+     *
+     * İşçi görülmüyorsa açık panel sayfasının ilerleme yoklaması bunu
+     * arka planda çağırır. Veritabanı kilidi (GET_LOCK) aynı anda tek
+     * işleyici bırakır: kilit doluysa hemen 202. Kilidi alan TEK bir işi
+     * (bir adım ya da bir parça) çalıştırır ve kilidi bırakır. Sekme
+     * kapansa da başladığı işi bitirir (ignore_user_abort). Oturum
+     * kilidi hemen bırakılır; iş sürerken aynı kullanıcının diğer
+     * istekleri (ilerleme yoklaması) beklemez. İşletim sistemi komutu
+     * ya da süreç başlatılmaz.
+     */
+    public function kuyrukTik(Request $request): void
+    {
+        if (!KuyrukDurumu::tarayicidanIslenir()) {
+            Response::error('Kuyruğu tarayıcı üzerinden işleme kapalı.', 403);
+        }
+
+        if (KuyrukDurumu::isciGorulduMu()) {
+            Response::json(['success' => true, 'type' => 'info', 'description' => 'Kuyruk işçisi çalışıyor.', 'islenen' => 0], 202);
+        }
+
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            session_write_close();
+        }
+
+        $kilit = $this->db->query("SELECT GET_LOCK('transkript_kuyruk_tik', 0)")->fetchColumn();
+
+        if ((int) $kilit !== 1) {
+            Response::json(['success' => true, 'type' => 'info', 'description' => 'Kuyruk başka bir sekmede işleniyor.', 'islenen' => 0], 202);
+        }
+
+        ignore_user_abort(true);
+        @set_time_limit(max(300, (int) \App\Core\Config::get('queue.timeout', 300) + 60));
+
+        try {
+            $islendi = Queue::runNext('transkript');
+        } catch (Throwable $e) {
+            Logger::error('Kuyruk tarayıcıdan işlenirken hata', ['ayrinti' => $e->getMessage(), 'kullanici' => Auth::id()], 'transkript');
+            $islendi = false;
+        } finally {
+            $this->db->query("SELECT RELEASE_LOCK('transkript_kuyruk_tik')")->fetchColumn();
+        }
+
+        Response::success($islendi ? 'Bir iş işlendi.' : 'Sırada hazır iş yok.', ['islenen' => $islendi ? 1 : 0]);
     }
 
     /**

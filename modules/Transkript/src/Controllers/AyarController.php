@@ -22,8 +22,10 @@ use App\Core\Request;
 use App\Core\Response;
 use App\Http\Controller;
 use Modules\Transkript\Ai\Ai;
+use Modules\Transkript\Ai\YedekliSaglayici;
 use Modules\Transkript\Ayarlar;
 use Modules\Transkript\PanelAyarlari;
+use Modules\Transkript\Repositories\AiKullanimRepository;
 use Modules\Transkript\Services\KuyrukDurumu;
 
 final class AyarController extends Controller
@@ -76,15 +78,18 @@ final class AyarController extends Controller
             $varsayilanlar[$alan] = self::varsayilanMetni($alan, Ayarlar::varsayilan($tanim['yol'][0]));
         }
 
+        $kullanim = new AiKullanimRepository($this->db);
+
         $this->view('Transkript::ayarlar', [
             'title'         => 'Transkript ayarları',
             'subtitle'      => 'Yapay zekâ modeli, altyazı tercihi, süre sınırı, kotalar, maliyet tahmini ve ana sayfa.',
             'degerler'      => $degerler,
             'varsayilanlar' => $varsayilanlar,
             'hatalar'       => $hatalar,
+            'cagrilar'      => $kullanim->sonCagrilar(50),
             'durum'         => [
                 'saglayici'   => Ai::label(),
-                'zincir'      => Ai::zincirDurumu(),
+                'zincir'      => self::zincirTablosu(Ai::zincirDurumu(), $kullanim->saglayiciOzeti()),
                 'ai_anahtar'  => Ai::isConfigured(),
                 'yt_anahtar'  => trim(Env::get('YOUTUBE_API_KEY')) !== '',
                 'transcript'  => implode(' → ', (array) Ayarlar::get('transcript.saglayicilar', [])),
@@ -92,6 +97,51 @@ final class AyarController extends Controller
                 'kuyruk'      => (new KuyrukDurumu($this->db))->getir(),
             ],
         ]);
+    }
+
+    /**
+     * POST panel/transkript/ayarlar/dinlenme-sifirla — zincirdeki bütün
+     * sağlayıcılar hemen yeniden denenir (anahtar / model düzeltildikten
+     * sonra 6 saat beklenmesin).
+     */
+    public function dinlenmeSifirla(Request $request): void
+    {
+        YedekliSaglayici::hepsiniSifirla(Ai::zincir());
+
+        Logger::info('Yapay zekâ dinlenmeleri sıfırlandı', ['kullanici' => Auth::id()], 'transkript');
+        Flash::success('Dinlenmeler sıfırlandı; bütün sağlayıcılar bir sonraki çağrıda yeniden denenecek.');
+        Response::redirect(url('panel/transkript/ayarlar'));
+    }
+
+    /**
+     * Ayarlar ekranındaki sağlayıcı tablosu: zincirin durumu (anahtar değeri
+     * yok) + dinlenme kaydı + kullanım kaydından son başarı / hata ve
+     * bugünkü çağrılar.
+     *
+     * @param  list<array<string,mixed>>          $zincir Ai::zincirDurumu()
+     * @param  array<string,array<string,mixed>> $ozet   AiKullanimRepository::saglayiciOzeti()
+     * @return list<array<string,mixed>>
+     */
+    public static function zincirTablosu(array $zincir, array $ozet, ?int $simdi = null): array
+    {
+        $simdi ??= time();
+
+        return array_map(static function (array $h) use ($ozet, $simdi): array {
+            $kayit = YedekliSaglayici::dinlenmeKaydi($h['ad']);
+            $kalan = YedekliSaglayici::dinlenmeKalan($h['ad'], $simdi, $h['model']);
+
+            return $h + [
+                'hal'      => match (true) {
+                    !$h['tanimli']                                                          => 'atlandi',
+                    $kalan > 0 && in_array($kayit['kod'] ?? '', YedekliSaglayici::DEVRE_DISI, true) => 'devre_disi',
+                    $kalan > 0                                                              => 'dinleniyor',
+                    default                                                                 => 'hazir',
+                },
+                'sebep'    => $kalan > 0 ? (YedekliSaglayici::SEBEPLER[$kayit['kod'] ?? ''] ?? 'hata') : '',
+                'acilis'   => $kalan > 0 ? YedekliSaglayici::saat($simdi + $kalan, $simdi) : null,
+                'kalan_dk' => $kalan > 0 ? max(1, (int) ceil($kalan / 60)) : 0,
+            ] + ($ozet[$h['ad']] ?? ['son_basari' => null, 'son_hata' => null, 'son_hata_kodu' => null, 'bugun_cagri' => 0, 'bugun_token' => 0]);
+        }, $zincir);
     }
 
     private static function varsayilanMetni(string $alan, mixed $deger): string

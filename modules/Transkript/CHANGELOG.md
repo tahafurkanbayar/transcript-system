@@ -3,6 +3,39 @@
 Starter'ın sürüm geçmişi kökteki `CHANGELOG.md`'dedir; bu dosya yalnız
 `modules/Transkript/` içindir. Biçim [Keep a Changelog](https://keepachangelog.com/tr/1.1.0/).
 
+## 0.5.0 (2026-10-09): zincir onarımı, erteleme, komut satırısız kuyruk
+
+### Düzeltilenler
+- Yedek zinciri "model yok (404)" ile duruyordu: OpenRouter ve Groq'un
+  varsayılan modelleri kaldırılmıştı. Yeni: `google/gemma-4-31b-it:free`,
+  `openai/gpt-oss-120b`.
+- Günlük kota 1 saat değil, bir sonraki sıfırlamaya (Pasifik gece yarısı)
+  kadar dinlendirir; 429 `Retry-After` / `X-RateLimit-Reset` kadar; anahtar
+  ve model hatası devre dışı (model hatası yalnız o modele); dinlenen
+  sağlayıcıya boşuna gidilmez.
+- Hatayla duran analizde adım listesi "tamamlandı" görünmüyor: durulan aşama
+  kırmızı, "1 / 1 · 1 hatalı".
+- İptal edilen analiz "Hata" süzgecinde ve hata sayaçlarında yok; ayrı
+  "İptal edildi" süzgeci.
+
+### Eklenenler
+- Bütün sağlayıcılar dinlenirken iş hata vermez, en erken açılışa ertelenir
+  (biten parçalar korunur; en çok 2 gün).
+- Kaldığı yerden devam: "Yeniden dene" ve yöneticinin "Bekleyenleri yeniden
+  dene" düğmesi (`POST panel/transkript/yeniden-dene`).
+- Transkript ayarları: sağlayıcı tablosu, "Dinlenmeleri sıfırla"
+  (`POST panel/transkript/ayarlar/dinlenme-sifirla`), son 50 çağrı günlüğü.
+- Duran analizde yöneticiye zincir özeti; yöneticiye "yöneticinize bildirin"
+  denmez.
+- Komut satırısız kuyruk: "Kuyruğu tarayıcı üzerinden işle" ayarı ve
+  `POST panel/transkript/kuyruk/tik` (veritabanı kilidi, tek iş, 202).
+- Proje kökünde `kuyruk-isci-kur.bat` / `.ps1`: işçiyi Görev Zamanlayıcı'ya
+  kaydeder (oturum açılınca, gizli, tek örnek).
+
+### Veritabanı
+- `transkript_analizler.hata_ozeti`, `ai_kullanim_kaydi.hata_kodu`
+  (`2026_10_09_230013_transkript_hata_ayrintisi`, geri alınabilir).
+
 ## 0.4.2 (2026-10-09): editör kapsamı, token yalnız yöneticide
 
 ### Değişenler

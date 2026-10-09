@@ -200,17 +200,20 @@ abstract class HttpProvider implements Provider
             }
 
             $retryable = $this->retryable($status, $raw);
+            $bekle     = $this->retryAfter($headers) ?? $this->retryAfterFromBody($raw);
 
-            if ($retryable && $attempt <= $this->denemeSiniri()) {
+            // İki dakikadan uzun bekleme (ör. günlük sınır): istek içinde beklenmez, zincir / kuyruk erteler.
+            if ($retryable && $attempt <= $this->denemeSiniri() && ($bekle === null || $bekle <= 120)) {
                 /* SUNUCU "NE KADAR BEKLE" DERSE ONA UYULUR.
                  * Retry-After başlığı varken kendi hesabımızı
                  * dayatmak, hız sınırına tekrar çarpmak demektir. */
-                $this->backoff($attempt, $this->retryAfter($headers) ?? $this->retryAfterFromBody($raw));
+                $this->backoff($attempt, $bekle);
 
                 continue;
             }
 
-            throw new AiHatasi($this->describeError($status, $raw), $this->errorCode($status, $raw), $status);
+            // Bekleme önerisi yedek zincirine gider: sağlayıcı o kadar dinlenir.
+            throw new AiHatasi($this->describeError($status, $raw), $this->errorCode($status, $raw), $status, null, $bekle);
         }
     }
 
@@ -278,12 +281,30 @@ abstract class HttpProvider implements Provider
         return null;
     }
 
-    /** @param array<string,string> $headers */
+    /**
+     * Retry-After (saniye). Yoksa X-RateLimit-Reset: OpenRouter'ın
+     * ücretsiz günlük sınırı bunu milisaniye cinsinden zaman damgası
+     * olarak verir (modüle eklendi).
+     *
+     * @param array<string,string> $headers
+     */
     private function retryAfter(array $headers): ?int
     {
         $value = $headers['retry-after'] ?? '';
 
-        return ctype_digit($value) ? (int) $value : null;
+        if (ctype_digit($value)) {
+            return (int) $value;
+        }
+
+        $reset = $headers['x-ratelimit-reset'] ?? '';
+
+        if (ctype_digit($reset) && strlen($reset) >= 12) {
+            $sn = intdiv((int) $reset, 1000) - time();
+
+            return $sn > 0 ? $sn + 1 : null;
+        }
+
+        return null;
     }
 
     /**

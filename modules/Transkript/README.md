@@ -330,30 +330,55 @@ GROQ_API_KEY=…
 | Sağlayıcı | Varsayılan model | Anahtar |
 |---|---|---|
 | `gemini` | `gemini-2.5-flash` (panel / `AI_MODEL`) | aistudio.google.com/apikey |
-| `openrouter` | `meta-llama/llama-3.3-70b-instruct:free` | openrouter.ai/keys |
+| `openrouter` | `google/gemma-4-31b-it:free` | openrouter.ai/keys |
 | `mistral` | `mistral-small-latest` | console.mistral.ai/api-keys |
-| `groq` | `llama-3.3-70b-versatile` | console.groq.com/keys |
-| `cerebras` | `llama-3.3-70b` | cloud.cerebras.ai |
+| `groq` | `openai/gpt-oss-120b` | console.groq.com/keys |
+| `cerebras` | `llama-3.3-70b` (denenmedi) | cloud.cerebras.ai |
 
-- Anahtarı tanımlı olmayan sağlayıcı atlanır; tek sağlayıcı kalırsa davranış
-  eskisiyle aynıdır. Ortak `AI_API_KEY` yalnız ilk sağlayıcıya gider (bir
-  servisin anahtarı başka servise gönderilmez). Anahtarlar veritabanında değil,
-  yalnız `.env`'de.
+Ücretsiz model listeleri sık değişir: 2026-10'da OpenRouter'ın Llama 3.3
+`:free`'si ve Groq'un `llama-3.3-70b-versatile`'ı kaldırıldı, zincir "model
+yok (404)" verip duruyordu. Geçerli modeller sağlayıcının `GET /models`
+ucundan görülür (token harcamaz); `.env`'de `<AD>_MODEL` ile değiştirilir.
+
+- Anahtarı tanımlı olmayan sağlayıcı zincire hiç girmez (ayarlarda "Atlandı
+  (anahtar yok)"); tek sağlayıcı kalırsa davranış eskisiyle aynıdır. Ortak
+  `AI_API_KEY` yalnız ilk sağlayıcıya gider (bir servisin anahtarı başka
+  servise gönderilmez). Anahtarlar veritabanında değil, yalnız `.env`'de.
 - Aşamanın modeli (panel / config / `AI_MODEL`) yalnız ilk sağlayıcıya
   uygulanır; Gemini'nin `thinkingConfig` eki yalnız Gemini'ye gider.
-- **Dinlenme:** hata veren sağlayıcı bir süre sona alınır (`config.php` →
-  `ai.yedek.dinlenme_sn`: günlük kota 1 saat, dakikalık sınır 1 dk, geçersiz
-  anahtar / kaldırılmış model 30 dk, sunucu ve ağ 2 dk). Bilgi Cache'te durur,
-  bütün işçiler görür; sonraki parçalar bitmiş servise gidip vakit harcamaz.
-  Hepsi dinleniyorsa yine sırayla denenir.
+- **Dinlenme** (Cache, bütün işçiler görür; dinlenen sağlayıcı denenmez):
+
+  | Hata | Süre |
+  |---|---|
+  | Günlük kota (Gemini `…PerDay`) | bir sonraki sıfırlamaya: Pasifik gece yarısı (`ai.yedek.kota_saat_dilimi`) |
+  | 429 hız sınırı | sağlayıcının `Retry-After` / `X-RateLimit-Reset` süresi, yoksa 60 sn |
+  | 401/403 anahtar, 404 model | **devre dışı** 6 saat ya da "Dinlenmeleri sıfırla"; model hatası yalnız o modele bağlı |
+  | 5xx, ağ, zaman aşımı | 2 dk |
+  | 413 (çok büyük), 400 | dinletmez, sıradakine geçilir |
+
+- **Hepsi düşerse HATA DEĞİL:** geçici olarak dinlenen biri varsa iş en erken
+  açılışa ertelenir (`zincir_dinleniyor` → `Queue::later`, deneme hakkı yeni,
+  biten parçalar korunur). Ekran "Yapay zekâ servisleri şu an meşgul; analiz
+  saat 10:01 civarında kendiliğinden sürecek" der. Tek sağlayıcıda günlük kota
+  da böyle ertelenir. En çok `ai.yedek.erteleme_gun` (2) gün; sonra
+  `ai_kota_doldu`. Hepsi devre dışıysa (anahtar / model) analiz durur.
 - Arkasında yedek olan sağlayıcı 429 / 5xx'te istek içinde beklemez
-  (`HttpProvider::yenidenDenemeSiniri(0)`); son sağlayıcı `Retry-After`'a uyar.
-- **Hepsi düşerse:** denemelerden biri geçiciyse o kodla (iş kuyrukta sonra
-  yeniden dener), hepsi günlük kotaysa `kota_doldu` (analiz "yarın deneyin"
-  diye durur), yoksa son hatanın kodu. Her sağlayıcının sebebi log'a yazılır.
-- Kullanım kaydı (`ai_kullanim_kaydi`): düşen her deneme `hata` satırı,
-  yanıtı veren sağlayıcı kendi adıyla. Ayarlar ekranının Durum panelinde sıra,
-  "tanımlı / tanımsız" ve dinlenme süresi görünür.
+  (`HttpProvider::yenidenDenemeSiniri(0)`); son sağlayıcı `Retry-After`'a uyar
+  (2 dakikadan uzunsa beklemez, iş ertelenir).
+- **Yönetici görünürlüğü** (Transkript ayarları): sağlayıcı tablosu (hazır /
+  dinleniyor / devre dışı / atlandı, açılış saati ve kalan dk, son başarı, son
+  hata kodu, bugünkü çağrı ve token), "Dinlenmeleri sıfırla" ve son 50
+  çağrının günlüğü (`ai_kullanim_kaydi.hata_kodu`). Duran analizde yöneticiye
+  zincirin özeti (`transkript_analizler.hata_ozeti`): "Google Gemini: günlük
+  kota doldu (açılış yarın 10:01) · OpenRouter: model yok (404) (devre dışı,
+  açılış 03:05) · Mistral: anahtar yok". Sağlayıcının kendi mesajı yalnız
+  log'da.
+- **Kaldığı yerden devam:** kota / servis / ayar yüzünden duran son analiz
+  "Yeniden dene" ya da yöneticinin "Bekleyenleri yeniden dene" düğmesiyle
+  sürer; tamamlanan parçalar AI'a yeniden gitmez, kotaya sayılmaz
+  (`AnalizBaslatici::devamEt`).
+- Yapılmadı: 413'te parçayı bölmek ve parça boyutunu sağlayıcının token
+  sınırına göre ayarlamak; 413'te sıradaki (bağlamı büyük) sağlayıcıya geçilir.
 
 Ücretsiz modellerin bir kısmı (ör. OpenRouter `:free`) gönderilen metni
 eğitimde kullanabilir; KVKK metninde yurt dışına aktarılan sağlayıcılar
@@ -468,20 +493,23 @@ zamanlayıcının durum dosyasındaki son çalışma da sayılır. İlerleme JSO
 | Windows / XAMPP, deneme | proje kökündeki `kuyruk-isci.bat`'ı çift tıklayın (her dakika `schedule:run`; pencere kapanınca durur) |
 | Tek seferlik | `php cy queue:work --queue=transkript` (sıradaki işleri bitirip çıkar) |
 
-**Windows'ta oturum açılınca kendiliğinden başlasın (Görev Zamanlayıcı).**
-Komut isteminde (yönetici gerekmez):
+**Windows'ta oturum açılınca kendiliğinden başlasın.** Proje kökündeki
+`kuyruk-isci-kur.bat`'a bir kez çift tıklayın: işçi Görev Zamanlayıcı'ya
+"oturum açılınca, gizli pencerede, aynı anda tek örnek" olarak kaydedilir ve
+hemen başlar (yönetici izni gerekmez). Kaldırmak: `kuyruk-isci-kur.bat kaldir`.
+PHP yolu farklıysa `CY_PHP` ortam değişkeniyle verin.
 
-```bat
-schtasks /Create /TN "transcript-system kuyruk" /SC ONLOGON /TR "C:\xampp\htdocs\transcript-system\kuyruk-isci.bat"
-schtasks /Run /TN "transcript-system kuyruk"
-schtasks /Delete /TN "transcript-system kuyruk" /F
-```
-
-İlk satır görevi kurar, ikincisi hemen başlatır, üçüncüsü kaldırır. Görev
-oturumunuzda bir konsol penceresi açar; pencereyi kapatmak işçiyi durdurur.
-Penceresiz çalışması için Görev Zamanlayıcı'da görevin özelliklerinde
-"Kullanıcı oturum açmış olsun olmasın çalıştır"ı seçin (Windows parolanızı
-sorar). PHP yolu farklıysa `CY_PHP` ortam değişkeniyle verin.
+**Komut satırı hiç açmadan: tarayıcı üzerinden.** Transkript ayarları →
+"Kuyruğu tarayıcı üzerinden işle" açıkken (geliştirme ortamında varsayılan
+açık, yayında kapalı; `kuyruk.tarayicidan_isle`) işçi görülmüyor ve iş
+bekliyorsa, açık liste / rapor sayfasının ilerleme yoklaması arka planda
+`POST panel/transkript/kuyruk/tik` atar (CSRF'li, analiz yetkisi olan). Sunucu
+veritabanı kilidiyle (`GET_LOCK`) aynı anda tek işleyici bırakır, kilit
+doluysa hemen 202 döner; kilidi alan TEK bir işi (bir adım ya da bir parça)
+çalıştırır, sekme kapansa da onu bitirir (`ignore_user_abort`). Oturum kilidi
+hemen bırakılır, yoklama beklemez. PHP'den işletim sistemi komutu ya da süreç
+başlatılmaz. Uyarı kutusu bu modda "Kuyruk tarayıcı üzerinden işleniyor" der.
+Sayfa kapalıyken iş ilerlemez; kalıcı çözüm işçidir.
 
 **"Şimdi işle" düğmesi.** İşçi yokken uyarıdaki düğme (yalnız yönetici,
 `POST panel/transkript/kuyruk/isle`) sıradaki işleri istek içinde ~20 saniye

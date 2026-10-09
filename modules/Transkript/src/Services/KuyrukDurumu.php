@@ -47,6 +47,8 @@ final class KuyrukDurumu
     public const KOMUT_ELLE   = 'php cy queue:work --queue=transkript';
     public const KOMUT_CRON   = '* * * * * cd /yol/site && php cy schedule:run';
     public const KOMUT_WINDOWS = 'kuyruk-isci.bat';
+    /** Bir kez çift tıklanır: işçiyi Görev Zamanlayıcı'ya kaydeder (oturum açılınca, gizli, tek örnek). */
+    public const KOMUT_KUR     = 'kuyruk-isci-kur.bat';
 
     private const NABIZ    = 'transkript.isci_nabiz';
     private const GOREVLER = ['transkript-kuyrugu', 'kuyruk-isle'];
@@ -130,6 +132,31 @@ final class KuyrukDurumu
     public static function paneldenIslenebilir(): bool
     {
         return !Config::isProduction() || (bool) Ayarlar::get('kuyruk.panelden_isle', false);
+    }
+
+    /**
+     * Kuyruk tarayıcı üzerinden işlenir mi (komut satırısız)? Ayar
+     * kuyruk.tarayicidan_isle: true / false; null (varsayılan) →
+     * geliştirme ortamında açık, yayında kapalı. $varsayilan: panel
+     * değerine bakmadan config'in söylediği (ayar ekranındaki "Varsayılan").
+     */
+    public static function tarayicidanIslenir(bool $varsayilan = false): bool
+    {
+        $ayar = $varsayilan ? Ayarlar::varsayilan('kuyruk.tarayicidan_isle') : Ayarlar::get('kuyruk.tarayicidan_isle');
+
+        return is_bool($ayar) ? $ayar : !Config::isProduction();
+    }
+
+    /**
+     * Gerçek bir işçi (CLI: zamanlanmış görev ya da queue:work) son
+     * ESIK_SN içinde görüldü mü? Tarayıcıdan işlenen iş nabız yazmaz
+     * (imle yalnız CLI); bu yüzden tarayıcı kendini işçi sanmaz.
+     */
+    public static function isciGorulduMu(?int $simdi = null): bool
+    {
+        $son = self::sonGorulme();
+
+        return $son > 0 && ($simdi ?? time()) - $son <= self::ESIK_SN;
     }
 
     /** @return array{bekleyen: int, calisan: int, en_eski_sn: int} */

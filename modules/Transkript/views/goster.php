@@ -141,12 +141,19 @@ $indir = static fn (string $bicim): string => url('panel/transkript/' . $kaynakI
             <?php View::partial('Transkript::_parcalar/kuyruk-uyarisi', ['kuyruk' => $kuyruk, 'policy' => $policy]); ?>
         <?php endif; ?>
 
+        <?php
+        // Hatayla duran analizde adımlar görünür kalır: durulan aşama kırmızı, hatalı parça sayısı yazar.
+        $durdu = $durum['durum'] === 'hata' && ($durum['hata']['kod'] ?? null) !== 'iptal_edildi';
+        $parcaMetni = static fn (array $p): string => (int) $p['toplam'] > 0
+            ? $p['biten'] . ' / ' . $p['toplam'] . ((int) ($p['hatali'] ?? 0) > 0 ? ' · ' . (int) $p['hatali'] . ' hatalı' : '')
+            : '';
+        ?>
         <!-- İLERLEME (analiz sürerken; 3 sn'de bir güncellenir) -->
-        <section class="cy-panel mb-3 tk-ilerleme" id="tk_ilerleme"
+        <section class="cy-panel mb-3 tk-ilerleme<?= $durdu ? ' is-durdu' : '' ?>" id="tk_ilerleme"
                  data-url="<?= e(url('panel/transkript/ilerleme/' . $kaynakId)) ?>"
-                 data-izle="<?= $suruyor ? '1' : '0' ?>"<?= $suruyor ? '' : ' hidden' ?>>
+                 data-izle="<?= $suruyor ? '1' : '0' ?>"<?= $suruyor || $durdu ? '' : ' hidden' ?>>
             <header class="cy-panel__head">
-                <h3 class="cy-panel__title"><?= icon('activity', 'cy-icon cy-icon--sm') ?> <span class="js-tk-etiket"><?= e((string) $durum['etiket']) ?></span></h3>
+                <h3 class="cy-panel__title"><?= icon('activity', 'cy-icon cy-icon--sm') ?> <span class="js-tk-etiket"><?= e($durdu ? 'Analiz bu aşamada durdu' : (string) $durum['etiket']) ?></span></h3>
                 <strong class="cy-mono js-tk-yuzde">%<?= (int) $durum['ilerleme'] ?></strong>
             </header>
             <span class="cy-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="<?= (int) $durum['ilerleme'] ?>" aria-label="Analiz ilerlemesi">
@@ -156,13 +163,15 @@ $indir = static fn (string $bicim): string => url('panel/transkript/' . $kaynakI
             <ol class="tk-asamalar">
                 <?php foreach ($asamalar as $anahtar => $ad): ?>
                     <?php $sira = array_search($anahtar, $asamaSirasi, true); ?>
-                    <li class="tk-asama <?= $sira < $simdikiSira ? 'is-bitti' : ($sira === $simdikiSira ? 'is-suruyor' : '') ?>" data-asama="<?= e($anahtar) ?>">
+                    <li class="tk-asama <?= $sira < $simdikiSira ? 'is-bitti' : ($sira === $simdikiSira ? ($durdu ? 'is-hata' : 'is-suruyor') : '') ?>" data-asama="<?= e($anahtar) ?>">
                         <span class="tk-asama__isaret" aria-hidden="true"></span>
-                        <span><?= e($ad) ?><?php if ($anahtar === 'parca'): ?> <small class="cy-muted js-tk-parca"><?= (int) $durum['parca']['toplam'] > 0 ? e($durum['parca']['biten'] . ' / ' . $durum['parca']['toplam']) : '' ?></small><?php endif; ?></span>
+                        <span><?= e($ad) ?><?php if ($anahtar === 'parca'): ?> <small class="cy-muted js-tk-parca"><?= e($parcaMetni($durum['parca'])) ?></small><?php endif; ?></span>
                     </li>
                 <?php endforeach; ?>
             </ol>
-            <p class="cy-panel__note mb-0">Sayfayı kapatabilirsiniz; analiz arka planda sürer.<?= $rapor !== null ? ' Yeni rapor hazır olana kadar aşağıda önceki rapor görünür.' : '' ?></p>
+            <?php if (!$durdu): ?>
+                <p class="cy-panel__note mb-0">Sayfayı kapatabilirsiniz; analiz arka planda sürer.<?= $rapor !== null ? ' Yeni rapor hazır olana kadar aşağıda önceki rapor görünür.' : '' ?></p>
+            <?php endif; ?>
         </section>
 
         <?php if ($durum['durum'] === 'hata' && ($durum['hata']['kod'] ?? null) === 'iptal_edildi'): ?>
@@ -175,6 +184,10 @@ $indir = static fn (string $bicim): string => url('panel/transkript/' . $kaynakI
                 <strong><?= icon('alert', 'cy-icon cy-icon--sm') ?> <?= $rapor !== null ? 'Son analiz tamamlanamadı.' : 'Analiz tamamlanamadı.' ?></strong>
                 <?php /* İç neden (kota, servis) yalnız yöneticiye ve başlatana; bkz. KaynakDurumu. */ ?>
                 <span><?= e((string) ($durum['hata']['mesaj'] ?? '')) ?></span>
+                <?php if (($durum['hata']['ozet'] ?? null) !== null): ?>
+                    <?php /* Yalnız yönetici: zincirin özeti (KaynakDurumu süzer). */ ?>
+                    <small class="tk-zincir-ozeti"><?= icon('zap', 'cy-icon cy-icon--sm') ?> <?= e((string) $durum['hata']['ozet']) ?></small>
+                <?php endif; ?>
                 <?php if ($rapor !== null): ?><span>Aşağıdaki rapor önceki başarılı analizden.</span><?php endif; ?>
             </div>
         <?php endif; ?>
