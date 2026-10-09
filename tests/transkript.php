@@ -2164,6 +2164,26 @@ dogrula('Anahtarı olan yedeklerle zincir kurulur; panel modeli yalnız birincil
     && $halkalar[1]['saglayici']->model() === 'google/gemma-4-31b-it:free'
     && $halkalar[2]['saglayici']->model() === 'llama-test'
     && $halkalar[0]['ek'] !== [] && $halkalar[1]['ek'] === [] && $halkalar[2]['ek'] === []);
+// Kullanıcı isteği (2026-10-09): yedek sağlayıcıların modeli de panelden seçilir.
+$geri = $ortamDegistir(['AI_PROVIDERS' => 'gemini,openrouter,groq', 'AI_PROVIDER' => 'gemini', 'AI_MODEL' => '',
+    'GEMINI_API_KEY' => 'test-g', 'OPENROUTER_API_KEY' => 'test-o', 'GROQ_API_KEY' => 'test-q', 'GROQ_MODEL' => 'llama-test', 'OPENROUTER_MODEL' => '']);
+$ayarYaz(['transkript_model_groq' => 'qwen/qwen3-32b', 'transkript_model_openrouter' => '']);
+[$zPanel] = Pipeline::saglayiciUret('map');
+$panelDurum   = array_column(Ai::zincirDurumu(), 'model', 'ad');
+$modelAlanlar = PanelAyarlari::yedekModelAlanlari();
+$ortamGroq    = Ai::ortamModeli('groq');
+$groqOneri    = Ai::modelOnerileri('groq');
+$ayarYaz([]);
+$geri();
+$halkaPanel = $zPanel instanceof YedekliSaglayici ? (new ReflectionProperty(YedekliSaglayici::class, 'halkalar'))->getValue($zPanel) : [];
+dogrula('Yedek modeli panelden (yoksa <AD>_MODEL, yoksa varsayılan); ekranda zincirdeki yedeklerin alanı, durum tablosu aynı modeli gösterir',
+    ($halkaPanel[2]['saglayici'] ?? null)?->model() === 'qwen/qwen3-32b' && ($halkaPanel[1]['saglayici'] ?? null)?->model() === 'google/gemma-4-31b-it:free'
+    && $panelDurum === ['gemini' => 'gemini-2.5-flash', 'openrouter' => 'google/gemma-4-31b-it:free', 'groq' => 'qwen/qwen3-32b']
+    && $modelAlanlar === ['model_openrouter', 'model_groq'] && $ortamGroq === 'llama-test' && $groqOneri === ['llama-test', 'openai/gpt-oss-120b']);
+dogrula('Model kimliği doğrulanır: sağlayıcı/ad:etiket olur; boşluk, Türkçe harf, tırnak olmaz',
+    PanelAyarlari::dogrula('model_groq', 'openai/gpt-oss-120b') === null && PanelAyarlari::dogrula('model_openrouter', 'google/gemma-4-31b-it:free') === null
+    && PanelAyarlari::dogrula('model_groq', 'gpt oss') !== null && PanelAyarlari::dogrula('model_groq', 'modelı') !== null
+    && PanelAyarlari::dogrula('model_groq', '"><script>') !== null && PanelAyarlari::dogrula('model_groq', str_repeat('a', 101)) !== null);
 dogrula('Ayarlar ekranı için durum: sıra, tanımlı, model; anahtar değeri yok',
     array_column($durum, 'ad') === ['gemini', 'openrouter', 'groq'] && array_column($durum, 'tanimli') === [true, true, true]
     && !str_contains((string) json_encode($durum), 'test-o') && !str_contains((string) json_encode($durum), 'test-q'));

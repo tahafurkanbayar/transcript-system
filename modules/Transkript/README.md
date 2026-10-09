@@ -384,7 +384,10 @@ GROQ_API_KEY=…
 Ücretsiz model listeleri sık değişir: 2026-10'da OpenRouter'ın Llama 3.3
 `:free`'si ve Groq'un `llama-3.3-70b-versatile`'ı kaldırıldı, zincir "model
 yok (404)" verip duruyordu. Geçerli modeller sağlayıcının `GET /models`
-ucundan görülür (token harcamaz); `.env`'de `<AD>_MODEL` ile değiştirilir.
+ucundan görülür (token harcamaz). Her sağlayıcının modeli **Transkript
+ayarlarından** seçilir ("OpenRouter modeli", "Groq modeli"…; ekranda yalnız
+zincirdekiler); boşsa `.env`'deki `<AD>_MODEL`, o da boşsa yukarıdaki
+varsayılan (`Ai::varsayilanModel`).
 
 - Anahtarı tanımlı olmayan sağlayıcı zincire hiç girmez (ayarlarda "Atlandı
   (anahtar yok)"); tek sağlayıcı kalırsa davranış eskisiyle aynıdır. Ortak

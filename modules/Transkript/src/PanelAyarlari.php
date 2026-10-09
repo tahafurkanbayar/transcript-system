@@ -37,15 +37,50 @@ final class PanelAyarlari
 
     /**
      * alan => tanım. "yol": değerin Ayarlar::get()'teki yolu (birden çok
-     * olabilir). "tur": tamsayi | ondalik | secim.
+     * olabilir). "tur": tamsayi | ondalik | secim | model (serbest model
+     * kimliği; "saglayici" hangi sağlayıcının modeli olduğunu söyler).
      *
-     * @var array<string,array{yol: list<string>, tur: string, etiket: string, aciklama: string, en_az?: float, en_cok?: float, birim?: string}>
+     * @var array<string,array{yol: list<string>, tur: string, etiket: string, aciklama: string, en_az?: float, en_cok?: float, birim?: string, saglayici?: string}>
      */
     public const ALANLAR = [
         'ai_model' => [
             'yol' => ['ai.map.model', 'ai.reduce.model'], 'tur' => 'secim',
             'etiket' => 'Asıl sağlayıcının modeli',
-            'aciklama' => 'Asıl sağlayıcının (ilk sıradaki) modeli; bölüm analizi ve birleştirmede kullanılır. Boş: .env\'deki AI_MODEL ya da varsayılan. Yedek sağlayıcıların modeli .env\'den gelir, aşağıdaki sağlayıcı tablosunda görünür.',
+            'aciklama' => 'Asıl sağlayıcının (ilk sıradaki) modeli; bölüm analizi ve birleştirmede kullanılır. Boş: .env\'deki AI_MODEL ya da varsayılan.',
+        ],
+        /* Yedek sağlayıcıların modeli (kullanıcı isteği, 2026-10-09: "üç
+         * API de burada görünsün"). Ekranda yalnız .env AI_PROVIDERS
+         * zincirinde olan ve asıl olmayanlar çizilir (yedekModelAlanlari);
+         * boş: <AD>_MODEL ya da varsayılan (Ai::varsayilanModel). */
+        'model_gemini' => [
+            'yol' => ['ai.modeller.gemini'], 'tur' => 'model', 'saglayici' => 'gemini',
+            'etiket' => 'Google Gemini modeli',
+            'aciklama' => 'Yedek olarak kullanıldığında. Yalnız Flash ailesi (düşünme kapalı çalışır).',
+        ],
+        'model_openrouter' => [
+            'yol' => ['ai.modeller.openrouter'], 'tur' => 'model', 'saglayici' => 'openrouter',
+            'etiket' => 'OpenRouter modeli',
+            'aciklama' => 'Ücretsiz modeller ":free" ile biter ve sık değişir; openrouter.ai/models sayfasından JSON destekleyen bir model seçin. Kaldırılmış model 6 saat devre dışı kalır.',
+        ],
+        'model_groq' => [
+            'yol' => ['ai.modeller.groq'], 'tur' => 'model', 'saglayici' => 'groq',
+            'etiket' => 'Groq modeli',
+            'aciklama' => 'console.groq.com/docs/models sayfasındaki model kimliği (ör. openai/gpt-oss-120b). Kaldırılmış model 6 saat devre dışı kalır.',
+        ],
+        'model_mistral' => [
+            'yol' => ['ai.modeller.mistral'], 'tur' => 'model', 'saglayici' => 'mistral',
+            'etiket' => 'Mistral modeli',
+            'aciklama' => 'Mistral model kimliği (ör. mistral-small-latest).',
+        ],
+        'model_cerebras' => [
+            'yol' => ['ai.modeller.cerebras'], 'tur' => 'model', 'saglayici' => 'cerebras',
+            'etiket' => 'Cerebras modeli',
+            'aciklama' => 'Cerebras model kimliği.',
+        ],
+        'model_claude' => [
+            'yol' => ['ai.modeller.claude'], 'tur' => 'model', 'saglayici' => 'claude',
+            'etiket' => 'Anthropic Claude modeli',
+            'aciklama' => 'Ücretli. Claude model kimliği.',
         ],
         'altyazi_dili' => [
             'yol' => ['transcript.tercih_diller'], 'tur' => 'secim',
@@ -236,6 +271,13 @@ final class PanelAyarlari
             return array_key_exists($ham, self::secenekler($alan)) ? null : 'Listeden bir seçenek seçin.';
         }
 
+        if ($tanim['tur'] === 'model') {
+            // Model kimliği: "openai/gpt-oss-120b", "google/gemma-4-31b-it:free", "gemini-2.5-flash".
+            return preg_match('~\A[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,99}\z~', $ham) === 1
+                ? null
+                : 'Geçerli bir model kimliği yazın (ör. ' . Ai::ortamModeli((string) $tanim['saglayici']) . '); boşluk ve Türkçe karakter olmaz.';
+        }
+
         $sayi = str_replace(',', '.', $ham);
 
         if ($tanim['tur'] === 'tamsayi' ? !ctype_digit($sayi) : !is_numeric($sayi)) {
@@ -247,6 +289,29 @@ final class PanelAyarlari
         }
 
         return null;
+    }
+
+    /**
+     * Ekranda çizilecek sağlayıcı model alanları, zincir sırasıyla: .env
+     * AI_PROVIDERS'taki her sağlayıcı; asıl sağlayıcı AI_PROVIDER ise onun
+     * modeli zaten "ai_model" alanındadır, tekrar çizilmez.
+     *
+     * @return list<string>
+     */
+    public static function yedekModelAlanlari(): array
+    {
+        $zincir  = Ai::zincir();
+        $alanlar = [];
+
+        foreach ($zincir as $i => $ad) {
+            if (($i === 0 && $ad === Ai::provider()) || !isset(self::ALANLAR['model_' . $ad])) {
+                continue;
+            }
+
+            $alanlar[] = 'model_' . $ad;
+        }
+
+        return $alanlar;
     }
 
     /** @return array<string,string> */

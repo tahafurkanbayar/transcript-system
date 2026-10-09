@@ -3,6 +3,21 @@
 Starter'ın sürüm geçmişi kökteki `CHANGELOG.md`'dedir; bu dosya yalnız
 `modules/Transkript/` içindir. Biçim [Keep a Changelog](https://keepachangelog.com/tr/1.1.0/).
 
+## 0.6.6 (2026-10-09): her sağlayıcının modeli ayarlarda
+
+Kullanıcının isteği: "Ayarlarda yalnız Gemini görünüyor, ama 3 API de burada."
+
+- Transkript ayarları → "Yapay zekâ ve transcript": asıl sağlayıcının modeli
+  (eskisi gibi) ve zincirdeki her yedek için "OpenRouter modeli", "Groq modeli"
+  alanı. Yalnız `.env` `AI_PROVIDERS`'taki sağlayıcılar çizilir; ekranda
+  olmayan alanın kayıtlı değeri korunur.
+- Serbest model kimliği + öneriler (varsayılan, `.env`'deki); kimlik
+  doğrulanır (boşluk, Türkçe harf, tırnak olmaz; ≤ 100).
+- Öncelik: panel → `<AD>_MODEL` → varsayılan (`Ai::varsayilanModel`,
+  `Ai::ortamModeli`). Sağlayıcı tablosu ve "model yok (404)" dinlenmesi
+  seçilen modeli izler.
+- Testler: `tests/transkript.php` 364 (+2).
+
 ## 0.6.5 (2026-10-09): liste: yöneticide "Kim", üye ve analistte yalnız kendi kayıtları
 
 Kullanıcının isteği: "Yönetici kimin hangi işlemi yaptığını görsün; üye ve
