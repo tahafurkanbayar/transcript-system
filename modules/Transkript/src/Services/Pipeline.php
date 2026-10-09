@@ -6,13 +6,22 @@
  *  docs/TEKNIK_RAPOR.md 6. bölüm. İş sınıfları yalnızca bu servisi
  *  çağırır; hangi modelin, hangi istemin kullanıldığını bilmez.
  *
- *  6. ADIM: parcaAnalizEt() ve birlestir() SAHTEDİR — AI'a gitmez, para
- *  harcamaz. Parçanın ilk cümlesinden konu ve zaman damgası üretir; iş
- *  akışı (kuyruk, ilerleme, rapor yazımı) uçtan uca böyle sınanır. 7.
- *  adımda map / reduce istemleri ve ResultValidator ile değişecek.
+ *      map     parça blokları "[hh:mm:ss] metin" satırları olarak
+ *              prompts/parca_analizi.<sürüm>.txt ile gider
+ *      reduce  parça JSON'ları (transcript değil) tek çağrıda
+ *              prompts/birlestirme.<sürüm>.txt ile birleşir
  *
- *  ogeler() kalıcıdır: reduce çıktısını (rapordaki 8. bölüm biçimi)
- *  transkript_analiz_ogeleri satırlarına çevirir.
+ *  HER ÇAĞRI (onarım dahil) hemen ai_kullanim_kaydi'na yazılır:
+ *  model, token, maliyet, süre ve durum (basarili / gecersiz / hata).
+ *  İş sonradan çökse de harcanan token kayıtta kalır.
+ *
+ *  JSON GÜVENLİĞİ: sağlayıcının şema zorlaması açılır (sendJson), yanıt
+ *  ResultValidator'dan geçer. Geçmezse modele BİR KEZ onarım isteği
+ *  gider (bozuk yanıt + sorun listesi); o da geçmezse AiHatasi
+ *  "yanit_cozulemedi" (kalıcı): parça düşer, rapor onsuz tamamlanır.
+ *  Model yanıtlamayı reddederse "reddedildi" (kalıcı).
+ *
+ *  ogeler(): reduce çıktısını transkript_analiz_ogeleri satırlarına çevirir.
  * =====================================================================
  */
 
@@ -20,13 +29,18 @@ declare(strict_types=1);
 
 namespace Modules\Transkript\Services;
 
+use App\Core\Env;
+use Closure;
+use Modules\Transkript\Ai\Ai;
+use Modules\Transkript\Ai\AiHatasi;
+use Modules\Transkript\Ai\Provider;
+use Modules\Transkript\Ayarlar;
+use Modules\Transkript\Repositories\AiKullanimRepository;
 use Modules\Transkript\Transcript\Segment;
 use Modules\Transkript\Zaman;
 
 final class Pipeline
 {
-    public const SAHTE_MODEL = 'sahte (AI bağlı değil)';
-
     private const ONEM = [
         'critical' => 'kritik', 'kritik' => 'kritik',
         'important' => 'onemli', 'onemli' => 'onemli', 'önemli' => 'onemli',
@@ -34,71 +48,266 @@ final class Pipeline
         'low' => 'dusuk', 'dusuk' => 'dusuk', 'düşük' => 'dusuk',
     ];
 
-    /**
-     * Map: bir parçanın analizi (6. adımda sahte).
-     *
-     * @param array<string,mixed> $parca   transkript_parcalar satırı
-     * @param list<Segment>       $bloklar Cleaner::hazirla() çıktısı
-     * @return array{sonuc:array<string,mixed>,kullanim:list<array<string,mixed>>,model:string}
-     */
-    public function parcaAnalizEt(array $parca, array $bloklar): array
-    {
-        $ilk = $bloklar[0] ?? null;
-        $baslik = $ilk !== null ? self::kisalt($ilk->metin, 90) : '';
+    /* =================================================================
+     *  ŞEMALAR (JSON Schema alt kümesi; sağlayıcıya göre çevrilir)
+     * ============================================================== */
 
-        return [
-            'sonuc' => [
-                'chunk'                 => ['start' => Zaman::yaz((int) $parca['baslangic_ms']), 'end' => Zaman::yaz((int) $parca['bitis_ms'])],
-                'topic'                 => $baslik,
-                'summary'               => '',
-                'important_points'      => [],
-                'technical_information' => [],
-                'claims'                => [],
-                'ideas'                 => [],
-                'timestamps'            => $ilk !== null ? [['at' => Zaman::yaz($ilk->baslangicMs), 'label' => $baslik]] : [],
-            ],
-            'kullanim' => [],
-            'model'    => self::SAHTE_MODEL,
-        ];
+    private const METIN = ['type' => 'string'];
+    private const ZAMAN = ['type' => 'string', 'description' => 'hh:mm:ss, transcript satırlarındaki zaman damgalarından biri'];
+
+    /** Map ve reduce'un ortak madde listeleri. */
+    private const MADDELER = [
+        'important_points' => ['type' => 'array', 'items' => [
+            'type'       => 'object',
+            'properties' => ['text' => self::METIN, 'at' => self::ZAMAN, 'importance' => ['type' => 'string', 'enum' => ResultValidator::ONEM]],
+            'required'   => ['text', 'at', 'importance'],
+        ]],
+        'technical_information' => ['type' => 'array', 'items' => [
+            'type'       => 'object',
+            'properties' => ['name' => self::METIN, 'category' => self::METIN, 'description' => self::METIN, 'at' => self::ZAMAN],
+            'required'   => ['name', 'category', 'description', 'at'],
+        ]],
+        'claims' => ['type' => 'array', 'items' => [
+            'type'       => 'object',
+            'properties' => ['text' => self::METIN, 'at' => self::ZAMAN, 'speaker_confidence' => ['type' => 'string', 'enum' => ResultValidator::GUVEN]],
+            'required'   => ['text', 'at', 'speaker_confidence'],
+        ]],
+        'ideas' => ['type' => 'array', 'items' => [
+            'type'       => 'object',
+            'properties' => ['text' => self::METIN, 'type' => self::METIN, 'at' => self::ZAMAN],
+            'required'   => ['text', 'type', 'at'],
+        ]],
+        'timestamps' => ['type' => 'array', 'items' => [
+            'type'       => 'object',
+            'properties' => ['at' => self::ZAMAN, 'label' => self::METIN],
+            'required'   => ['at', 'label'],
+        ]],
+    ];
+
+    public const PARCA_SEMASI = [
+        'type'       => 'object',
+        'properties' => ['topic' => self::METIN, 'summary' => self::METIN] + self::MADDELER,
+        'required'   => ['topic', 'summary', 'important_points', 'technical_information', 'claims', 'ideas', 'timestamps'],
+    ];
+
+    public const BIRLESTIRME_SEMASI = [
+        'type'       => 'object',
+        'properties' => [
+            'summary'          => self::METIN,
+            'detailed_summary' => self::METIN,
+            'topics'           => ['type' => 'array', 'items' => [
+                'type'       => 'object',
+                'properties' => ['title' => self::METIN, 'start' => self::ZAMAN, 'end' => self::ZAMAN, 'summary' => self::METIN],
+                'required'   => ['title', 'start', 'end', 'summary'],
+            ]],
+        ] + self::MADDELER + [
+            'recommendations' => ['type' => 'array', 'items' => [
+                'type'       => 'object',
+                'properties' => ['text' => self::METIN],
+                'required'   => ['text'],
+            ]],
+        ],
+        'required' => ['summary', 'detailed_summary', 'topics', 'important_points', 'technical_information',
+                       'claims', 'ideas', 'timestamps', 'recommendations'],
+    ];
+
+    /**
+     * @param ?Closure(string): array{0: Provider, 1: string} $saglayici
+     *        Aşama → [sağlayıcı, sağlayıcı adı]. null → config + .env
+     *        (Ai::make). Testler sahte sağlayıcı verir.
+     */
+    public function __construct(
+        private readonly AiKullanimRepository $kullanim,
+        private readonly int $analizId,
+        private readonly ResultValidator $dogrulayici = new ResultValidator(),
+        private readonly ?Closure $saglayici = null,
+    ) {
     }
 
-    /**
-     * Reduce: parça sonuçlarından tek rapor (6. adımda sahte).
-     *
-     * @param list<array<string,mixed>> $parcaSonuclari sıra sırasıyla map çıktıları
-     * @return array{sonuc:array<string,mixed>,kullanim:list<array<string,mixed>>,model:string}
-     */
-    public function birlestir(array $parcaSonuclari): array
-    {
-        $konular = $zamanlar = [];
+    /* =================================================================
+     *  MAP
+     * ============================================================== */
 
-        foreach ($parcaSonuclari as $p) {
-            if (($p['topic'] ?? '') !== '') {
-                $konular[] = ['title' => $p['topic'], 'start' => $p['chunk']['start'] ?? null, 'end' => $p['chunk']['end'] ?? null];
+    /**
+     * @param array<string,mixed> $parca        transkript_parcalar satırı
+     * @param list<Segment>       $bloklar      Cleaner::hazirla() çıktısı (istemin satırları)
+     * @param list<int>           $baslangiclar parçadaki gerçek segment başlangıçları (zaman yaslama)
+     * @param array<string,mixed> $baglam       baslik, kanal, dil, toplam (parça sayısı)
+     * @return array{sonuc: array<string,mixed>, model: string, uyarilar: list<string>}
+     */
+    public function parcaAnalizEt(array $parca, array $bloklar, array $baslangiclar, array $baglam): array
+    {
+        $basMs = (int) $parca['baslangic_ms'];
+        $bitMs = (int) $parca['bitis_ms'];
+        $istem = Istem::yukle('parca_analizi');
+
+        $satirlar = array_map(
+            static fn (Segment $b): string => '[' . Zaman::yaz($b->baslangicMs) . '] '
+                . ($b->konusmaci !== null && $b->konusmaci !== '' ? '(' . $b->konusmaci . ') ' : '') . $b->metin,
+            $bloklar
+        );
+
+        $kullanici = $istem->kullanici([
+            'baslik'     => Istem::veri(self::bilgi($baglam['baslik'] ?? null)),
+            'kanal'      => Istem::veri(self::bilgi($baglam['kanal'] ?? null)),
+            'dil'        => Istem::veri(self::bilgi($baglam['dil'] ?? null)),
+            'sira'       => (int) $parca['sira'],
+            'toplam'     => max((int) $parca['sira'], (int) ($baglam['toplam'] ?? 0)),
+            'baslangic'  => Zaman::yaz($basMs),
+            'bitis'      => Zaman::yaz($bitMs),
+            'transcript' => Istem::veri(implode("\n", $satirlar)),
+        ]);
+
+        return $this->jsonIste('map', $istem, $kullanici, self::PARCA_SEMASI,
+            fn (array $veri): array => $this->dogrulayici->parca($veri, $basMs, $bitMs, $baslangiclar));
+    }
+
+    /* =================================================================
+     *  REDUCE
+     * ============================================================== */
+
+    /**
+     * @param list<array<string,mixed>> $parcaSonuclari doğrulanmış map sonuçları, zaman sırasıyla
+     * @param list<int>                 $baslangiclar   transcript'in bütün segment başlangıçları
+     * @param array<string,mixed>       $baglam         baslik, kanal, eksik (list<string> aralık)
+     * @return array{sonuc: array<string,mixed>, model: string, uyarilar: list<string>}
+     */
+    public function birlestir(array $parcaSonuclari, int $bitMs, array $baslangiclar, array $baglam): array
+    {
+        $istem = Istem::yukle('birlestirme');
+
+        // Bölüm başına bir JSON satırı. JSON_HEX_TAG "<" ">" işaretlerini
+        // <'ye çevirir: AI çıktısı veri bloğunu kapatamaz.
+        $bolumler = array_map(
+            static fn (array $s): string => (string) json_encode($s, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_INVALID_UTF8_SUBSTITUTE),
+            $parcaSonuclari
+        );
+
+        $eksik = array_values(array_filter((array) ($baglam['eksik'] ?? []), 'is_string'));
+
+        $kullanici = $istem->kullanici([
+            'baslik'       => Istem::veri(self::bilgi($baglam['baslik'] ?? null)),
+            'kanal'        => Istem::veri(self::bilgi($baglam['kanal'] ?? null)),
+            'sure'         => Zaman::yaz($bitMs),
+            'bolum_sayisi' => count($parcaSonuclari),
+            'eksik'        => $eksik === [] ? 'yok' : implode(', ', $eksik),
+            'bolumler'     => implode("\n", $bolumler),
+        ]);
+
+        return $this->jsonIste('reduce', $istem, $kullanici, self::BIRLESTIRME_SEMASI,
+            fn (array $veri): array => $this->dogrulayici->birlestirme($veri, $bitMs, $baslangiclar));
+    }
+
+    /* =================================================================
+     *  İSTEK + DOĞRULAMA + TEK ONARIM
+     * ============================================================== */
+
+    /**
+     * @param  array<string,mixed>                                          $sema
+     * @param  Closure(array<string,mixed>): array{sonuc: array<string,mixed>, uyarilar: list<string>} $dogrula
+     * @return array{sonuc: array<string,mixed>, model: string, uyarilar: list<string>}
+     *
+     * @throws AiHatasi
+     */
+    private function jsonIste(string $asama, Istem $istem, string $kullanici, array $sema, Closure $dogrula): array
+    {
+        [$saglayici, $ad] = $this->saglayici !== null ? ($this->saglayici)($asama) : self::saglayiciUret($asama);
+
+        $ek       = $ad === 'gemini' ? (array) Ayarlar::get('ai.' . $asama . '.gemini_ek', []) : [];
+        $mesajlar = [['role' => 'user', 'content' => $kullanici]];
+        $enCok    = max(500, (int) Ayarlar::get('ai.onarim_en_cok_karakter', 6000));
+
+        for ($deneme = 1; ; $deneme++) {
+            $baslangic = hrtime(true);
+
+            try {
+                $yanit = $saglayici->sendJson($mesajlar, $istem->sistem, $sema, $ek);
+            } catch (AiHatasi $e) {
+                $this->kaydet($ad, $saglayici->model(), null, $baslangic, 'hata');
+
+                throw $e;
             }
 
-            foreach ($p['timestamps'] ?? [] as $z) {
-                $zamanlar[] = $z;
+            $durum = 'gecersiz';
+
+            try {
+                if ($yanit['refusal'] !== null) {
+                    $durum = 'reddedildi';
+
+                    throw new AiHatasi(sprintf('Model yanıtlamadı (%s, %s).', $asama, $yanit['refusal']), 'reddedildi');
+                }
+
+                $veri = ResultValidator::ayikla($yanit['text']) ?? throw new GecersizSonuc(['Yanıt geçerli bir JSON nesnesi değil.']);
+                $sonuc = $dogrula($veri);
+                $durum = 'basarili';
+
+                return $sonuc + ['model' => $yanit['model']];
+            } catch (GecersizSonuc $e) {
+                if ($deneme >= 2) {
+                    throw new AiHatasi(sprintf('%s yanıtı onarımdan sonra da geçersiz: %s', $asama, $e->getMessage()), 'yanit_cozulemedi');
+                }
+
+                $mesajlar[] = ['role' => 'assistant', 'content' => $yanit['text'] !== '' ? mb_substr($yanit['text'], 0, $enCok) : '(boş yanıt)'];
+                $mesajlar[] = ['role' => 'user', 'content' => self::onarimIstegi($e->sorunlar, $yanit['stop_reason'] === 'max_tokens')];
+            } finally {
+                $this->kaydet($ad, (string) $yanit['model'], $yanit, $baslangic, $durum);
             }
         }
+    }
+
+    /** @param list<string> $sorunlar */
+    private static function onarimIstegi(array $sorunlar, bool $kesildi): string
+    {
+        return 'Önceki yanıtın kullanılamadı: ' . implode(' ', $sorunlar)
+            . ($kesildi ? ' Yanıt uzunluk sınırında kesildi; maddeleri kısaltarak yaz.' : '')
+            . ' Aynı analizi yalnızca şemaya uygun, geçerli TEK bir JSON nesnesi olarak yeniden döndür;'
+            . ' açıklama ya da kod bloğu ekleme.';
+    }
+
+    /** @param array<string,mixed>|null $yanit */
+    private function kaydet(string $saglayici, string $model, ?array $yanit, int|float $baslangic, string $durum): void
+    {
+        $this->kullanim->kaydet([
+            'saglayici'   => $saglayici,
+            'model'       => $model,
+            'giris_token' => (int) ($yanit['usage']['input_tokens'] ?? 0),
+            'cikis_token' => (int) ($yanit['usage']['output_tokens'] ?? 0),
+            'maliyet_usd' => (float) ($yanit['cost'] ?? 0.0),
+            'sure_ms'     => (int) ((hrtime(true) - $baslangic) / 1_000_000),
+        ], 'analiz', $this->analizId, $durum);
+    }
+
+    /**
+     * config (ai.<aşama>) + .env'den sağlayıcı.
+     *
+     * @return array{0: Provider, 1: string}
+     */
+    private static function saglayiciUret(string $asama): array
+    {
+        $ayar = (array) Ayarlar::get('ai.' . $asama, []);
+        $ad   = strtolower(trim((string) ($ayar['saglayici'] ?? '')));
+        $ad   = $ad !== '' ? $ad : Ai::provider();
+
+        $model = trim((string) ($ayar['model'] ?? ''));
+        // AI_MODEL yalnız .env'deki sağlayıcıya aittir; aşama başka sağlayıcıdaysa onun varsayılanı.
+        $model = $model !== '' ? $model : ($ad === Ai::provider() ? trim(Env::get('AI_MODEL')) : '');
 
         return [
-            'sonuc' => [
-                'summary'               => 'Yapay zekâ analizi henüz bağlı değil. Aşağıdaki zaman çizelgesi parçaların ilk cümlelerinden üretildi.',
-                'detailed_summary'      => '',
-                'topics'                => $konular,
-                'important_points'      => [],
-                'technical_information' => [],
-                'claims'                => [],
-                'ideas'                 => [],
-                'timestamps'            => $zamanlar,
-                'user_relevance'        => null,
-                'recommendations'       => [],
-            ],
-            'kullanim' => [],
-            'model'    => self::SAHTE_MODEL,
+            Ai::make($ad, $model, (int) ($ayar['max_token'] ?? 8192), (int) ($ayar['zaman_asimi'] ?? 120)),
+            $ad,
         ];
     }
+
+    private static function bilgi(mixed $deger): string
+    {
+        $metin = ResultValidator::metin($deger, 300);
+
+        return $metin !== '' ? $metin : 'bilinmiyor';
+    }
+
+    /* =================================================================
+     *  RAPOR MADDELERİ
+     * ============================================================== */
 
     /**
      * Reduce çıktısını transkript_analiz_ogeleri satırlarına çevirir.
@@ -178,10 +387,5 @@ final class Pipeline
     private static function metinVeyaNull(mixed $deger): ?string
     {
         return is_string($deger) && trim($deger) !== '' ? trim($deger) : null;
-    }
-
-    private static function kisalt(string $metin, int $uzunluk): string
-    {
-        return mb_strlen($metin) > $uzunluk ? rtrim(mb_substr($metin, 0, $uzunluk - 1)) . '…' : $metin;
     }
 }
