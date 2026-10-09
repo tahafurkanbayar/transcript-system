@@ -28,7 +28,8 @@ $baslik   = $sayfa?->baslik ?? 'İletişim';
  * (yalnızca dolu olanlar). Kartlar formun altında kaldığı için telefonda
  * ilk ekranda hiçbir iletişim yolu görünmüyordu. */
 $cipler = array_values(array_filter($iletisim, static fn (array $k): bool => in_array($k['ikon'], ['mail', 'phone', 'whatsapp'], true) && $k['link'] !== ''));
-$ozet   = trim((string) ($sayfa?->ozet ?? ''));
+// Denetleyici tanımlı kanallardan üretir (ContactController::summary); verilmezse sayfanın özeti.
+$ozet   = trim((string) ($ozet ?? $sayfa?->ozet ?? ''));
 ?>
 
 <section class="cy-section cy-section--ilk">
