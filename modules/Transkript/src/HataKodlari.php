@@ -38,6 +38,10 @@ final class HataKodlari
             return '';
         }
 
+        if ($kod === 'video_cok_uzun' && ($dakika = (int) Ayarlar::get('analiz.en_uzun_dk', 180)) > 0) {
+            return sprintf('Bu video çok uzun; en çok %d dakikalık videolar analiz edilebiliyor.', $dakika);
+        }
+
         return KaynakHatasi::MESAJLAR[$kod] ?? self::MESAJLAR[$kod] ?? self::MESAJLAR['beklenmeyen_hata'];
     }
 }

@@ -641,6 +641,25 @@ dogrula('cozumle(): geçersizde KaynakHatasi(gecersiz_url) ve Türkçe mesaj', (
 })());
 dogrula('İstek adresi kullanıcının yazdığından değil kimlikten kurulur', UrlParser::izlemeAdresi($kimlik) === 'https://www.youtube.com/watch?v=dQw4w9WgXcQ');
 
+$nedenler = [
+    'https://www.youtube.com/playlist?list=PLx0sYbCqOb8TBPRdmBHs5Iftvv9TPboYG' => 'oynatma_listesi',
+    'https://www.youtube.com/embed/videoseries?list=PL123'                      => 'oynatma_listesi',
+    'youtube.com/watch?list=PL123'                                              => 'oynatma_listesi',
+    'https://www.youtube.com/@kanal'                                            => 'kanal_baglantisi',
+    'https://m.youtube.com/channel/UC_x5XG1OV2P6uZZ5FSM9Ttw'                    => 'kanal_baglantisi',
+    'https://www.youtube.com/c/Ornek'                                           => 'kanal_baglantisi',
+    'https://evil.com/playlist?list=PL1'                                        => 'gecersiz_url',
+    'https://youtube.com.evil.com/@kanal'                                       => 'gecersiz_url',
+    'https://vimeo.com/123456'                                                  => 'gecersiz_url',
+];
+$yanlisNeden = array_filter(array_keys($nedenler), static fn (string $u): bool => UrlParser::neden($u) !== $nedenler[$u]);
+dogrula('Oynatma listesi ve kanal bağlantısı ayrı mesaj alır; başka alan adı yine gecersiz_url',
+    $yanlisNeden === [], implode(' · ', array_map(static fn (string $u): string => $u . ' → ' . UrlParser::neden($u), $yanlisNeden)));
+dogrula('Listeli video bağlantısı (watch?v=…&list=…) yine videoyu verir',
+    UrlParser::videoKimligi('https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=PL123&index=2') === 'dQw4w9WgXcQ');
+dogrula('Oynatma listesi mesajı: "tek bir video bağlantısı"',
+    str_contains(KaynakHatasi::MESAJLAR['oynatma_listesi'], 'tek bir videonun bağlantısını') && HataKodlari::mesaj('kanal_baglantisi') === KaynakHatasi::MESAJLAR['kanal_baglantisi']);
+
 /* ---------------------------------------------------------------- */
 echo "\nYoutubeMetadata (sahte HTTP; ağa gidilmez)\n";
 
@@ -1163,13 +1182,18 @@ dogrula('Bölüm eksik ya da liste değilse madde yok', Pipeline::ogeler([]) ===
 /* ---------------------------------------------------------------- */
 echo "\nAnalizBaslatici (retler; veritabanı sahte)\n";
 
-/** @return array{0:string,1:int,2:int} [kod, http, sorgu sayısı]; ret yoksa kod '' */
-function baslatmaReddi(?User $kullanici, string $url, bool $yeniden = false): array
+/**
+ * oEmbed ön kontrolü sahte HTTP'ye gider (ağ yok). Varsayılan: tanımsız
+ * adres → ağ hatası → kontrol atlanır.
+ *
+ * @return array{0:string,1:int,2:int} [kod, http, sorgu sayısı]; ret yoksa kod ''
+ */
+function baslatmaReddi(?User $kullanici, string $url, bool $yeniden = false, ?SahteHttp $http = null): array
 {
     $pdo = new KayitPdo();
 
     try {
-        (new AnalizBaslatici($pdo, $kullanici))->youtube($url, $yeniden);
+        (new AnalizBaslatici($pdo, $kullanici, new YoutubeMetadata($http ?? new SahteHttp([]))))->youtube($url, $yeniden);
     } catch (AnalizReddedildi $e) {
         return [$e->kod, $e->http, count($pdo->sorgular)];
     } catch (Throwable) {
@@ -1193,6 +1217,58 @@ $ikinci = baslatmaReddi($yonetici, $gecerliUrl);
 dogrula('Yeni iş saatlik sınıra tabi: ikinci istek → rate_limit 429',
     $ilk[0] === '' && $ikinci[0] === 'rate_limit' && $ikinci[1] === 429, json_encode([$ilk, $ikinci]));
 Ayarlar::forget();
+
+/* oEmbed ön kontrolü (sahte HTTP): kayıt açılmadan ret. Ret, INSERT'ten önce
+ * gelir: sahte veritabanına giden sorgular yalnız "kaynak var mı?" sorusudur. */
+Ayarlar::set('analiz.saatlik_sinir', 0);
+$oembedYanit = static fn (int $durum, string $govde = ''): SahteHttp => new SahteHttp([OEMBED => new HttpYanit($durum, $govde, [], '', 0)]);
+$yokVideo    = baslatmaReddi($yonetici, $gecerliUrl, false, $oembedYanit(404, 'Not Found'));
+$bozukKimlik = baslatmaReddi($yonetici, $gecerliUrl, false, $oembedYanit(400, 'Bad Request'));
+dogrula('Var olmayan video (oEmbed 404 / 400) → video_bulunamadi 422, kayıt açılmaz',
+    $yokVideo[0] === 'video_bulunamadi' && $yokVideo[1] === 422 && $bozukKimlik[0] === 'video_bulunamadi', json_encode([$yokVideo, $bozukKimlik]));
+
+$envGizli = (static function (): array {
+    $ozellik = new ReflectionProperty(Env::class, 'values');
+
+    return [$ozellik, $ozellik->getValue()];
+})();
+$envGizli[0]->setValue(null, ['YOUTUBE_API_KEY' => ''] + $envGizli[1]);
+$gizliAnahtarsiz = baslatmaReddi($yonetici, $gecerliUrl, false, $oembedYanit(401, 'Unauthorized'));
+$envGizli[0]->setValue(null, ['YOUTUBE_API_KEY' => 'sahte-anahtar'] + $envGizli[1]);
+$gizliAnahtarli = baslatmaReddi($yonetici, $gecerliUrl, false, $oembedYanit(401, 'Unauthorized'));
+$envGizli[0]->setValue(null, $envGizli[1]);
+dogrula('oEmbed 401: Data API anahtarı yoksa gizli_video 422; varsa iş karar verir (yerleştirmeye kapalı ama açık video)',
+    $gizliAnahtarsiz[0] === 'gizli_video' && $gizliAnahtarsiz[1] === 422 && $gizliAnahtarli[0] === '', json_encode([$gizliAnahtarsiz, $gizliAnahtarli]));
+
+$zamanAsimi = baslatmaReddi($yonetici, $gecerliUrl, false, new SahteHttp([OEMBED => new HttpYanit(0, '', [], 'Operation timed out', 28)]));
+$sunucuHata = baslatmaReddi($yonetici, $gecerliUrl, false, $oembedYanit(503));
+dogrula('oEmbed zaman aşımı / 5xx → kontrol atlanır, istek reddedilmez (eski akış)', $zamanAsimi[0] === '' && $sunucuHata[0] === '', json_encode([$zamanAsimi, $sunucuHata]));
+
+$gecerliHttp = $oembedYanit(200, json_encode(['title' => 'Örnek video', 'author_name' => 'Kanal', 'thumbnail_url' => 'https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg']));
+$gecerli     = baslatmaReddi($yonetici, $gecerliUrl, false, $gecerliHttp);
+dogrula('Geçerli video (oEmbed 200) reddedilmez; ön kontrol yalnız oEmbed\'e, kimlikten kurulan adrese gider',
+    $gecerli[0] === '' && count($gecerliHttp->istekler) === 1
+    && str_starts_with($gecerliHttp->istekler[0]['adres'], OEMBED . '?') && str_contains(urldecode($gecerliHttp->istekler[0]['adres']), 'watch?v=dQw4w9WgXcQ'));
+dogrula('Oynatma listesi bağlantısı → oynatma_listesi 422, ağa ve veritabanına gidilmez',
+    baslatmaReddi($editor, 'https://www.youtube.com/playlist?list=PL123') === ['oynatma_listesi', 422, 0]);
+dogrula('Ön kontrol: 4 sn zaman aşımlı istemci, yalnız oEmbed (anahtar kullanılmaz)', (static function (): bool {
+    $m = YoutubeMetadata::onKontrolIcin();
+    $istemci = (new ReflectionProperty($m, 'http'))->getValue($m);
+
+    return (new ReflectionProperty($istemci, 'zamanAsimi'))->getValue($istemci) === 4
+        && (new ReflectionProperty($m, 'apiAnahtari'))->getValue($m) === '';
+})());
+
+Ayarlar::set('analiz.en_uzun_dk', 180);
+dogrula('Süre sınırı: 180 dk; 3 sa 1 sn aşar, tam 3 sa ve bilinmeyen süre aşmaz; 0 = sınırsız',
+    AnalizBaslatici::cokUzun(3 * 3600 + 1) && !AnalizBaslatici::cokUzun(3 * 3600) && !AnalizBaslatici::cokUzun(null)
+    && (static function (): bool { Ayarlar::set('analiz.en_uzun_dk', 0); return !AnalizBaslatici::cokUzun(99999); })());
+Ayarlar::set('analiz.en_uzun_dk', 90);
+dogrula('Süre sınırı mesajı dakikayı söyler; kod kalıcı hatadır (yeniden denenmez)',
+    HataKodlari::mesaj('video_cok_uzun') === 'Bu video çok uzun; en çok 90 dakikalık videolar analiz edilebiliyor.'
+    && TranskriptIsi::kaliciKod(new KaynakHatasi('video_cok_uzun')) === 'video_cok_uzun');
+Ayarlar::forget();
+
 Throttle::useDirectory(null);
 array_map('unlink', glob($hizKlasoru . '/*') ?: []);
 @rmdir($hizKlasoru);

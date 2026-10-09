@@ -31,6 +31,9 @@ final class KaynakHatasi extends RuntimeException
         'gizli_video'      => 'Bu video gizli ya da başka sitelerde oynatılmaya kapalı; analiz edilemiyor.',
         'silinmis_video'   => 'Bu video YouTube\'dan kaldırılmış.',
         'metadata_hatasi'  => 'Video bilgisi şu an alınamadı. Biraz sonra yeniden denenecek.',
+        'oynatma_listesi'  => 'Oynatma listeleri henüz desteklenmiyor; listedeki tek bir videonun bağlantısını yapıştırın.',
+        'kanal_baglantisi' => 'Kanal bağlantıları desteklenmiyor; kanaldaki tek bir videonun bağlantısını yapıştırın.',
+        'video_cok_uzun'   => 'Video, analiz için izin verilen en uzun süreyi aşıyor.',
     ];
 
     public function __construct(

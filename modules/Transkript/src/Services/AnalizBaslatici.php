@@ -14,7 +14,12 @@
  *         güncel tamamlanmış analizi → ONBELLEKTEN (AI'a gidilmez)
  *    4) yeni AI işi maliyetlidir: kullanıcı başına saatlik sınır
  *       (Throttle; önbellekten dönen istek sayılmaz)
- *    5) kaynak satırı kilitlenir, sürmekte olan analiz yeniden
+ *    5) video doğrulanmamışsa (kaynak yok ya da başlıksız) oEmbed ön
+ *       kontrolü: yok / gizli video 422 ile reddedilir, KAYIT AÇILMAZ;
+ *       varsa başlık, kanal ve küçük resim hemen yazılır. oEmbed'e
+ *       ulaşılamazsa (en çok 4 sn) kontrol atlanır, iş kendisi denetler.
+ *       Süresi bilinen ve analiz.en_uzun_dk'yı aşan video da reddedilir.
+ *    6) kaynak satırı kilitlenir, sürmekte olan analiz yeniden
  *       kontrol edilir; analiz kaydı ve ilk iş aynı işlemde açılır
  *       → BASLATILDI
  *
@@ -28,13 +33,17 @@ declare(strict_types=1);
 
 namespace Modules\Transkript\Services;
 
+use App\Core\Env;
 use App\Core\Queue\Queue;
 use App\Core\Throttle;
 use App\Models\User;
 use Modules\Transkript\Ayarlar;
+use Modules\Transkript\HataKodlari;
 use Modules\Transkript\Jobs\KaynakBilgisiAl;
 use Modules\Transkript\Kaynak\KaynakHatasi;
 use Modules\Transkript\Kaynak\UrlParser;
+use Modules\Transkript\Kaynak\VideoBilgisi;
+use Modules\Transkript\Kaynak\YoutubeMetadata;
 use Modules\Transkript\Repositories\AnalizRepository;
 use Modules\Transkript\Repositories\KaynakRepository;
 use Modules\Transkript\TranskriptPolicy;
@@ -50,6 +59,7 @@ final class AnalizBaslatici
     public function __construct(
         private readonly PDO $db,
         private readonly ?User $user,
+        private readonly ?YoutubeMetadata $onKontrol = null,
     ) {
     }
 
@@ -83,11 +93,57 @@ final class AnalizBaslatici
             return $hazir;
         }
 
+        if ($kaynak !== null && self::cokUzun($kaynak['sure_sn'] !== null ? (int) $kaynak['sure_sn'] : null)) {
+            throw new AnalizReddedildi('video_cok_uzun', HataKodlari::mesaj('video_cok_uzun'), 422);
+        }
+
         $this->sinirKontrolu();
+
+        // Başlığı olan kaynak daha önce doğrulanmıştır; oEmbed'e yeniden gidilmez.
+        $bilgi = $kaynak === null || trim((string) $kaynak['baslik']) === '' ? $this->videoyuDogrula($videoId) : null;
 
         $kaynak ??= $kaynaklar->youtubeBulVeyaOlustur($videoId, $this->user?->id);
 
+        if ($bilgi !== null) {
+            $kaynaklar->bilgiyiYaz((int) $kaynak['id'], $bilgi);
+            $kaynak = $kaynaklar->bul((int) $kaynak['id']) ?? $kaynak;
+        }
+
         return $this->ac($kaynak, $yeniden);
+    }
+
+    /**
+     * analiz.en_uzun_dk'yı aşıyor mu? Süre bilinmiyorsa (null) hayır;
+     * iş, süre öğrenilince yeniden sorar (KaynakBilgisiAl, TranskriptAl).
+     */
+    public static function cokUzun(?int $sureSn): bool
+    {
+        $dakika = (int) Ayarlar::get('analiz.en_uzun_dk', 180);
+
+        return $dakika > 0 && $sureSn !== null && $sureSn > $dakika * 60;
+    }
+
+    /**
+     * oEmbed ön kontrolü (YoutubeMetadata::onKontrol). Video yoksa ya da
+     * gizliyse ret; ulaşılamazsa null (kontrol atlanır).
+     *
+     * @throws AnalizReddedildi
+     */
+    private function videoyuDogrula(string $videoId): ?VideoBilgisi
+    {
+        try {
+            return ($this->onKontrol ?? YoutubeMetadata::onKontrolIcin())->onKontrol($videoId);
+        } catch (KaynakHatasi $e) {
+            /* oEmbed 401 hem gizli hem de yerleştirmeye kapalı (ama herkese
+             * açık, analiz edilebilir) videoda döner. YouTube Data API
+             * anahtarı varsa ikisini iş ayırt eder; yoksa iş de oEmbed'e
+             * bakıp aynı kararı vereceğinden burada reddedilir. */
+            if ($e->kod === 'gizli_video' && trim(Env::get('YOUTUBE_API_KEY')) !== '') {
+                return null;
+            }
+
+            throw new AnalizReddedildi($e->kod, $e->kullaniciMesaji(), 422);
+        }
     }
 
     /**
