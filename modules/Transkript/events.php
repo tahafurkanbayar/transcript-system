@@ -41,7 +41,9 @@ use App\Models\User;
 use Modules\Transkript\Ayarlar;
 use Modules\Transkript\Controllers\AnasayfaController;
 use Modules\Transkript\Repositories\KaynakRepository;
+use Modules\Transkript\Services\AnalizBaslatici;
 use Modules\Transkript\Services\KuyrukDurumu;
+use Modules\Transkript\TranskriptPolicy;
 
 if (PHP_SAPI === 'cli' && (bool) Ayarlar::get('kuyruk.zamanlanmis_gorev', true)) {
     Schedule::call('transkript-kuyrugu', static function (): void {
@@ -63,9 +65,10 @@ if (PHP_SAPI === 'cli' && (bool) Ayarlar::get('kuyruk.zamanlanmis_gorev', true))
 /* ---------------------------------------------------------------------
  *  KONTROL PANELİ KARTLARI (DashboardCards kancası; çekirdeğe dokunmadan)
  * ---------------------------------------------------------------------
- *  Raporlar: transkript.view olan herkese (yönetici herkesinkini, öteki
- *  roller GÖREBİLDİĞİ raporları sayar; listeyle aynı sayı). Süren ve
- *  hatalı sayısı yalnız analiz başlatabilene: yeniden deneyebilir.
+ *  Raporlar: transkript.view olan herkese. Yönetici herkesinkini, öteki
+ *  roller GÖREBİLDİĞİNİ (kütüphanesi + paylaşılan; listedeki "Raporu
+ *  hazır" ile aynı sayı) görür. Süren ve hatalı sayısı ile bugünkü
+ *  analiz hakkı yalnız analiz başlatabilene (TranskriptPolicy).
  *  Bugünkü kullanım: yalnız yönetici.
  * ------------------------------------------------------------------ */
 DashboardCards::add('transkript-raporlar', static function (?User $user): ?array {
@@ -73,19 +76,23 @@ DashboardCards::add('transkript-raporlar', static function (?User $user): ?array
         return null;
     }
 
-    $repo  = new KaynakRepository(Database::connection());
-    $sayi  = $user->can('transkript.admin') ? $repo->istatistik(null) : $repo->gorunenIstatistik($user->id);
-    $alt   = $user->can('transkript.analyze') ? array_filter([
+    $db     = Database::connection();
+    $policy = new TranskriptPolicy($user);
+    $repo   = new KaynakRepository($db);
+    $sayi   = $policy->isAdmin() ? $repo->istatistik(null) : $repo->gorunenIstatistik($user->id);
+    $hak    = $policy->canAnalyze() ? (new AnalizBaslatici($db, $user))->hakDurumu() : null;
+    $alt    = $policy->canAnalyze() ? array_filter([
         $sayi['suruyor'] > 0 ? $sayi['suruyor'] . ' sürüyor' : '',
         $sayi['hata'] > 0 ? $sayi['hata'] . ' hata' : '',
+        $hak !== null && !$hak['muaf'] && $hak['gunluk_sinir'] > 0 ? 'bugünkü hakkınız ' . $hak['gunluk'] . ' / ' . $hak['gunluk_sinir'] : '',
     ]) : [];
 
     return [
         'ikon'   => 'files',
-        'renk'   => $alt !== [] && $sayi['hata'] > 0 ? 'warning' : 'success',
-        'etiket' => 'Transkript raporu',
+        'renk'   => $sayi['hata'] > 0 && $policy->canAnalyze() ? 'warning' : 'success',
+        'etiket' => $policy->isAdmin() ? 'Transkript raporu' : 'Transkript raporlarınız',
         'deger'  => $sayi['kaynak'],
-        'ipucu'  => $alt !== [] ? implode(' · ', $alt) : 'raporu hazır video',
+        'ipucu'  => $alt !== [] ? implode(' · ', $alt) : ($policy->isAdmin() ? 'raporu hazır video' : 'kütüphanenizdeki ve sizinle paylaşılan'),
         'yol'    => 'panel/transkript',
     ];
 });

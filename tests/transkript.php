@@ -76,6 +76,7 @@ use Modules\Transkript\PanelAyarlari;
 use Modules\Transkript\Repositories\AiKullanimRepository;
 use Modules\Transkript\Repositories\AnalizRepository;
 use Modules\Transkript\Repositories\KaynakRepository;
+use Modules\Transkript\Repositories\KutuphaneRepository;
 use Modules\Transkript\Services\AnalizBaslatici;
 use Modules\Transkript\Services\AnalizReddedildi;
 use Modules\Transkript\Services\Chunker;
@@ -178,17 +179,26 @@ $pE = new TranskriptPolicy($editor);
 $pU = new TranskriptPolicy($uye);
 $pM = new TranskriptPolicy(null);
 
-$youtube    = ['tur' => 'youtube', 'sahip_id' => 0];
+/* "kutuphanede": kaynak GÖRENİN kütüphanesinde mi (liste sorgusu da bu
+ * anahtarı taşır; anahtar varken veritabanına sorulmaz). */
+$youtube    = ['id' => 10, 'tur' => 'youtube', 'sahip_id' => 0, 'paylasildi' => 0, 'kutuphanede' => true];
+$ytBaskasi  = ['id' => 11, 'tur' => 'youtube', 'sahip_id' => 0, 'paylasildi' => 0, 'kutuphanede' => false];
+$ytPaylasim = ['id' => 12, 'tur' => 'youtube', 'sahip_id' => 0, 'paylasildi' => 1, 'kutuphanede' => false];
 $uyeDosyasi = ['tur' => 'ses_dosyasi', 'sahip_id' => 3];
 
-dogrula('YouTube kaynağı ortak: yönetici, editör ve üye görür', $pY->canViewSource($youtube) && $pE->canViewSource($youtube) && $pU->canViewSource($youtube));
+dogrula('Kütüphanesindeki YouTube kaynağını görür; kütüphanesinde olmayanı göremez (yönetici hepsini)',
+    $pE->canViewSource($youtube) && $pU->canViewSource($youtube) && !$pE->canViewSource($ytBaskasi) && !$pU->canViewSource($ytBaskasi)
+    && $pY->canViewSource($ytBaskasi));
+dogrula('Paylaşılan raporu kütüphanesinde olmasa da herkes görür', $pE->canViewSource($ytPaylasim) && $pU->canViewSource($ytPaylasim));
 dogrula('Yüklenen dosyayı sahibi ve yönetici görür', $pU->canViewSource($uyeDosyasi) && $pY->canViewSource($uyeDosyasi));
 dogrula('Editör başkasının yüklediği dosyayı göremez', !$pE->canViewSource($uyeDosyasi));
-dogrula('Giriş yapmamış kullanıcı hiçbir kaynağı göremez', !$pM->canViewSource($youtube) && !$pM->canViewSource($uyeDosyasi));
-dogrula('Analizi editör ve yönetici başlatır, üye başlatamaz', $pY->canAnalyze() && $pE->canAnalyze() && !$pU->canAnalyze());
-dogrula('Yeniden analiz ve tüm maliyet yalnız yöneticide',
+dogrula('Giriş yapmamış kullanıcı hiçbir kaynağı göremez',
+    !$pM->canViewSource($youtube) && !$pM->canViewSource($ytPaylasim) && !$pM->canViewSource($uyeDosyasi));
+dogrula('Analizi editör ve yönetici başlatır, üye (ayar kapalıyken) başlatamaz', $pY->canAnalyze() && $pE->canAnalyze() && !$pU->canAnalyze());
+dogrula('Raporu olmayan videoda yeniden analiz ve tüm maliyet yalnız yöneticide',
     $pY->canReanalyze() && !$pE->canReanalyze() && !$pU->canReanalyze() && $pY->canSeeAllCosts() && !$pE->canSeeAllCosts());
-dogrula('Üye görebildiği kaynağa soru sorar', $pU->canChatAbout($youtube) && $pU->canChatAbout($uyeDosyasi));
+dogrula('Üye görebildiği kaynağa soru sorar, göremediğine soramaz',
+    $pU->canChatAbout($ytPaylasim) && $pU->canChatAbout($uyeDosyasi) && !$pU->canChatAbout($ytBaskasi));
 dogrula('Editör başkasının dosyasına soru soramaz', !$pE->canChatAbout($uyeDosyasi));
 
 $uyeSohbeti = ['kullanici_id' => 3];
@@ -196,6 +206,64 @@ dogrula('Sohbeti sahibi ve yönetici okur, editör okuyamaz', $pU->canAccessChat
 dogrula('Kişisel özet yalnız sahibine ve yöneticiye açık',
     $pU->canViewPersonalSummary($uyeSohbeti) && $pY->canViewPersonalSummary($uyeSohbeti) && !$pE->canViewPersonalSummary($uyeSohbeti));
 dogrula('Sahibi 0 olan sohbet kimseye "senin" sayılmaz', !$pU->canAccessChat(['kullanici_id' => 0]) && !$pM->canAccessChat(['kullanici_id' => 0]));
+
+/* ---------------------------------------------------------------- */
+echo "\nRol × eylem × sahiplik matrisi (Y yönetici · E analist · U üye · P üye, \"Üyeler analiz başlatabilir\" açık · M misafir)\n";
+
+/*
+ * Veri sağlayıcı: her satır bir eylem + sahiplik, beklenen = izinli
+ * rollerin harfleri. Kapanış (policy, görenin kimliği) → bool. "kendi"
+ * satırlarında kayıt görene, "başkası" satırlarında 999'a aittir.
+ * Liste ve rapor sayfası düğmeleri, denetleyiciler ve API AYNI
+ * yöntemlere sorar; HTTP kodları tests/transkript-yetki.php'de.
+ */
+$baskasi = 999;
+$ytKaynak = static fn (bool $kutuphanede, bool $paylasildi = false): array =>
+    ['id' => 20, 'tur' => 'youtube', 'sahip_id' => 0, 'paylasildi' => $paylasildi ? 1 : 0, 'kutuphanede' => $kutuphanede];
+$yetkiMatrisi = [
+    'raporu görmek (kendi kütüphanesinde)'            => ['YEUP', static fn (TranskriptPolicy $p, int $ben): bool => $p->canViewSource($ytKaynak(true))],
+    'raporu görmek (başkasının, paylaşılmamış)'       => ['Y',    static fn (TranskriptPolicy $p, int $ben): bool => $p->canViewSource($ytKaynak(false))],
+    'raporu görmek (paylaşılan)'                      => ['YEUP', static fn (TranskriptPolicy $p, int $ben): bool => $p->canViewSource($ytKaynak(false, true))],
+    'analiz başlatmak'                                => ['YEP',  static fn (TranskriptPolicy $p, int $ben): bool => $p->canAnalyze()],
+    'yeniden analiz (kendi raporu)'                   => ['YEP',  static fn (TranskriptPolicy $p, int $ben): bool => $p->canReanalyze(['kullanici_id' => $ben])],
+    'yeniden analiz (başkasının raporu)'              => ['Y',    static fn (TranskriptPolicy $p, int $ben): bool => $p->canReanalyze(['kullanici_id' => $baskasi])],
+    'duran analizi sürdürmek (kendi)'                 => ['YEP',  static fn (TranskriptPolicy $p, int $ben): bool => $p->canRetry(['kullanici_id' => $ben])],
+    'duran analizi sürdürmek (başkasının)'            => ['Y',    static fn (TranskriptPolicy $p, int $ben): bool => $p->canRetry(['kullanici_id' => $baskasi])],
+    'süren analizi iptal (kendi)'                     => ['YEP',  static fn (TranskriptPolicy $p, int $ben): bool => $p->canCancelAnalysis(['kullanici_id' => $ben])],
+    'süren analizi iptal (başkasının)'                => ['Y',    static fn (TranskriptPolicy $p, int $ben): bool => $p->canCancelAnalysis(['kullanici_id' => $baskasi])],
+    'kütüphaneden çıkarmak (kütüphanesinde)'          => ['YEUP', static fn (TranskriptPolicy $p, int $ben): bool => $p->canRemoveFromLibrary($ytKaynak(true))],
+    'kütüphaneden çıkarmak (yalnız paylaşılan)'       => ['',     static fn (TranskriptPolicy $p, int $ben): bool => $p->canRemoveFromLibrary($ytKaynak(false, true))],
+    'tamamen silmek (YouTube, kütüphanesinde)'        => ['Y',    static fn (TranskriptPolicy $p, int $ben): bool => $p->canDeleteSource($ytKaynak(true))],
+    'tamamen silmek (kendi yüklediği dosya)'          => ['YEUP', static fn (TranskriptPolicy $p, int $ben): bool => $p->canDeleteSource(['tur' => 'ses_dosyasi', 'sahip_id' => max(1, $ben)])],
+    'üyelerle paylaşmak'                              => ['Y',    static fn (TranskriptPolicy $p, int $ben): bool => $p->canShare()],
+    'token ve maliyet görmek'                         => ['Y',    static fn (TranskriptPolicy $p, int $ben): bool => $p->canSeeAllCosts()],
+    'API anahtarı üretmek'                            => ['YE',   static fn (TranskriptPolicy $p, int $ben): bool => $p->canCreateApiKey()],
+    'hata ayrıntısı (kendi analizi)'                  => ['YEUP', static fn (TranskriptPolicy $p, int $ben): bool => $p->canSeeErrorDetail(['kullanici_id' => $ben])],
+    'hata ayrıntısı (başkasının analizi)'             => ['Y',    static fn (TranskriptPolicy $p, int $ben): bool => $p->canSeeErrorDetail(['kullanici_id' => $baskasi])],
+];
+$roller = ['Y' => [$yonetici, 1, false], 'E' => [$editor, 2, false], 'U' => [$uye, 3, false], 'P' => [$uye, 3, true], 'M' => [null, 0, false]];
+$matrisFarki = [];
+
+foreach ($yetkiMatrisi as $eylem => [$beklenenRoller, $sor]) {
+    $gercekRoller = '';
+
+    foreach ($roller as $harf => [$kim, $ben, $uyeAyari]) {
+        Ayarlar::set('analiz.uye_baslatabilir', $uyeAyari);
+
+        if ($sor(new TranskriptPolicy($kim), $ben)) {
+            $gercekRoller .= $harf;
+        }
+    }
+
+    if ($gercekRoller !== $beklenenRoller) {
+        $matrisFarki[] = "$eylem: beklenen '$beklenenRoller', gerçek '$gercekRoller'";
+    }
+}
+
+Ayarlar::forget();
+dogrula('Her hücre beklenen gibi (' . count($yetkiMatrisi) . ' eylem × ' . count($roller) . ' rol)', $matrisFarki === [], implode('; ', $matrisFarki));
+dogrula('Ayar kapalıyken üye analiz başlatamaz; açıkken analistle aynı kurallar',
+    !(new TranskriptPolicy($uye))->canAnalyze() && !TranskriptPolicy::uyelerBaslatabilir());
 
 /* ---------------------------------------------------------------- */
 echo "\nRota erişim matrisi (M misafir · U üye · E editör · Y yönetici)\n";
@@ -214,20 +282,24 @@ $rotaTablosu = (static function (): App\Core\Router {
 $beklenen = [
     'GET transkript/varlik/{dosya}'                          => 'MUEY',
     'GET panel/transkript'                                   => 'UEY',
-    'POST panel/transkript/analiz'                           => 'EY',
+    'POST panel/transkript/analiz'                           => 'UEY',
     'GET panel/transkript/ilerleme/{kaynak_id}'              => 'UEY',
     'POST panel/transkript/kuyruk/isle'                      => 'Y',
     'GET panel/transkript/ayarlar'                           => 'Y',
     'POST panel/transkript/ayarlar'                          => 'Y',
     'POST panel/transkript/ayarlar/dinlenme-sifirla'         => 'Y',
     'POST panel/transkript/yeniden-dene'                     => 'Y',
-    'POST panel/transkript/kuyruk/tik'                       => 'EY',
+    'POST panel/transkript/kuyruk/tik'                       => 'UEY',
     'GET panel/transkript/varlik/{dosya}'                    => 'UEY',
     'GET panel/transkript/{kaynak_id}/transkript'            => 'UEY',
     'GET panel/transkript/{kaynak_id}/indir/{bicim}'         => 'UEY',
     'GET panel/transkript/{kaynak_id}'                       => 'UEY',
     'POST panel/transkript/{kaynak_id}/sil'                  => 'UEY',
-    'POST panel/transkript/{kaynak_id}/iptal'                => 'EY',
+    'POST panel/transkript/{kaynak_id}/kutuphaneden-cikar'   => 'UEY',
+    'POST panel/transkript/{kaynak_id}/paylas'               => 'Y',
+    // Analiz başlatan uçlar rotada yalnız giriş ister; "Üyeler analiz
+    // başlatabilir" ayarını TranskriptPolicy::canAnalyze denetler (403).
+    'POST panel/transkript/{kaynak_id}/iptal'                => 'UEY',
     'POST panel/transkript/{kaynak_id}/sohbet'               => 'UEY',
     'POST api/v1/transkript/analiz'                          => 'EY',
     'POST api/v1/transkript/dosya'                           => 'EY',
@@ -365,7 +437,7 @@ final class KayitPdo extends PDO
 $beklenenTablolar = [
     'transkript_kaynaklar', 'transkript_metinler', 'transkript_segmentler', 'transkript_analizler',
     'transkript_parcalar', 'transkript_analiz_ogeleri', 'transkript_kisisel_ozetler', 'transkript_sohbetler',
-    'transkript_sohbet_mesajlari', 'transkript_ilgi_alanlari', 'ai_kullanim_kaydi',
+    'transkript_sohbet_mesajlari', 'transkript_ilgi_alanlari', 'ai_kullanim_kaydi', 'transkript_kutuphane',
 ];
 
 $dosyalar = glob(MODUL_YOLU . '/migrations/*.php') ?: [];
@@ -439,7 +511,7 @@ foreach ($dosyalar as $dosya) {
     $olusan[] = $tablo;
 }
 
-dogrula('11 tablo, bağımlılık sırasıyla kurulur', $olusan === $beklenenTablolar, 'Kurulan: ' . implode(', ', $olusan));
+dogrula('12 tablo, bağımlılık sırasıyla kurulur', $olusan === $beklenenTablolar, 'Kurulan: ' . implode(', ', $olusan));
 dogrula('Her tablo InnoDB + utf8mb4_turkish_ci; yabancı anahtarlar yalnız önceden kurulan modül tablolarına', $sorunlar === [], implode('; ', $sorunlar));
 dogrula('Her migration down() ile geri alınır', $geriAlinmayan === [], 'Geri alınmayan: ' . implode(', ', $geriAlinmayan));
 
@@ -1227,7 +1299,11 @@ function baslatmaReddi(?User $kullanici, string $url, bool $yeniden = false, ?Sa
 $gecerliUrl = 'https://youtu.be/dQw4w9WgXcQ';
 dogrula('Geçersiz URL → gecersiz_url 422, veritabanına gidilmez', baslatmaReddi($editor, 'https://ornek.com/video') === ['gecersiz_url', 422, 0]);
 dogrula('Analiz yetkisi olmayan üye → 403, veritabanına gidilmez', baslatmaReddi($uye, $gecerliUrl) === ['yetkisiz', 403, 0]);
-dogrula('Editör yeniden analiz isteyemez → 403', baslatmaReddi($editor, $gecerliUrl, true) === ['yetkisiz', 403, 0]);
+$edYeniden = baslatmaReddi($editor, $gecerliUrl, true);
+dogrula('Analist başlatmadığı (ya da raporu olmayan) videoyu yeniden analiz edemez → 403',
+    $edYeniden[0] === 'yetkisiz' && $edYeniden[1] === 403, json_encode($edYeniden));
+dogrula('Yetki girdiden önce: analiz yetkisi olmayan üyenin bozuk bağlantısı da 403 (422 değil)',
+    baslatmaReddi($uye, 'https://ornek.com/video') === ['yetkisiz', 403, 0]);
 dogrula('Oturumsuz istek → 403', baslatmaReddi(null, $gecerliUrl) === ['yetkisiz', 403, 0]);
 
 $hizKlasoru = sys_get_temp_dir() . '/transkript-hiz-' . bin2hex(random_bytes(4));
@@ -1690,13 +1766,22 @@ dogrula('CSP eki yalnız YouTube resmi ve çerçevesi; script-src açılmaz',
 $listePdo = new KayitPdo();
 (new KaynakRepository($listePdo))->liste(['q' => '50%_ai', 'durum' => 'hazir', 'tur' => 'youtube'], 3, 10, 7, false);
 $listeSql = implode("\n", $listePdo->sorgular);
-dogrula('Liste: yönetici değilse yalnız ortak kaynak + kendi dosyası; arama unicode_ci; sayfalama',
-    str_contains($listeSql, '(k.sahip_id = 0 OR k.sahip_id = :ben)') && str_contains($listeSql, 'COLLATE utf8mb4_unicode_ci LIKE :q1')
+[$gorunurlukKosulu] = KaynakRepository::gorunurluk(7);
+dogrula('Liste: yönetici değilse görünürlük kuralı (kendi dosyası, kütüphanesi, paylaşılan); arama unicode_ci; sayfalama',
+    str_contains($listeSql, $gorunurlukKosulu) && str_contains($gorunurlukKosulu, 'k.paylasildi = 1')
+    && str_contains($gorunurlukKosulu, 'transkript_kutuphane gku') && str_contains($listeSql, 'COLLATE utf8mb4_unicode_ci LIKE :q1')
     && str_contains($listeSql, 'LIMIT :limit OFFSET :offset') && str_contains($listeSql, "r.guncel_mi = 1 AND r.durum = 'tamamlandi'"));
 $yoneticiPdo = new KayitPdo();
 (new KaynakRepository($yoneticiPdo))->liste(['durum' => 'uydurma'], 1, 10, 1, true);
 dogrula('Liste: yönetici her kaynağı görür; bilinmeyen durum filtresi yok sayılır',
-    !str_contains(implode("\n", $yoneticiPdo->sorgular), ':ben') && str_contains(implode("\n", $yoneticiPdo->sorgular), 'WHERE 1 = 1'));
+    !str_contains(implode("\n", $yoneticiPdo->sorgular), ':gor_ben') && str_contains(implode("\n", $yoneticiPdo->sorgular), 'WHERE 1 = 1'));
+$kapsamPdo = new KayitPdo();
+(new KaynakRepository($kapsamPdo))->liste(['kapsam' => 'kutuphanem'], 1, 10, 7, false);
+(new KaynakRepository($kapsamPdo))->liste(['kapsam' => 'paylasilan'], 1, 10, 7, false);
+$kapsamSql = implode("\n", $kapsamPdo->sorgular);
+dogrula('Liste kapsamı: "Kütüphanem" kendi satırları, "Paylaşılanlar" paylasildi = 1; her satır kutuphanede taşır',
+    str_contains($kapsamSql, 'kku.kullanici_id = :kapsam_ben') && str_contains($kapsamSql, 'AND k.paylasildi = 1')
+    && str_contains($kapsamSql, 'AS kutuphanede'));
 
 /* ---------------------------------------------------------------- */
 echo "\nDışa aktarma (Markdown, YouTube bölümleri, SRT / VTT)\n";
@@ -2199,9 +2284,11 @@ dogrula('İlerleme etiketi de aynı kurala uyar (policy\'siz çağrı ayrıntıl
 $sayacPdo = new KayitPdo();
 $gorunenSayi = (new KaynakRepository($sayacPdo))->gorunenIstatistik(4);
 $uyeSorgu = $sayacPdo->sorgular;
-dogrula('Yönetici dışı sayaç: görünür kayıtlar, bugün = farklı video; token / maliyet sorulmaz, 0 döner',
-    str_contains($uyeSorgu[0] ?? '', 'COUNT(DISTINCT CASE WHEN a.bitti_at >= CURDATE() THEN a.kaynak_id END)')
-    && str_contains($uyeSorgu[0] ?? '', 'k.sahip_id IN (0, :ben)') && count($uyeSorgu) === 2
+[$sayacKosulu] = KaynakRepository::gorunurluk(4);
+dogrula('Yönetici dışı sayaç: listeyle aynı görünürlük kuralı, bugün = kütüphaneye eklenen; token / maliyet sorulmaz, 0 döner',
+    str_contains($uyeSorgu[0] ?? '', $sayacKosulu) && str_contains($uyeSorgu[1] ?? '', $sayacKosulu)
+    && str_contains($uyeSorgu[2] ?? '', 'FROM transkript_kutuphane WHERE kullanici_id = :kullanici AND created_at >= CURDATE()')
+    && count($uyeSorgu) === 3
     && !str_contains(implode(' ', $uyeSorgu), 'ai_kullanim_kaydi') && $gorunenSayi['token'] === 0 && $gorunenSayi['maliyet'] === 0.0);
 $panelKodu = (string) file_get_contents(MODUL_YOLU . '/events.php') . $kaynakKodu;
 dogrula('Sayaç rol adına değil yetkiye bağlı: yönetici dışında herkes gorunenIstatistik (editör dahil)',
@@ -2237,7 +2324,7 @@ dogrula('Liste: üyede "Raporu hazır" seçili gelir, "Tüm durumlar" hepsi değ
 $tokenKarti = static fn (string $html): bool => (bool) preg_match('/Toplam token|Tahmini maliyet|Token kullanımınız/u', $html);
 dogrula('Kartlar: token / maliyet yalnız yöneticide; hata sayısı analiz başlatabilende (editör), üyede yok',
     !str_contains($uyeHepsi, '1 hata') && !$tokenKarti($uyeHepsi)
-    && str_contains($uyeHepsi, 'Bugün hazırlanan rapor') && str_contains($uyeHepsi, 'yeniden analiz sayılmaz')
+    && str_contains($uyeHepsi, 'Bugün eklediğiniz') && str_contains($uyeHepsi, 'Raporlarınız') && str_contains($uyeHepsi, 'kütüphanenize eklenen video')
     && str_contains($edListe, '1 hata') && !$tokenKarti($edListe)
     && str_contains($yonListe, 'Toplam token') && str_contains($yonListe, 'Tahmini maliyet') && str_contains($yonListe, 'Bugün tamamlanan analiz'));
 
@@ -2261,15 +2348,16 @@ dogrula('Rapor kartı: token ve maliyet yalnız yöneticiye; model herkese',
     && str_contains($raporYon, '<dt>Token</dt>') && str_contains($raporYon, '123.456') && str_contains($raporYon, 'Tahmini maliyet')
     && str_contains($raporUye, 'gemini-2.5-flash') && str_contains($raporEd, 'gemini-2.5-flash'));
 preg_match('#function ozet\(.*?\n    }\n#s', (string) file_get_contents(MODUL_YOLU . '/src/Controllers/Api/TranskriptApiController.php'), $ozetGovde);
-dogrula('API özeti: yönetici dışında toplam_token ve maliyet_usd çıkarılır',
-    str_contains($ozetGovde[0] ?? '', "if (!\$policy->canSeeAllCosts())") && str_contains($ozetGovde[0] ?? '', "unset(\$analiz['toplam_token'], \$analiz['maliyet_usd'])"));
-dogrula('Liste boşken üyeye "kutuya yapıştırın" denmez',
+dogrula('API özeti: yönetici dışında toplam_token, maliyet_usd ve raporu başlatan çıkarılır',
+    str_contains($ozetGovde[0] ?? '', "if (!\$policy->canSeeAllCosts())")
+    && str_contains($ozetGovde[0] ?? '', "unset(\$analiz['toplam_token'], \$analiz['maliyet_usd'], \$analiz['kullanici_id'])"));
+dogrula('Liste boşken üyeye "kutuya yapıştırın" denmez; paylaşım beklediği söylenir',
     str_contains(App\Core\View::capture('Transkript::index', [
         'policy' => $prU, 'filtre' => ['q' => '', 'durum' => 'hazir'], 'varsayilanDurum' => 'hazir',
         'liste' => ['satirlar' => [], 'toplam' => 0], 'sayfa' => 1, 'boyut' => 10,
         'istatistik' => ['bugun' => 0, 'kaynak' => 0, 'suruyor' => 0, 'hata' => 0, 'token' => 0, 'maliyet' => 0.0],
         'hepsi' => false, 'onUrl' => '', 'kuyruk' => ['takildi' => false],
-    ]), 'Henüz hazır rapor yok.'));
+    ]), 'Sizinle paylaşılan rapor henüz yok.'));
 
 $vaatCiz = static fn (bool $girisli, bool $analiz, bool $api): string => App\Core\View::capture('Transkript::anasayfa', [
     'girisli' => $girisli, 'analizEdebilir' => $girisli && $analiz, 'analizVaadi' => $analiz, 'apiAcik' => $api, 'kayitAcik' => true,
@@ -2428,6 +2516,107 @@ $kullaniciJs = (string) file_get_contents(CY_BASE . '/assets/js/users.js');
 dogrula('Çekirdek: yönetici kullanıcı ayrıntısında "Hakkımda" metin olarak basılır (.text / .val, .html yok)',
     str_contains($kullaniciJs, "\$('#detail_bio').text(data.hakkinda") && str_contains($kullaniciJs, "\$('#hakkinda').val(data.hakkinda")
     && !preg_match('/\.html\(|innerHTML/', $kullaniciJs));
+
+/* ---------------------------------------------------------------- */
+echo "\nKişisel kütüphane, paylaşım ve analiz hakkı (cowork 5. tur)\n";
+
+dogrula('İptal ucu: önce sahiplik (403), sonra durum (409)',
+    isset($iptalGovde[0]) && strpos($iptalGovde[0], '403') < strpos($iptalGovde[0], '409'));
+$baslaticiKodu = (string) file_get_contents(MODUL_YOLU . '/src/Services/AnalizBaslatici.php');
+preg_match('#function youtube\(.*?\n    }\n#s', $baslaticiKodu, $youtubeGovde);
+dogrula('Başlatma: yetki URL\'den ve veritabanından önce; sonuç her yolda kütüphaneye yazılır',
+    isset($youtubeGovde[0]) && strpos($youtubeGovde[0], 'canAnalyze') < strpos($youtubeGovde[0], 'UrlParser::cozumle')
+    && strpos($youtubeGovde[0], 'UrlParser::cozumle') < strpos($youtubeGovde[0], 'youtubeBul(')
+    && str_contains($youtubeGovde[0], 'return $this->kutuphaneyeEkle($this->youtubeKaynagi('));
+preg_match('#function devamEt\(.*?\n    }\n#s', $baslaticiKodu, $devamGovde);
+dogrula('Kaldığı yerden devam yalnız başlatana ve yöneticiye (canRetry); başkası kendi analizini açar',
+    str_contains($devamGovde[0] ?? '', '$policy->canRetry($son)'));
+
+$hakSimdi = (int) strtotime('2026-10-10 14:20:00');
+$hakBos   = AnalizBaslatici::hakKarari(false, 3, 10, 1, 20, $hakSimdi);
+$hakGun   = AnalizBaslatici::hakKarari(false, 10, 10, 1, 20, $hakSimdi);
+$hakSaat  = AnalizBaslatici::hakKarari(false, 4, 10, 20, 20, $hakSimdi);
+$hakMuaf  = AnalizBaslatici::hakKarari(true, 0, 0, 0, 0, $hakSimdi);
+dogrula('Hak: 3 / 10 · 1 / 20 boş; günlük dolunca yarın 00:00, saatlik dolunca saat başı (15:00); muafta bekleme yok',
+    $hakBos['bekleme_sn'] === 0 && $hakBos['gunluk'] === 3 && $hakBos['saatlik_sinir'] === 20
+    && $hakGun['yenilenme'] === 'yarın 00:00' && $hakGun['bekleme_sn'] >= 60
+    && $hakSaat['yenilenme'] === '15:00' && $hakSaat['bekleme_sn'] === 2400
+    && $hakMuaf['bekleme_sn'] === 0 && $hakMuaf['muaf'] === true, json_encode([$hakGun, $hakSaat]));
+
+$kutuphaneSql = (string) file_get_contents(MODUL_YOLU . '/migrations/2026_10_09_230014_transkript_kutuphane.php');
+dogrula('Migration: kullanıcı × kaynak tekil, kaynak silinince satır gider; paylasildi varsayılan 0; geri doldurma başlatana, yoksa ilk yöneticiye',
+    str_contains($kutuphaneSql, 'UNIQUE KEY `uq_kutuphane` (`kullanici_id`, `kaynak_id`)')
+    && str_contains($kutuphaneSql, 'REFERENCES `transkript_kaynaklar` (`id`) ON DELETE CASCADE')
+    && str_contains($kutuphaneSql, 'ADD COLUMN `paylasildi` TINYINT(1) NOT NULL DEFAULT 0')
+    && str_contains($kutuphaneSql, "SELECT a.`kullanici_id`, a.`kaynak_id`, 'baslatti', MIN(a.`created_at`)")
+    && str_contains($kutuphaneSql, "WHERE u.`rol` = 'admin'")
+    && str_contains($kutuphaneSql, 'DROP COLUMN `paylasildi`'));
+
+$kutPdo = new KayitPdo();
+(new KutuphaneRepository($kutPdo))->ekle(4, 28, 'onbellek');
+dogrula('Kütüphaneye ekleme tekrar edilebilir; "baslatti" "onbellek"in üstüne yazılır, tersi olmaz',
+    str_contains($kutPdo->sorgular[0] ?? '', "ON DUPLICATE KEY UPDATE ekleme_turu = IF(:tur2 = 'baslatti', 'baslatti', ekleme_turu)"));
+$turHatasi = false;
+try {
+    (new KutuphaneRepository(new KayitPdo()))->ekle(4, 28, 'paylasilan');
+} catch (InvalidArgumentException) {
+    $turHatasi = true;
+}
+dogrula('Bilinmeyen ekleme türü reddedilir', $turHatasi);
+
+/* Rapor sayfası düğmeleri: kendi raporu / başkasının raporu / yönetici. */
+$kutuphaneRaporu = static fn (TranskriptPolicy $p, int $baslatan, bool $kutuphanede, int $paylasildi = 0, int $digerleri = 0): string => App\Core\View::capture('Transkript::goster', [
+    'kaynak' => ['id' => 28, 'tur' => 'youtube', 'dis_kimlik' => 'abcdefghijk', 'sahip_id' => 0, 'baslik' => 'Örnek', 'kanal_adi' => 'Kanal',
+                 'sure_sn' => 600, 'kucuk_resim' => null, 'yayin_tarihi' => null, 'durum' => 'normal', 'paylasildi' => $paylasildi, 'kutuphanede' => $kutuphanede],
+    'veri' => [
+        'durum'  => ['durum' => 'tamamlandi', 'asama' => 'bitti', 'ilerleme' => 100, 'etiket' => 'Analiz tamamlandı', 'hata' => null, 'sirada' => null,
+                     'parca' => ['toplam' => 0, 'biten' => 0, 'hatali' => 0]],
+        'rapor'  => ['summary' => 'Kısa özet.'],
+        'analiz' => ['id' => 9, 'kullanici_id' => $baslatan, 'model' => 'm', 'prompt_surumu' => 'v3', 'toplam_token' => 1, 'maliyet_usd' => 0.0, 'bitti_at' => '2026-10-09 18:00:00'],
+        'eksik'  => [], 'transcript' => null,
+    ],
+    'policy' => $p, 'origin' => 'http://localhost', 'kuyruk' => ['takildi' => false], 'surenAnaliz' => null, 'sonAnaliz' => null,
+    'kutuphaneSayisi' => $digerleri,
+]);
+$kendiRaporu   = $kutuphaneRaporu($prE1, $rE1->id, true);
+$baskaRaporu   = $kutuphaneRaporu($prE2, $rE1->id, true);
+$yonRaporu     = $kutuphaneRaporu($prY, $rE1->id, false, 1, 2);
+dogrula('Rapor: analist kendi raporunu yeniden analiz eder (hakkından düşer uyarısıyla), başkasınınkini edemez',
+    str_contains($kendiRaporu, 'Yeniden analiz et') && str_contains($kendiRaporu, 'günlük hakkınızdan düşer')
+    && !str_contains($baskaRaporu, 'Yeniden analiz et'));
+dogrula('Rapor: analist "Kütüphanemden çıkar" görür, "Tamamen sil" ve "Üyelerle paylaş" görmez',
+    str_contains($kendiRaporu, 'Kütüphanemden çıkar') && !str_contains($kendiRaporu, 'Tamamen sil') && !str_contains($kendiRaporu, 'Üyelerle paylaş'));
+dogrula('Rapor: yönetici paylaşımı kaldırır ve tamamen siler; başka 2 kullanıcının kütüphanesinde olduğu yazar',
+    str_contains($yonRaporu, 'Paylaşımı kaldır') && str_contains($yonRaporu, 'Üyelerle paylaşıldı') && str_contains($yonRaporu, 'Tamamen sil')
+    && str_contains($yonRaporu, '2 kullanıcının daha kütüphanesinde') && !str_contains($yonRaporu, 'Kütüphanemden çıkar'));
+
+/* Liste: başkasının duran analizinde "Yeniden dene" yok; paylaşılan rozeti; hak satırı. */
+$satirBaska = ['kutuphanede' => 1, 'paylasildi' => 1, 'kullanici_id' => $rE1->id] + $satirHata;
+$listeKutuphane = static fn (TranskriptPolicy $p, ?array $hak): string => App\Core\View::capture('Transkript::index', [
+    'policy' => $p, 'filtre' => ['q' => '', 'durum' => '', 'kapsam' => ''], 'varsayilanDurum' => '',
+    'liste' => ['satirlar' => [$satirBaska], 'toplam' => 1], 'sayfa' => 1, 'boyut' => 10,
+    'istatistik' => ['bugun' => 1, 'kaynak' => 1, 'suruyor' => 0, 'hata' => 1, 'token' => 0, 'maliyet' => 0.0],
+    'hepsi' => $p->canSeeAllCosts(), 'onUrl' => '', 'kuyruk' => ['takildi' => false], 'hak' => $hak,
+]);
+$edBListe = $listeKutuphane($prE2, AnalizBaslatici::hakKarari(false, 10, 10, 2, 20, $hakSimdi));
+$edAListe = $listeKutuphane($prE1, $hakBos);
+dogrula('Liste: başkasının duran analizinde "Yeniden dene" yok, kendininkinde var; paylaşılan rozeti; "Kütüphanemden çıkar"',
+    !str_contains($edBListe, 'js-tk-yeniden') && str_contains($edAListe, 'js-tk-yeniden')
+    && str_contains($edBListe, 'tk-paylasilan') && str_contains($edBListe, 'js-tk-cikar') && !str_contains($edBListe, 'js-tk-sil'));
+dogrula('Liste: "Bugünkü hakkınız: 3 / 10 · saatlik 1 / 20"; dolunca yenilenme saati yazar',
+    str_contains($edAListe, 'Bugünkü hakkınız: 3 / 10 · saatlik 1 / 20') && !str_contains($edAListe, 'Analiz hakkınız doldu')
+    && str_contains($edBListe, 'Analiz hakkınız doldu; yarın 00:00 itibarıyla yenilenir'));
+
+Ayarlar::forget();
+$uyeAyarHatasi = PanelAyarlari::dogrula('uye_analiz', 'evet');
+dogrula('Ayar: "Üyeler analiz başlatabilir" seçimi (varsayılan kapalı); listede olmayan değer reddedilir',
+    PanelAyarlari::dogrula('uye_analiz', 'acik') === null && $uyeAyarHatasi !== null
+    && array_keys(PanelAyarlari::secenekler('uye_analiz')) === ['', 'acik', 'kapali']
+    && str_contains(PanelAyarlari::secenekler('uye_analiz')[''], 'kapalı'));
+$anasayfaKodu = (string) file_get_contents(MODUL_YOLU . '/views/anasayfa.php');
+dogrula('Ana sayfa API kartı "yönetici onayıyla" demiyor; Kontrol Paneli açıklamasında yükleme sözü yok',
+    !str_contains($anasayfaKodu, 'yönetici onayıyla') && !str_contains((string) ($kunye['aciklama'] ?? ''), 'sonraki aşamada'));
+dogrula('Çekirdek: editor rolü ekranda "Analist"', Role::label(Role::EDITOR) === 'Analist');
 
 Setting::flush();
 Ayarlar::forget();

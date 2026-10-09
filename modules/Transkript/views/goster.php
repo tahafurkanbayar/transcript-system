@@ -21,6 +21,8 @@
  *  @var string                              $origin  gömülü oynatıcı için
  *  @var array<string,mixed>                 $kuyruk  KuyrukDurumu::getir()
  *  @var array<string,mixed>|null            $surenAnaliz iptal düğmesi için (kullanici_id)
+ *  @var array<string,mixed>|null            $sonAnaliz   "Analizi yeniden dene" için (kullanici_id)
+ *  @var int                                 $kutuphaneSayisi yönetici: başka kaç kullanıcının kütüphanesinde
  * =====================================================================
  */
 
@@ -132,6 +134,9 @@ $indir = static fn (string $bicim): string => url('panel/transkript/' . $kaynakI
                     <?php endif; ?>
                     <?php if ($kaynak['durum'] !== 'normal'): ?>
                         <span class="cy-pill is-danger"><?= $kaynak['durum'] === 'gizli' ? 'Video gizli' : 'Video kaldırılmış' ?></span>
+                    <?php endif; ?>
+                    <?php if ((int) ($kaynak['paylasildi'] ?? 0) === 1): ?>
+                        <span class="cy-pill is-info" title="Panele giren herkes bu raporu görür">Üyelerle paylaşıldı</span>
                     <?php endif; ?>
                 </p>
             </div>
@@ -397,21 +402,22 @@ $indir = static fn (string $bicim): string => url('panel/transkript/' . $kaynakI
                         <p class="cy-panel__note is-warn tk-eski-istem">
                             <?= icon('info', 'cy-icon cy-icon--sm') ?>
                             Bu rapor eski istemle (<?= e($analiz['prompt_surumu'] !== '' ? $analiz['prompt_surumu'] : 'sürümsüz') ?>) üretildi; güncel istem <?= e((string) Ayarlar::get('ai.istem_surumu', 'v1')) ?>.
-                            <?= $youtube && $policy->canReanalyze() && !$suruyor ? 'Yeniden analizle güncellenebilir.' : '' ?>
+                            <?= $youtube && $policy->canReanalyze($analiz) && !$suruyor ? 'Yeniden analizle güncellenebilir.' : '' ?>
                         </p>
                     <?php endif; ?>
-                    <?php if ($youtube && $policy->canReanalyze() && !$suruyor): ?>
+                    <?php /* Yönetici her raporu, analiz başlatabilen yalnız kendi başlattığını (kotadan düşer). */ ?>
+                    <?php if ($youtube && $policy->canReanalyze($analiz) && !$suruyor): ?>
                         <button type="button" class="btn cy-btn cy-btn--ghost cy-btn--sm cy-btn--block js-tk-yeniden"
                                 data-url="<?= e(url('panel/transkript/analiz')) ?>"
                                 data-video="<?= e('https://www.youtube.com/watch?v=' . $videoId) ?>"
                                 data-yeniden="1"
-                                data-onay="Bu video yeniden analiz edilecek; yapay zekâ çağrısı yapılır. Yeni rapor hazır olana kadar bu rapor görünmeye devam eder."
+                                data-onay="Bu video yeniden analiz edilecek; yapay zekâ çağrısı yapılır<?= $policy->isAdmin() ? '' : ' ve günlük hakkınızdan düşer' ?>. Yeni rapor hazır olana kadar bu rapor görünmeye devam eder."
                                 data-onay-baslik="Yeniden analiz et" data-onay-dugme="Evet, yeniden analiz et">
                             <?= icon('refresh', 'cy-icon cy-icon--sm') ?> Yeniden analiz et
                         </button>
                     <?php endif; ?>
                 </section>
-            <?php elseif ($youtube && $policy->canAnalyze() && $durum['durum'] === 'hata'): ?>
+            <?php elseif ($youtube && $durum['durum'] === 'hata' && ($sonAnaliz ?? null) !== null && $policy->canRetry($sonAnaliz)): ?>
                 <button type="button" class="btn cy-btn cy-btn--primary cy-btn--sm cy-btn--block js-tk-yeniden"
                         data-url="<?= e(url('panel/transkript/analiz')) ?>"
                         data-video="<?= e('https://www.youtube.com/watch?v=' . $videoId) ?>" data-yeniden="0">
@@ -448,10 +454,14 @@ $indir = static fn (string $bicim): string => url('panel/transkript/' . $kaynakI
             <?php
             $iptalEdebilir = $surenAnaliz !== null && $policy->canCancelAnalysis($surenAnaliz);
             $silebilir     = $policy->canDeleteSource($kaynak);
+            $cikarabilir   = !$silebilir && $policy->canRemoveFromLibrary($kaynak);
+            $paylasabilir  = $youtube && $policy->canShare();
+            $paylasildi    = (int) ($kaynak['paylasildi'] ?? 0) === 1;
             $adi           = (string) ($kaynak['baslik'] ?: $videoId);
+            $digerleri     = (int) ($kutuphaneSayisi ?? 0);
             ?>
-            <?php if ($iptalEdebilir || $silebilir): ?>
-                <!-- KAYIT: iptal ve silme (TranskriptPolicy; onay penceresiyle) -->
+            <?php if ($iptalEdebilir || $silebilir || $cikarabilir || $paylasabilir): ?>
+                <!-- KAYIT: iptal, paylaşım, kütüphane ve silme (TranskriptPolicy; onay penceresiyle) -->
                 <section class="cy-panel tk-kayit">
                     <h3 class="cy-panel__title mb-2"><?= icon('settings', 'cy-icon cy-icon--sm') ?> Kayıt</h3>
                     <div class="tk-disa__liste">
@@ -463,13 +473,36 @@ $indir = static fn (string $bicim): string => url('panel/transkript/' . $kaynakI
                                 <?= icon('x-circle', 'cy-icon cy-icon--sm') ?> Analizi iptal et
                             </button>
                         <?php endif; ?>
+                        <?php if ($paylasabilir): ?>
+                            <button type="button" class="btn cy-btn cy-btn--ghost cy-btn--sm js-tk-paylas"
+                                    data-url="<?= e(url('panel/transkript/' . $kaynakId . '/paylas')) ?>"
+                                    data-paylas="<?= $paylasildi ? '0' : '1' ?>"
+                                    data-onay="<?= $paylasildi
+                                        ? 'Paylaşım kaldırılacak; rapor yalnız kütüphanesine ekleyenlere görünür.'
+                                        : 'Rapor panele giren herkese (üyeler dahil) görünecek. Token ve maliyet yine yalnız yöneticiye görünür.' ?>"
+                                    data-onay-baslik="<?= $paylasildi ? 'Paylaşımı kaldır' : 'Üyelerle paylaş' ?>"
+                                    data-onay-dugme="<?= $paylasildi ? 'Evet, kaldır' : 'Evet, paylaş' ?>">
+                                <?= icon('users', 'cy-icon cy-icon--sm') ?> <?= $paylasildi ? 'Paylaşımı kaldır' : 'Üyelerle paylaş' ?>
+                            </button>
+                        <?php endif; ?>
+                        <?php if ($cikarabilir): ?>
+                            <button type="button" class="btn cy-btn cy-btn--ghost cy-btn--sm js-tk-cikar"
+                                    data-url="<?= e(url('panel/transkript/' . $kaynakId . '/kutuphaneden-cikar')) ?>"
+                                    data-onay="“<?= e($adi) ?>” kütüphanenizden çıkarılacak. Rapor silinmez; aynı bağlantıyı yeniden eklerseniz hakkınızdan düşmez."
+                                    data-onay-baslik="Kütüphanemden çıkar" data-onay-dugme="Evet, çıkar">
+                                <?= icon('close', 'cy-icon cy-icon--sm') ?> Kütüphanemden çıkar
+                            </button>
+                        <?php endif; ?>
                         <?php if ($silebilir): ?>
                             <button type="button" class="btn cy-btn cy-btn--ghost cy-btn--sm tk-tehlike js-tk-sil"
                                     data-url="<?= e(url('panel/transkript/' . $kaynakId . '/sil')) ?>"
-                                    data-onay="“<?= e($adi) ?>” kalıcı olarak silinecek: raporlar, transcript ve bekleyen işler. Video herkes için ortak; yeniden analiz yapay zekâ çağrısı gerektirir."
-                                    data-onay-baslik="Kaydı sil" data-onay-dugme="Evet, sil" data-onay-tehlike="1">
-                                <?= icon('trash', 'cy-icon cy-icon--sm') ?> Kaydı sil
+                                    data-onay="“<?= e($adi) ?>” kalıcı olarak silinecek: raporlar, transcript ve bekleyen işler.<?= $digerleri > 0 ? ' Video ' . $digerleri . ' kullanıcının daha kütüphanesinde; onlardan da gider.' : '' ?> Yeniden analiz yapay zekâ çağrısı gerektirir."
+                                    data-onay-baslik="Tamamen sil" data-onay-dugme="Evet, sil" data-onay-tehlike="1">
+                                <?= icon('trash', 'cy-icon cy-icon--sm') ?> Tamamen sil
                             </button>
+                            <?php if ($digerleri > 0): ?>
+                                <p class="cy-panel__note mb-0"><?= icon('info', 'cy-icon cy-icon--sm') ?> <?= $digerleri ?> kullanıcının daha kütüphanesinde.</p>
+                            <?php endif; ?>
                         <?php endif; ?>
                     </div>
                 </section>

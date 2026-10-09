@@ -183,7 +183,8 @@
                 if (res.sonuc === 'onbellekten') {
                     var eylemler = [baglanti('Sonuçları Gör', res.adres, 'cy-btn--primary')];
 
-                    if (String($kutu.data('yeniden')) === '1') {
+                    // Sunucu söyler: yönetici ya da raporu başlatan (TranskriptPolicy::canReanalyze).
+                    if (res.yeniden_analiz === true) {
                         var yenile = el('button', 'btn cy-btn cy-btn--ghost cy-btn--sm', 'Yeniden Analiz Et');
                         yenile.type = 'button';
                         yenile.addEventListener('click', function () {
@@ -425,7 +426,7 @@
     /* =================================================================
      *  10) KAYIT: iptal ve silme (liste satırı ve rapor sayfası)
      * ============================================================== */
-    function kayitIstegi(dugme, hata, bitti) {
+    function kayitIstegi(dugme, hata, bitti, ek) {
         var $b = $(dugme);
 
         dugmeOnayi(dugme, function () {
@@ -435,7 +436,7 @@
                 url: $b.attr('data-url'),
                 method: 'POST',
                 dataType: 'json',
-                data: { csrf_token: CY.token() }
+                data: $.extend({ csrf_token: CY.token() }, ek || {})
             }).done(function (res) {
                 CY.notify(res.description, 'success');
                 bitti($b, res);
@@ -463,6 +464,29 @@
                 window.setTimeout(function () { window.location.href = res.adres; }, 600);
             }
         });
+    });
+
+    /* Kütüphanemden çıkar: ortak rapor kalır. Paylaşılan rapor listede
+     * görünmeye devam ettiği için (res.gorunur) sayfa yenilenir. */
+    $(document).on('click', '.js-tk-cikar', function () {
+        kayitIstegi(this, 'Video kütüphaneden çıkarılamadı.', function ($b, res) {
+            var $tr = $b.closest('tr');
+
+            if (res.gorunur === true) {
+                window.setTimeout(function () { window.location.reload(); }, 600);
+            } else if ($tr.length) {
+                $tr.fadeOut(200, function () { $tr.remove(); });
+            } else {
+                window.setTimeout(function () { window.location.href = res.adres; }, 600);
+            }
+        });
+    });
+
+    /* Üyelerle paylaş / paylaşımı kaldır (yalnız yönetici). */
+    $(document).on('click', '.js-tk-paylas', function () {
+        kayitIstegi(this, 'Paylaşım değiştirilemedi.', function () {
+            window.setTimeout(function () { window.location.reload(); }, 600);
+        }, { paylas: $(this).attr('data-paylas') === '1' ? 1 : 0 });
     });
 
     /* =================================================================

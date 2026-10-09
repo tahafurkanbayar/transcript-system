@@ -6,8 +6,8 @@ noktalar, zaman çizelgesi, teknik bilgiler, iddialar, fikirler. Onaylı plan:
 [docs/TEKNIK_RAPOR.md](../../docs/TEKNIK_RAPOR.md).
 
 Projeye ait kodun tamamı bu klasördedir; çekirdeğe (`app/`, `config/`,
-çekirdek `routes/` ve `views/`) dokunulmaz. İki istisna var, ikisi de
-kullanıcının isteğiyle:
+çekirdek `routes/` ve `views/`) dokunulmaz. İstisnalar, hepsi kullanıcının
+isteğiyle:
 
 - Modülün ana sayfayı çizebilmesi için genel kanca: `app/Core/HomePage.php`
   ve `HomeController`'da üç satır ("Ekranlar → Ana sayfa").
@@ -17,6 +17,9 @@ kullanıcının isteğiyle:
   yöneticidedir. Editör analiz başlatır ve API anahtarı alır. Starter'da
   editör sayfa ve mesaj yönetiyordu; geri açmak için `Role::ABILITIES`'e
   `pages.*`, `messages.*` ve `mail.view` eklenir.
+- **Editör ekranda "Analist"** (`Role::LABELS`, 2026-10-09): rol artık içerik
+  düzenlemiyor, analiz yapıyor. Rol anahtarı `editor` kaldı; veritabanı ve
+  `module.json` değişmedi.
 
 ---
 
@@ -28,7 +31,7 @@ modules/Transkript/
 ├─ config.php         davranış ayarları (Ayarlar::get); anahtar yok
 ├─ routes.php         panel/transkript/… ve api/v1/transkript/… rotaları
 ├─ events.php         "transkript-kuyrugu" zamanlanmış görevi (yalnız CLI)
-├─ migrations/        11 tablo (aşağıda)
+├─ migrations/        12 tablo (aşağıda)
 ├─ prompts/           parca_analizi.vN.txt, birlestirme.vN.txt; sürüm analizle kaydedilir
 ├─ assets/            css/transkript.css, js/transkript.js (Varliklar rotasıyla sunulur)
 ├─ src/
@@ -45,39 +48,58 @@ modules/Transkript/
 
 ## Roller ve yetkiler
 
-| Yetki | Ne sağlar | Yönetici | Editör | Üye |
+| Yetki | Ne sağlar | Yönetici | Analist (`editor`) | Üye |
 |---|---|:-:|:-:|:-:|
-| `transkript.view` | Raporları görmek | ✓ | ✓ | ✓ |
-| `transkript.analyze` | Analiz başlatmak, dosya yüklemek (maliyet oluşturur) | ✓ | ✓ | |
+| `transkript.view` | Kütüphanesindeki ve paylaşılan raporları görmek | ✓ | ✓ | ✓ |
+| `transkript.analyze` | Analiz başlatmak, dosya yüklemek (maliyet oluşturur) | ✓ | ✓ | ayarla |
 | `transkript.chat` | Kayda soru sormak | ✓ | ✓ | ✓ |
-| `transkript.admin` | Yeniden analiz, herkesin kaydı, tüm maliyet | ✓ | | |
+| `transkript.admin` | Herkesin kaydı, paylaşım, tamamen silme, tüm maliyet | ✓ | | |
 
-Satır düzeyi (`TranskriptPolicy`): YouTube kaynağı ve analizi herkes için
-ortak cache'tir (`sahip_id = 0`). Yüklenen dosya, sohbet ve kişisel özet
-yalnızca sahibine ve `transkript.admin` yetkisi olana açıktır.
+**Önbellek ortak, görünürlük kişisel** (cowork 5. tur, 2026-10-09). YouTube
+kaynağı ve analizi tek kopyadır (`sahip_id = 0`); aynı video ikinci kez
+yapay zekâya gitmez. Ama raporu herkes değil, yalnız onu **kütüphanesine**
+ekleyen (`transkript_kutuphane`) ve yöneticinin **paylaştığı** raporu
+(`paylasildi = 1`) panele giren herkes görür. Daha önce analiz edilmiş video
+gönderen kullanıcının kütüphanesine "onbellek" olarak eklenir: yapay zekâ
+çağrısı yok, hakkından düşmez. Yüklenen dosya, sohbet ve kişisel özet
+yalnızca sahibine ve yöneticiye açıktır.
 
-Eylem bazında (canlı denendi: misafir / üye / editör / yönetici; rol testi
-2026-10-09, cowork'ün matrisi + 21 denetim):
+Kural TEK yerdedir: `TranskriptPolicy::canViewSource` (PHP) ve onun SQL
+karşılığı `KaynakRepository::gorunurluk()`. Liste, sayaçlar, Kontrol Paneli
+kartı, rapor sayfası, indirme, ilerleme JSON'u ve API ikisinden birine sorar.
 
-| Eylem | Misafir | Üye | Editör | Yönetici |
+**"Üyeler analiz başlatabilir"** (Transkript ayarları, varsayılan kapalı)
+rol yetkisi değil ayardır: açıkken üye analistle aynı kurallar ve kotalarla
+analiz başlatır. Bu yüzden analiz başlatan panel uçları rotada yalnız giriş
+ister, kararı `TranskriptPolicy::canAnalyze` verir.
+
+Eylem bazında (HTTP kodları `tests/transkript-yetki.php`'de gerçek rota ve
+ara katmanlarla, kararlar `tests/transkript.php`'deki matriste sınanır;
+"kendi" = analizi başlatan ya da kütüphanesindeki):
+
+| Eylem | Misafir | Üye | Analist | Yönetici |
 |---|:-:|:-:|:-:|:-:|
-| Liste, rapor, ilerleme, transcript, indirme (ortak YouTube kaydı) | giriş sayfası | ✓ | ✓ | ✓ |
-| Listenin varsayılan süzgeci | | Raporu hazır | Tüm durumlar | Tüm durumlar |
-| Başkasının yüklediği dosya kaydı | giriş sayfası | 404 | 404 (kendi: ✓) | ✓ |
-| Analiz başlat (önbellekteyse AI'a gidilmez) | 401 | 403 | ✓ | ✓ |
-| Hatalı analizi yeniden dene | 401 | 403 | ✓ | ✓ |
-| Yeniden analiz (`yeniden=1`) | 401 | 403 | 403 | ✓ |
-| Süren analizi iptal | 401 | 403 | kendi başlattığı (başkasınınki 403) | ✓ |
-| Sil | 401 | kendi yüklediği | kendi yüklediği | ✓ (ortak kayıt dahil) |
+| Rapor, ilerleme, transcript, indirme: kütüphanesindeki ya da paylaşılan | giriş | ✓ | ✓ | ✓ |
+| … başkasının, paylaşılmamış | giriş | 404 | 404 | ✓ |
+| Analiz başlat (önbellekteyse AI'a gidilmez, haktan düşmez) | 401 | 403 (ayarla ✓) | ✓ | ✓ |
+| Duran analizi sürdür ("Yeniden dene") | 401 | 403 | kendi; başkasının videosunu gönderirse kendi analizi açılır | ✓ |
+| Yeniden analiz (`yeniden=1`, haktan düşer) | 401 | 403 | kendi raporu (başkasınınki 403) | ✓ |
+| Süren analizi iptal | 401 | 403 | kendi (başkasınınki 403; süren yoksa 409) | ✓ |
+| Kütüphanemden çıkar (ortak kayıt kalır) | 401 | kendi kütüphanesi | kendi kütüphanesi | ✓ |
+| Tamamen sil | 401 | kendi yüklediği | kendi yüklediği (YouTube 403) | ✓ (kaç kullanıcıda olduğunu söyler) |
+| Üyelerle paylaş / paylaşımı kaldır | 401 | 403 | 403 | ✓ |
 | "Şimdi işle" (kuyruk), Transkript ayarları | 401 | 403 | 403 | ✓ |
 | Hatanın iç nedeni (kota, servis, ayar) | | genel metin | kendi başlattığı | ✓ |
-| "Raporu hazır" / "Bugün" sayaçları | | görebildiği (farklı video) | görebildiği (farklı video) | herkesin (analiz sayısı) |
+| "Raporlarınız" / "Bugün eklediğiniz" | | kütüphane + paylaşılan | kütüphane + paylaşılan | herkesin |
+| Bugünkü analiz hakkı ("3 / 10 · saatlik 1 / 20") | | (ayarla) | ✓ | muaf |
 | Süren / hatalı sayısı (liste, kontrol paneli) | | | ✓ | ✓ |
 | Token / maliyet (liste kartları, rapor kartı, API özeti) | | | | ✓ |
 | API anahtarı (çekirdek `profile.api`) | | | ✓ | ✓ |
 | Sayfalar, iletişim mesajları, e-posta geçmişi (çekirdek) | | 403 | 403 | ✓ |
 
-CSRF anahtarı olmayan her POST 403'tür.
+Kontrol sırası her uçta aynıdır: giriş → yetki ve sahiplik (görmüyorsa 404,
+görüyor ama yapamıyorsa 403) → en son durum (409 / 422). CSRF anahtarı
+olmayan her POST 403'tür.
 
 **Hata metni:** videonun kendisinden gelen neden (altyazı yok, video gizli…)
 herkese söylenir. Kota, servis ve ayar hataları iç işletme bilgisidir:
@@ -85,7 +107,7 @@ yalnız yönetici ve analizi başlatan adıyla görür, ötekiler "Bu video içi
 rapor hazırlanamadı." okur; API ve ilerleme JSON'unda kod da
 `rapor_hazirlanamadi` olur (`HataKodlari::gorunenMesaj` / `gorunenKod`).
 
-**Ana sayfa vaadi** yetkiye bağlıdır (`AnasayfaController::yapabilir`):
+**Ana sayfa vaadi** yetkiye bağlıdır (`AnasayfaController::analizEdebilir`, `::yapabilir`):
 "bağlantıyı yapıştırın" yalnız analiz başlatabilene, API kartının anahtar
 bağlantısı yalnız `profile.api` yetkisi olana. Misafir için kayıt formunun
 açtığı üye hesabının yetkisine bakılır; varsayılan kurulumda misafir ve üye
@@ -112,6 +134,7 @@ muaftır (`yonetici_muaf`); genel bütçe tavanı herkese uygulanır.
 | `transkript_kisisel_ozetler` | "Sana özel" bölümü, kullanıcı başına |
 | `transkript_sohbetler` / `transkript_sohbet_mesajlari` | Kayda sor |
 | `transkript_ilgi_alanlari` | Kişisel filtrenin ilgi alanları |
+| `transkript_kutuphane` | Kişisel kütüphane: kullanıcı × kaynak, `ekleme_turu` = baslatti / onbellek; UNIQUE(`kullanici_id`, `kaynak_id`) |
 | `ai_kullanim_kaydi` | Her AI / ASR çağrısının token ve maliyeti (adı genel, başka modüller de yazabilir) |
 
 **Arama neden katlanmış sütunda?** `utf8mb4_turkish_ci`'de "I"nın küçüğü
@@ -132,7 +155,8 @@ Panel: `panel/transkript` (liste), `panel/transkript/{kaynak_id}` (rapor),
 `panel/transkript/{kaynak_id}/transkript` (okuma + arama JSON'u),
 `panel/transkript/varlik/{dosya}` (modülün JS / CSS'i),
 `panel/transkript/{kaynak_id}/indir/{bicim}` (rapor.md, transkript.txt / .srt / .vtt),
-`panel/transkript/{kaynak_id}/sil` ve `…/iptal` (POST, kayıt yönetimi),
+`panel/transkript/{kaynak_id}/sil`, `…/iptal`, `…/kutuphaneden-cikar` ve
+`…/paylas` (POST, kayıt yönetimi; paylaşım yalnız yönetici),
 `panel/transkript/kuyruk/isle` (POST, yönetici; "Şimdi işle"),
 `panel/transkript/{kaynak_id}/sohbet` (POST, sonraki aşama).
 
@@ -182,7 +206,9 @@ biçimiyle, tarayıcının `confirm()` kutusu yok):
 |---|---|---|
 | Yeniden dene | analiz yetkisi (`transkript.analyze`), son analiz hatalıysa | yeni analiz açılır; transcript yeniden kullanılır |
 | İptal | yönetici ya da analizi başlatan | analiz `iptal_edildi` koduyla biter, bekleyen işleri silinir; çalışan iş sonucunu yazamaz |
-| Sil | ortak YouTube kaydında yalnız yönetici; yüklenen dosyada sahibi | kaynak, analizler, transcript, sohbetler (CASCADE) ve bekleyen işler tek işlemde; AI kullanım kayıtları kalır |
+| Kütüphanemden çıkar | kütüphanesinde olan | yalnız o kullanıcının `transkript_kutuphane` satırı; ortak kayıt ve rapor kalır |
+| Paylaş | yalnız yönetici | `paylasildi` 1 / 0; paylaşılan rapor herkesin listesinde "Paylaşılan" rozetiyle |
+| Tamamen sil | ortak YouTube kaydında yalnız yönetici; yüklenen dosyada sahibi | kaynak, analizler, transcript, sohbetler, herkesin kütüphane satırı (CASCADE) ve bekleyen işler tek işlemde; AI kullanım kayıtları kalır |
 
 **Rapor (`panel/transkript/{kaynak_id}`):** kaynak kartı; analiz sürerken 4
 aşamalı canlı ilerleme (bitince sayfa kendini yeniler); kısa özet; açılır

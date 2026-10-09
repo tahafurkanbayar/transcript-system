@@ -27,7 +27,7 @@ use Modules\Transkript\Varliklar;
 
 $gruplar = [
     'Yapay zekâ ve transcript' => ['ai_model', 'altyazi_dili', 'en_uzun_dk'],
-    'Kotalar'                  => ['gunluk_sinir', 'saatlik_sinir', 'gunluk_token_tavani', 'gunluk_maliyet_tavani'],
+    'Kim analiz başlatır, ne kadar?' => ['uye_analiz', 'gunluk_sinir', 'saatlik_sinir', 'gunluk_token_tavani', 'gunluk_maliyet_tavani'],
     'Maliyet tahmini (1M token)' => ['fiyat_giris', 'fiyat_cikis'],
     'Ana sayfa'                => ['ana_sayfa'],
     'Kuyruk'                   => ['tarayici_kuyruk'],

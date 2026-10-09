@@ -70,13 +70,16 @@ iddialar, fikirler ve kullanıcıya özel bölüm. Türkçe önceliklidir.
 
 ## Mimari özeti (ayrıntı `docs/TEKNIK_RAPOR.md`'de)
 
-**Tablolar** (10 modül tablosu + `ai_kullanim_kaydi`):
+**Tablolar** (11 modül tablosu + `ai_kullanim_kaydi`):
 `transkript_kaynaklar` (`tur`: youtube / ses_dosyasi / video_dosyasi, `dis_kimlik`,
-`sahip_id`, UNIQUE(`tur`, `dis_kimlik`, `sahip_id`)), `transkript_metinler`,
+`sahip_id`, UNIQUE(`tur`, `dis_kimlik`, `sahip_id`), `paylasildi`), `transkript_metinler`,
 `transkript_segmentler`, `transkript_analizler`, `transkript_parcalar`,
 `transkript_analiz_ogeleri`, `transkript_kisisel_ozetler`, `transkript_sohbetler`,
-`transkript_sohbet_mesajlari`, `transkript_ilgi_alanlari`. Kaynak türünü yalnız
-`transkript_kaynaklar` bilir; diğer tablolar `kaynak_id` ile bağlanır.
+`transkript_sohbet_mesajlari`, `transkript_ilgi_alanlari`, `transkript_kutuphane`.
+Kaynak türünü yalnız `transkript_kaynaklar` bilir; diğer tablolar `kaynak_id` ile
+bağlanır. Önbellek ortak, görünürlük kişisel: rapor yalnız kütüphanesine
+ekleyene ve yöneticinin paylaştığına görünür (`TranskriptPolicy::canViewSource`,
+SQL'de `KaynakRepository::gorunurluk()`).
 
 **Transcript zinciri** (`TranscriptProviderInterface`, sıra `.env` / config'ten):
 1. `YouTubeTranscriptProvider`: YouTube altyazısı.
@@ -115,6 +118,7 @@ php cy queue:work --max=30            # kuyruk işçisi
 php cy schedule:run                   # cron'un her dakika çalıştırdığı komut
 php tests/unit.php                    # starter birim testleri (veritabanı gerekmez)
 php tests/transkript.php              # modül birim testleri (UrlParser, Chunker, ResultValidator)
+php tests/transkript-yetki.php        # rol × eylem × sahiplik → HTTP (yerel veritabanı ister; yoksa atlanır)
 ```
 
 Her adımdan sonra iki test dosyası da geçmeli; GitHub Actions (`ci.yml`) yeşil kalmalı.

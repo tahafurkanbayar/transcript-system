@@ -446,7 +446,7 @@ $kimler = [
                             <?= $girisli ? 'API anahtarı alın' : 'Giriş yapıp anahtar alın' ?> <?= icon('chevron', 'cy-icon cy-icon--sm') ?>
                         </a>
                     <?php else: ?>
-                        <p>Raporu ve transcript'i JSON olarak alın, kendi uygulamanıza bağlayın. API erişimi yönetici onayıyla açılır.</p>
+                        <p>Raporu ve transcript'i JSON olarak alın, kendi uygulamanıza bağlayın. API anahtarını analiz hesapları kendileri oluşturur; hesabınıza bu yetkinin verilmesi için bize yazın.</p>
                         <code class="tka-kod" aria-hidden="true">GET /api/v1/transkript/kaynaklar/42/ozet</code>
                         <a class="tka-kart__baglanti" href="<?= e(url('iletisim')) ?>">
                             API erişimi için bize yazın <?= icon('chevron', 'cy-icon cy-icon--sm') ?>

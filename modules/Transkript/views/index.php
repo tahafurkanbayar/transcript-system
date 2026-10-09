@@ -10,14 +10,18 @@
  *  tablo. Süren analizin satırı 3 saniyede bir ilerleme ucundan
  *  güncellenir. Bütün metin e() ile basılır.
  *
+ *  Yönetici dışındakiler yalnız kütüphanelerindeki ve paylaşılan
+ *  raporları görür (TranskriptPolicy); sayaçlar da aynı kapsamı sayar.
+ *
  *  @var Modules\Transkript\TranskriptPolicy                     $policy
- *  @var array{q:string,durum:string}                              $filtre
+ *  @var array{q:string,durum:string,kapsam:string}               $filtre
  *  @var string                                                    $varsayilanDurum  analiz başlatamayana 'hazir'
  *  @var array{satirlar:list<array<string,mixed>>,toplam:int}      $liste
  *  @var int                                                       $sayfa
  *  @var int                                                       $boyut
  *  @var array{bugun:int,token:int,maliyet:float,kaynak:int,suruyor:int,hata:int} $istatistik
  *  @var bool                                                      $hepsi  yönetici: herkesin sayıları + token / maliyet kartları
+ *  @var array<string,mixed>|null                                  $hak    AnalizBaslatici::hakDurumu(); analiz başlatamayana null
  *  @var array<string,mixed>                                       $kuyruk KuyrukDurumu::getir()
  * =====================================================================
  */
@@ -38,7 +42,10 @@ $durumAdi = [
     'iptal'               => ['İptal edildi', ''],
 ];
 $varsayilanDurum = $varsayilanDurum ?? '';
-$filtreli = $filtre['q'] !== '' || $filtre['durum'] !== $varsayilanDurum;
+$filtre['kapsam'] ??= '';
+$filtreli = $filtre['q'] !== '' || $filtre['durum'] !== $varsayilanDurum || $filtre['kapsam'] !== '';
+$hak      = $hak ?? null;
+$hakDolu  = $hak !== null && $hak['bekleme_sn'] > 0;
 // Adreste taşınan durum: varsayılan "hazir" iken "Tüm durumlar" boş değil "hepsi"dir.
 $durumParam = $filtre['durum'] !== '' ? $filtre['durum'] : ($varsayilanDurum !== '' ? 'hepsi' : '');
 $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format((float) $n, $basamak, ',', '.');
@@ -64,14 +71,27 @@ $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format(
 
 <?php if ($policy->canAnalyze()): ?>
     <section class="cy-panel mb-3 tk-analiz" id="tk_analiz"
-             data-url="<?= e(url('panel/transkript/analiz')) ?>"
-             data-yeniden="<?= $policy->canReanalyze() ? '1' : '0' ?>">
+             data-url="<?= e(url('panel/transkript/analiz')) ?>">
         <header class="cy-panel__head">
             <div>
                 <h3 class="cy-panel__title"><?= icon('zap', 'cy-icon cy-icon--sm') ?> Yeni analiz</h3>
-                <p class="cy-panel__sub">YouTube bağlantısını yapıştırın; transcript alınır, bölüm bölüm analiz edilip rapora dönüştürülür.</p>
+                <p class="cy-panel__sub">YouTube bağlantısını yapıştırın; transcript alınır, bölüm bölüm analiz edilip rapora dönüştürülür. Daha önce analiz edilmiş video hakkınızdan düşmeden kütüphanenize eklenir.</p>
             </div>
+            <?php if ($hak !== null && !$hak['muaf'] && ($hak['gunluk_sinir'] > 0 || $hak['saatlik_sinir'] > 0)): ?>
+                <?php /* Bugünkü hak (AnalizBaslatici::hakDurumu; kotaKontrolu ile aynı sayaç). */ ?>
+                <p class="tk-hak<?= $hakDolu ? ' is-dolu' : '' ?>">
+                    <?= icon('clock', 'cy-icon cy-icon--sm') ?>
+                    <?= e(implode(' · ', array_filter([
+                        $hak['gunluk_sinir'] > 0 ? 'Bugünkü hakkınız: ' . $hak['gunluk'] . ' / ' . $hak['gunluk_sinir'] : '',
+                        $hak['saatlik_sinir'] > 0 ? 'saatlik ' . $hak['saatlik'] . ' / ' . $hak['saatlik_sinir'] : '',
+                    ]))) ?>
+                </p>
+            <?php endif; ?>
         </header>
+        <?php if ($hakDolu): ?>
+            <p class="cy-panel__note is-warn mb-2"><?= icon('info', 'cy-icon cy-icon--sm') ?>
+                Analiz hakkınız doldu; <?= e($hak['yenilenme']) ?> itibarıyla yenilenir. Daha önce analiz edilmiş videoları eklemek hakkınızdan düşmez.</p>
+        <?php endif; ?>
         <form class="tk-analiz__form" id="tk_analiz_form" novalidate>
             <label class="visually-hidden" for="tk_url">YouTube bağlantısı</label>
             <input type="url" class="form-control" id="tk_url" name="url" required inputmode="url" autocomplete="off"
@@ -94,7 +114,7 @@ $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format(
         </details>
     </section>
 <?php else: ?>
-    <p class="cy-panel__note mb-3"><?= icon('info', 'cy-icon cy-icon--sm') ?> Analiz başlatma yetkiniz yok; analiz edilmiş videoların raporlarını görebilirsiniz.</p>
+    <p class="cy-panel__note mb-3"><?= icon('info', 'cy-icon cy-icon--sm') ?> Analiz başlatma yetkiniz yok; sizinle paylaşılan raporları okuyabilirsiniz.</p>
 <?php endif; ?>
 
 <?php $analizci = $policy->canAnalyze(); ?>
@@ -102,7 +122,8 @@ $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format(
     <div class="cy-stat">
         <span class="cy-stat__icon cy-stat__icon--success"><?= icon('files') ?></span>
         <span>
-            <span class="cy-stat__label">Raporu hazır video</span>
+            <?php /* Yönetici herkesin raporunu, öteki roller görebildiğini (kütüphane + paylaşılan) sayar; liste "Raporu hazır" ile aynı sayı. */ ?>
+            <span class="cy-stat__label"><?= $hepsi ? 'Raporu hazır video' : 'Raporlarınız' ?></span>
             <span class="cy-stat__value"><?= e($sayi($istatistik['kaynak'])) ?></span>
             <span class="cy-stat__hint"><?php
                 // Süren / hatalı sayısı yalnız analiz başlatabilene (yeniden deneyebilir).
@@ -110,17 +131,17 @@ $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format(
                     $istatistik['suruyor'] > 0 ? $sayi($istatistik['suruyor']) . ' sürüyor' : '',
                     $istatistik['hata'] > 0 ? $sayi($istatistik['hata']) . ' hata' : '',
                 ]) : [];
-                echo e($durumlar !== [] ? implode(' · ', $durumlar) : ($analizci ? 'aynı video ikinci kez analiz edilmez' : 'okuyabileceğiniz raporlar'));
+                echo e($durumlar !== [] ? implode(' · ', $durumlar) : ($hepsi ? 'aynı video ikinci kez analiz edilmez' : 'kütüphanenizdeki ve sizinle paylaşılan'));
             ?></span>
         </span>
     </div>
     <div class="cy-stat">
         <span class="cy-stat__icon cy-stat__icon--brand"><?= icon('calendar') ?></span>
         <span>
-            <?php /* Yönetici analiz sayısını (yeniden analiz dahil), öteki roller farklı videoyu görür. */ ?>
-            <span class="cy-stat__label"><?= $hepsi ? 'Bugün tamamlanan analiz' : 'Bugün hazırlanan rapor' ?></span>
+            <?php /* Yönetici bugün tamamlanan analizleri, öteki roller bugün kütüphanesine eklediğini görür. */ ?>
+            <span class="cy-stat__label"><?= $hepsi ? 'Bugün tamamlanan analiz' : 'Bugün eklediğiniz' ?></span>
             <span class="cy-stat__value"><?= e($sayi($istatistik['bugun'])) ?></span>
-            <span class="cy-stat__hint"><?= $hepsi ? 'bütün kullanıcılar, yeniden analiz dahil' : 'farklı video; yeniden analiz sayılmaz' ?></span>
+            <span class="cy-stat__hint"><?= $hepsi ? 'bütün kullanıcılar, yeniden analiz dahil' : 'kütüphanenize eklenen video' ?></span>
         </span>
     </div>
     <?php /* Token ve maliyet yalnız yöneticiye (kullanıcı kararı: üye ve editör görmez). */ ?>
@@ -160,6 +181,14 @@ $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format(
             <option value="hata"<?= $filtre['durum'] === 'hata' ? ' selected' : '' ?>>Hata</option>
             <option value="iptal"<?= $filtre['durum'] === 'iptal' ? ' selected' : '' ?>>İptal edildi</option>
         </select>
+        <?php /* Analiz başlatamayanın kütüphanesi boştur; yalnız paylaşılanları görür, süzgeç gereksiz. */ ?>
+        <?php if ($hepsi || $analizci): ?>
+            <select class="form-select tk-filtre" name="kapsam" aria-label="Kapsama göre filtrele">
+                <option value=""<?= $filtre['kapsam'] === '' ? ' selected' : '' ?>><?= $hepsi ? 'Bütün kayıtlar' : 'Kütüphanem ve paylaşılanlar' ?></option>
+                <option value="kutuphanem"<?= $filtre['kapsam'] === 'kutuphanem' ? ' selected' : '' ?>>Kütüphanem</option>
+                <option value="paylasilan"<?= $filtre['kapsam'] === 'paylasilan' ? ' selected' : '' ?>>Paylaşılanlar</option>
+            </select>
+        <?php endif; ?>
         <button type="submit" class="btn cy-btn cy-btn--ghost cy-btn--sm"><?= icon('filter', 'cy-icon cy-icon--sm') ?> Uygula</button>
         <?php if ($filtreli): ?>
             <a class="cy-link small" href="<?= e(url('panel/transkript')) ?>">Temizle</a>
@@ -172,8 +201,9 @@ $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format(
             <p class="mb-0">
                 <?= match (true) {
                     $filtreli                => 'Bu filtreyle eşleşen analiz yok.',
-                    $policy->canAnalyze()    => 'Henüz analiz yok. Yukarıdaki kutuya bir YouTube bağlantısı yapıştırarak başlayın.',
-                    default                  => 'Henüz hazır rapor yok. Analiz edilen videolar burada görünecek.',
+                    $hepsi                   => 'Henüz analiz yok. Yukarıdaki kutuya bir YouTube bağlantısı yapıştırarak başlayın.',
+                    $policy->canAnalyze()    => 'Kütüphaneniz boş. Yukarıdaki kutuya bir YouTube bağlantısı yapıştırarak başlayın; daha önce analiz edilmiş video hakkınızdan düşmez.',
+                    default                  => 'Sizinle paylaşılan rapor henüz yok. Yönetici bir raporu paylaşınca burada görünür.',
                 } ?>
             </p>
         </div>
@@ -213,6 +243,7 @@ $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format(
                                         <strong><?= e($adi) ?></strong>
                                         <small>
                                             <?php if ($satir['tur'] !== 'youtube'): ?><span class="cy-chip"><?= e($turAdi[$satir['tur']] ?? (string) $satir['tur']) ?></span> <?php endif; ?>
+                                            <?php if ((int) ($satir['paylasildi'] ?? 0) === 1): ?><span class="cy-chip tk-paylasilan" title="Yönetici bu raporu üyelerle paylaştı">Paylaşılan</span> <?php endif; ?>
                                             <?= e((string) ($satir['kanal_adi'] ?? '')) ?>
                                         </small>
                                     </span>
@@ -247,7 +278,8 @@ $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format(
                             <td><small title="<?= e((string) $satir['created_at']) ?>"><?= e(human_date((string) $satir['created_at'])) ?></small></td>
                             <td class="text-end">
                                 <div class="cy-row-actions">
-                                    <?php if ($durum === 'hata' && $satir['tur'] === 'youtube' && $policy->canAnalyze()): ?>
+                                    <?php /* Başkasının duran analizine dokunulmaz (TranskriptPolicy::canRetry). */ ?>
+                                    <?php if ($durum === 'hata' && $satir['tur'] === 'youtube' && $policy->canRetry($satir)): ?>
                                         <button type="button" class="cy-btn-icon js-tk-yeniden" title="Yeniden dene" aria-label="<?= e($adi) ?>: yeniden dene"
                                                 data-url="<?= e(url('panel/transkript/analiz')) ?>"
                                                 data-video="<?= e('https://www.youtube.com/watch?v=' . $satir['dis_kimlik']) ?>" data-yeniden="0"><?= icon('refresh', 'cy-icon cy-icon--sm') ?></button>
@@ -259,10 +291,16 @@ $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format(
                                                 data-onay-baslik="Analizi iptal et" data-onay-dugme="Evet, iptal et" data-onay-tehlike="1"><?= icon('x-circle', 'cy-icon cy-icon--sm') ?></button>
                                     <?php endif; ?>
                                     <?php if ($policy->canDeleteSource($satir)): ?>
-                                        <button type="button" class="cy-btn-icon cy-btn-icon--danger js-tk-sil" title="Sil" aria-label="<?= e($adi) ?>: sil"
+                                        <button type="button" class="cy-btn-icon cy-btn-icon--danger js-tk-sil" title="Tamamen sil" aria-label="<?= e($adi) ?>: tamamen sil"
                                                 data-url="<?= e(url('panel/transkript/' . $kaynakId . '/sil')) ?>"
-                                                data-onay="“<?= e($adi) ?>” kalıcı olarak silinecek: raporlar, transcript ve bekleyen işler. Video herkes için ortak; yeniden analiz yapay zekâ çağrısı gerektirir."
-                                                data-onay-baslik="Kaydı sil" data-onay-dugme="Evet, sil" data-onay-tehlike="1"><?= icon('trash', 'cy-icon cy-icon--sm') ?></button>
+                                                data-onay="“<?= e($adi) ?>” kalıcı olarak silinecek: raporlar, transcript, bekleyen işler ve kütüphanesine ekleyen herkesteki kaydı. Yeniden analiz yapay zekâ çağrısı gerektirir."
+                                                data-onay-baslik="Tamamen sil" data-onay-dugme="Evet, sil" data-onay-tehlike="1"><?= icon('trash', 'cy-icon cy-icon--sm') ?></button>
+                                    <?php elseif ($policy->canRemoveFromLibrary($satir)): ?>
+                                        <?php /* Yalnız bu kullanıcının satırı silinir; ortak rapor kalır. */ ?>
+                                        <button type="button" class="cy-btn-icon js-tk-cikar" title="Kütüphanemden çıkar" aria-label="<?= e($adi) ?>: kütüphanemden çıkar"
+                                                data-url="<?= e(url('panel/transkript/' . $kaynakId . '/kutuphaneden-cikar')) ?>"
+                                                data-onay="“<?= e($adi) ?>” kütüphanenizden çıkarılacak. Rapor silinmez; aynı bağlantıyı yeniden eklerseniz hakkınızdan düşmez."
+                                                data-onay-baslik="Kütüphanemden çıkar" data-onay-dugme="Evet, çıkar"><?= icon('close', 'cy-icon cy-icon--sm') ?></button>
                                     <?php endif; ?>
                                 </div>
                             </td>
@@ -279,7 +317,7 @@ $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format(
                 'toplam' => $liste['toplam'],
                 'boyut'  => $boyut,
                 'yol'    => 'panel/transkript',
-                'sorgu'  => array_filter(['q' => $filtre['q'], 'durum' => $durumParam], static fn (string $v): bool => $v !== ''),
+                'sorgu'  => array_filter(['q' => $filtre['q'], 'durum' => $durumParam, 'kapsam' => $filtre['kapsam']], static fn (string $v): bool => $v !== ''),
             ]); ?>
         </footer>
     <?php endif; ?>

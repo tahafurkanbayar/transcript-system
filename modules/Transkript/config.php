@@ -182,6 +182,9 @@ return [
      *  gunluk_maliyet_tavani bütün kullanıcılar, bugünkü tahmini maliyet
      *                       (USD, ücretli katman fiyatıyla). Genel tavan
      *                       bütçedir: yöneticiye de uygulanır.
+     *  uye_baslatabilir     üye rolü de analiz başlatır (analistle aynı
+     *                       kurallar ve kotalar). Rol yetkisi değil ayar:
+     *                       TranskriptPolicy::canAnalyze okur.
      * -------------------------------------------------------------- */
     'analiz' => [
         'saatlik_sinir'         => 20,
@@ -189,6 +192,7 @@ return [
         'yonetici_muaf'         => true,
         'gunluk_token_tavani'   => 0,
         'gunluk_maliyet_tavani' => 5.0,
+        'uye_baslatabilir'      => false,
 
         // Bundan uzun video analiz edilmez (dakika; 0 = sınırsız). Süre
         // biliniyorsa istekte, bilinmiyorsa video bilgisi ya da transcript
