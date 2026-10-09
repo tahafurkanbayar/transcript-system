@@ -218,3 +218,8 @@ a.tk-zaman.is-oynuyor { background: var(--cy-brand); color: #fff; }
 
 /* Ayarlar: "Dinlenmeleri sıfırla" + "günlük kotası dolanları da" kutusu */
 .tk-sifirla { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .75rem; justify-content: flex-end; }
+
+/* Liste: üyenin "Sizinle paylaşılan" kartı bağlantıdır (K7). */
+.tk-stat-baglanti { color: inherit; text-decoration: none; transition: border-color var(--cy-transition), box-shadow var(--cy-transition); }
+.tk-stat-baglanti:hover,
+.tk-stat-baglanti:focus-visible { border-color: var(--cy-brand); box-shadow: var(--cy-shadow-sm); }

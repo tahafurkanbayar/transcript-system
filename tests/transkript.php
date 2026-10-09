@@ -2392,9 +2392,11 @@ dogrula('Liste: üyede "Raporu hazır" seçili gelir, "Tüm durumlar" hepsi değ
     str_contains($uyeHazir, '<option value="hazir" selected>') && str_contains($uyeHazir, '<option value="hepsi">Tüm durumlar')
     && str_contains($yonListe, '<option value="" selected>Tüm durumlar'));
 $tokenKarti = static fn (string $html): bool => (bool) preg_match('/Toplam token|Tahmini maliyet|Token kullanımınız/u', $html);
-dogrula('Kartlar: token / maliyet yalnız yöneticide; hata sayısı analiz başlatabilende (editör), üyede yok',
+dogrula('Kartlar: token / maliyet yalnız yöneticide; hata sayısı analiz başlatabilende (editör), üyede yok; analiz hakkı olmayan üyede "Bugün eklediğiniz" yerine "Sizinle paylaşılan" (K7)',
     !str_contains($uyeHepsi, '1 hata') && !$tokenKarti($uyeHepsi)
-    && str_contains($uyeHepsi, 'Bugün eklediğiniz') && str_contains($uyeHepsi, 'Raporlarınız') && str_contains($uyeHepsi, 'kütüphanenize eklenen video')
+    && !str_contains($uyeHepsi, 'Bugün eklediğiniz') && str_contains($uyeHepsi, 'Raporlarınız') && str_contains($uyeHepsi, 'Sizinle paylaşılan')
+    && str_contains($uyeHepsi, 'kapsam=paylasilan')
+    && str_contains($edListe, 'Bugün eklediğiniz') && str_contains($edListe, 'kütüphanenize eklenen video') && !str_contains($edListe, 'Sizinle paylaşılan')
     && str_contains($edListe, '1 hata') && !$tokenKarti($edListe)
     && str_contains($yonListe, 'Toplam token') && str_contains($yonListe, 'Tahmini maliyet') && str_contains($yonListe, 'Bugün tamamlanan analiz'));
 
