@@ -92,16 +92,24 @@ raporla birlikte kaydedilir.
 **YouTube'dan ses ya da video indirilmez.** Yalnız herkese açık altyazı okunur;
 altyazısı olmayan videoda Gemini'ye video bağlantısı verilir.
 
-## Roller
+## Roller ve üyelik planları
 
-| | Yönetici | Analist | Üye |
+Kayıt olan herkes **Ücretsiz** plandadır. **Pro** ücretli üyeliktir: yönetici
+ödemeyi görünce panelden süreli olarak verir, süre dolunca hesap kendiliğinden
+Ücretsiz'e döner. Sınırlar ve fiyat Transkript ayarlarından değişir.
+
+| | Yönetici | Pro Üye | Üye (Ücretsiz) |
 |---|:---:|:---:|:---:|
-| Analiz başlatma | ✓ | ✓ | ayara bağlı (varsayılan kapalı) |
+| Analiz başlatma | sınırsız | günde 20, saatte 5 | günde 2, saatte 1 (kapatılabilir) |
+| En uzun video | 180 dk | 180 dk | 30 dk |
+| Önceden analiz edilmiş videoyu açma (haktan düşmez) | ✓ | ✓ | ✓ |
+| Yeniden analiz, altyazı (SRT / VTT) indirme | ✓ | ✓ | |
 | Kendi kütüphanesi | ✓ | ✓ | ✓ |
 | Herkesin analizleri, "Kim" sütunu | ✓ | | |
 | Raporu üyelerle paylaşma, tamamen silme | ✓ | | |
 | Token ve maliyet bilgisi | ✓ | | |
 | API anahtarı | ✓ | ✓ | |
+| Pro üyelik verme, uzatma, kaldırma | ✓ | | |
 | Kullanıcılar, site ve Transkript ayarları | ✓ | | |
 
 Kurallar tek yerdedir: `TranskriptPolicy` (PHP) ve onun SQL karşılığı
