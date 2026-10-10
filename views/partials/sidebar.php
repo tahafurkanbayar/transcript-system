@@ -6,11 +6,18 @@
  *  Menü öğeleri bir DİZİDEN üretilir; her öğe bir yetkiye bağlıdır.
  *  Asıl koruma routes/web.php'deki ara katmanlardadır; menü gizleme
  *  yalnızca arayüz düzenidir.
+ *
+ *  SIRA: Genel · modüllerin kendi bölümleri (SidebarMenu; ör. Transkript)
+ *  · Modüller (tek bağlantılı modüller) · Site ve iletişim · Yönetim ·
+ *  Hesabım. Tek öğeli başlıklar azaltıldı (İçerik + İletişim birleşti).
+ *  Altta kullanıcı kartı, "Siteyi görüntüle" ve "Çıkış"; telefonda
+ *  çekmecenin sağ üstünde kapatma düğmesi.
  * =====================================================================
  */
 
 use App\Core\Modules\Modules;
 use App\Core\Setting;
+use App\Core\SidebarMenu;
 
 /** @var App\Models\User|null $currentUser */
 $user = $currentUser ?? null;
@@ -34,21 +41,23 @@ foreach (Setting::groupLabels() as $anahtar => $baslik) {
 /* ---------------------------------------------------------------------
  *  MODÜL MENÜSÜ
  * ---------------------------------------------------------------------
- *  Açık her modül, module.json içinde bir "menu" bloğu tanımlayarak
- *  sol menüde kendi bağlantısını gösterebilir:
+ *  1) Kendi BÖLÜMÜNÜ kaydeden modül (SidebarMenu::add, events.php) o
+ *     bölümle "Genel"in altına girer: birden çok sayfa, sayaç, etiket.
+ *  2) Öteki açık modüller module.json → "menu" bloğundaki TEK
+ *     bağlantıyla "Modüller" başlığı altında görünür:
  *
  *      "menu": { "route": "panel/stok", "icon": "database",
  *                "label": "Stok", "can": "stok.view" }
  *
- *  Tanımlamazsa makul bir varsayılan üretilir. Çekirdek, hangi
- *  modüllerin var olduğunu bilmez — listeyi modüllerin kendisi
- *  doldurur.
+ *  Çekirdek, hangi modüllerin var olduğunu bilmez — listeyi modüllerin
+ *  kendisi doldurur.
  * ------------------------------------------------------------------ */
-$modulOgeleri = [];
+$modulBolumleri = SidebarMenu::collect($user);
+$modulOgeleri   = [];
 
 foreach (Modules::enabled() as $modul) {
     // "menu": false → modül menüde görünmek istemiyor (bkz. Module::parseMenu).
-    if ($modul->menu !== null) {
+    if ($modul->menu !== null && !SidebarMenu::has($modul->ad)) {
         $modulOgeleri[] = $modul->menu;
     }
 }
@@ -61,6 +70,7 @@ $menu = [
             ['route' => 'panel', 'icon' => 'dashboard', 'label' => 'Kontrol Paneli', 'can' => 'dashboard.view', 'exact' => true],
         ],
     ],
+    ...$modulBolumleri,
 ];
 
 if ($modulOgeleri !== []) {
@@ -68,16 +78,11 @@ if ($modulOgeleri !== []) {
 }
 
 $menu[] = [
-    'label' => 'İçerik',
+    'label' => 'Site ve iletişim',
     'items' => [
         ['route' => 'panel/sayfalar', 'icon' => 'files', 'label' => 'Sayfalar', 'can' => 'pages.view'],
-    ],
-];
-
-$menu[] = [
-    'label' => 'İletişim',
-    'items' => [
-        ['route' => 'panel/mesajlar', 'icon' => 'inbox', 'label' => 'Mesajlar', 'can' => 'messages.view', 'badge' => $unread],
+        ['route' => 'panel/mesajlar', 'icon' => 'inbox', 'label' => 'Mesajlar', 'can' => 'messages.view', 'badge' => $unread, 'badge_tur' => 'uyari',
+         'title' => $unread > 0 ? $unread . ' okunmamış mesaj' : ''],
         ['route' => 'panel/eposta',   'icon' => 'send',  'label' => 'E-posta',  'can' => 'mail.view'],
     ],
 ];
@@ -112,11 +117,15 @@ $menu[] = [
             <?php endif; ?>
         </span>
     </a>
+    <?php /* Yalnız telefonda / tablette (çekmece) görünür; app.js kapatır. */ ?>
+    <button type="button" class="cy-sidebar__close" id="cy_sidebar_close" aria-label="Menüyü kapat">
+        <?= icon('close', 'cy-icon cy-icon--sm') ?>
+    </button>
 
     <nav class="cy-sidebar__nav">
         <?php foreach ($menu as $group): ?>
             <?php
-            $visible = array_filter($group['items'], static fn (array $item): bool => $item['can'] === null || can($item['can']));
+            $visible = array_filter($group['items'], static fn (array $item): bool => ($item['can'] ?? null) === null || can($item['can']));
 
             if ($visible === []) {
                 continue;
@@ -129,15 +138,24 @@ $menu[] = [
                     <?php $children = $item['children'] ?? []; ?>
 
                     <?php if ($children === []): ?>
-                        <?php $aktif = is_route($item['route'], $item['exact'] ?? false); ?>
-                        <a class="cy-nav-link<?= $aktif ? ' is-active' : '' ?>"
-                           href="<?= e(url($item['route'])) ?>"
-                           data-title="<?= e($item['label']) ?>"
+                        <?php
+                        // Modül bölümü etkin sayfayı kendisi söyleyebilir (aktif); yoksa adrese göre.
+                        $aktif = $item['aktif'] ?? is_route($item['route'], $item['exact'] ?? false);
+                        $badge = (int) ($item['badge'] ?? 0);
+                        $tur   = (string) ($item['badge_tur'] ?? '');
+                        ?>
+                        <a class="cy-nav-link<?= $aktif ? ' is-active' : '' ?><?= $badge > 0 ? ' has-badge' : '' ?><?= !empty($item['vurgu']) ? ' cy-nav-link--vurgu' : '' ?>"
+                           href="<?= e(url($item['route']) . (($item['hash'] ?? '') !== '' ? '#' . $item['hash'] : '')) ?>"
+                           data-title="<?= e($item['label'] . ($badge > 0 ? ' (' . $badge . ')' : '')) ?>"
+                           <?= ($item['title'] ?? '') !== '' ? 'title="' . e($item['title']) . '"' : '' ?>
                            <?= $aktif ? 'aria-current="page"' : '' ?>>
                             <?= icon($item['icon']) ?>
                             <span class="cy-nav-link__text"><?= e($item['label']) ?></span>
-                            <?php if (!empty($item['badge'])): ?>
-                                <span class="cy-nav-link__badge"><?= (int) $item['badge'] ?></span>
+                            <?php if (($item['etiket'] ?? '') !== ''): ?>
+                                <span class="cy-nav-link__tag"><?= e($item['etiket']) ?></span>
+                            <?php endif; ?>
+                            <?php if ($badge > 0): ?>
+                                <span class="cy-nav-link__badge<?= $tur !== '' ? ' cy-nav-link__badge--' . e($tur) : '' ?>"><?= $badge > 99 ? '99+' : $badge ?></span>
                             <?php endif; ?>
                         </a>
                     <?php else: ?>
@@ -175,7 +193,7 @@ $menu[] = [
 
     <?php if ($user !== null): ?>
         <div class="cy-sidebar__footer">
-            <a class="cy-side-user text-decoration-none" href="<?= e(url('panel/hesabim')) ?>">
+            <a class="cy-side-user text-decoration-none" href="<?= e(url('panel/hesabim')) ?>" title="Profilim">
                 <?php if ($user->avatarUrl() !== ''): ?>
                     <img class="cy-avatar cy-avatar--sm" src="<?= e($user->avatarUrl()) ?>" alt="">
                 <?php else: ?>
@@ -187,6 +205,17 @@ $menu[] = [
                     <span class="cy-side-user__role"><?= e($user->roleLabel()) ?></span>
                 </span>
             </a>
+            <div class="cy-side-actions">
+                <a class="cy-side-action" href="<?= e(url('')) ?>" target="_blank" rel="noopener" title="Siteyi yeni sekmede aç" aria-label="Siteyi yeni sekmede aç">
+                    <?= icon('external', 'cy-icon cy-icon--sm') ?>
+                </a>
+                <form method="post" action="<?= e(url('cikis')) ?>" class="m-0">
+                    <?= csrf_field() ?>
+                    <button type="submit" class="cy-side-action" title="Çıkış yap" aria-label="Çıkış yap">
+                        <?= icon('logout', 'cy-icon cy-icon--sm') ?>
+                    </button>
+                </form>
+            </div>
         </div>
     <?php endif; ?>
 </aside>

@@ -344,6 +344,12 @@ window.CY = (function ($) {
 
         $backdrop.on('click', closeDrawer);
 
+        // Çekmecenin kendi kapatma düğmesi (yalnız dar ekranda görünür).
+        $('#cy_sidebar_close').on('click', function () {
+            closeDrawer();
+            $toggle.trigger('focus');
+        });
+
         /* --- Açılır alt menüler (ör. Site Ayarları) ---
          * Menü daraltılmışken (yalnızca ikonlar) alt menüyü göstermenin
          * yeri yok; önce menüyü genişletiyoruz, sonra grubu açıyoruz. */

@@ -1295,7 +1295,18 @@ zaten her istekte belleğe alınır ve çok sunuculu kurulumlarda ortaktır.
 Modül, çekirdeğin `views/` klasörünü kirletmez.
 
 **Menü:** `module.json` içindeki `menu` bloğu sol menüde otomatik
-görünür; `"menu": false` derseniz görünmez.
+görünür ("Modüller" başlığı altında tek bağlantı); `"menu": false`
+derseniz görünmez. Birden çok sayfası olan modül kendi **bölümünü**
+`events.php`'de `App\Core\SidebarMenu::add('Ad', fn (?User $u): ?array => …)`
+ile kaydeder: bölüm "Genel"in hemen altına girer, öğeler sayaç
+(`badge`, `badge_tur` = `uyari` / `bilgi`), kısa etiket (`etiket`),
+etkin sayfa kararı (`aktif`), sayfa içi bölüm (`hash`) ve vurgu (`vurgu`)
+taşıyabilir; o modül "Modüller" altında tekrar görünmez. Sağlayıcı hata
+verirse bölüm atlanır, günlüğe yazılır (Transkript örneği:
+`modules/Transkript/events.php`). Menüde ayrıca "Site ve iletişim"
+(Sayfalar, Mesajlar, E-posta), "Yönetim" ve "Hesabım" bölümleri; altta
+kullanıcı kartı, "Siteyi yeni sekmede aç" ve "Çıkış"; dar ekranda
+çekmecenin kapatma düğmesi vardır.
 
 **Kurulumda açık gelen modül:** `module.json` içinde
 `"kurulumda_acik": true` olan modül, sihirbazın Site Ayarları adımında
