@@ -13,7 +13,8 @@
  *  model kullanır; bu yüzden make() sağlayıcıyı ve modeli açıkça alır.
  *  Varsayılan seçim .env içindeki AI_PROVIDER değerine bakar:
  *
- *      gemini  (varsayılan)  ücretsiz katmanı var — aistudio.google.com
+ *      evren   (varsayılan)  yurt içi, 1 Kasım 2026'ya kadar ücretsiz — evren.ssyz.org.tr
+ *      gemini                ücretsiz katmanı var — aistudio.google.com
  *      groq                  ücretsiz katmanı var — console.groq.com
  *      openrouter / mistral / cerebras   ücretsiz katmanı var (OpenAI uyumlu)
  *      openai-compatible     xAI (Grok), Ollama … (AI_BASE_URL ile)
@@ -27,9 +28,15 @@
  *  almak birkaç saniye sürüyor ve hiçbir şey ödemiyorsunuz.
  *
  *  ---------------------------------------------------------------
- *  YEDEK ZİNCİRİ: AI_PROVIDERS=gemini,openrouter,groq verilirse
+ *  YEDEK ZİNCİRİ: AI_PROVIDERS=evren,gemini,openrouter,groq verilirse
  *  Pipeline bunları YedekliSaglayici ile sırayla dener (zincir(),
- *  zincirdeKullanilabilir()). Sağlayıcı başına model <AD>_MODEL.
+ *  zincirdeKullanilabilir()). AI_PROVIDERS ve AI_PROVIDER ikisi de
+ *  boşsa VARSAYILAN_ZINCIR. Anahtarı olmayan atlanır.
+ *
+ *  MODEL (varsayilanModel): Transkript ayarlarındaki seçim
+ *  (ai.modeller.<ad>), yoksa .env <AD>_MODEL, yoksa bilinen varsayılan.
+ *  AI_MODEL, AI_PROVIDER'da yazan sağlayıcınındır; AI_PROVIDER
+ *  yazılmamışsa eski varsayılan Gemini'nin (EVREN'e Gemini modeli gitmez).
  *
  *  ---------------------------------------------------------------
  *  ANAHTAR ARAMA SIRASI
@@ -65,6 +72,19 @@ final class Ai
      * @var array<string,array<string,mixed>>
      */
     private const PROVIDERS = [
+        // Kullanıcı isteği (2026-10-11): yerli EVREN zincirin başında.
+        'evren' => [
+            'label'         => 'EVREN (SSYZ)',
+            'key_names'     => ['EVREN_API_KEY'],
+            'default_model' => EvrenProvider::VARSAYILAN_MODEL,
+            'base_url'      => EvrenProvider::TABAN_ADRES,
+            'console'       => 'evren.ssyz.org.tr',
+            'free'          => true,
+            /* 1 Kasım 2026'ya kadar ücretsiz: maliyet 0 (panelde girilen USD
+             * fiyatı uygulanmaz). 1 Kasım 2026 sonrası fiyat CR cinsinden;
+             * GET /v1/models içindeki pricing alanından okunabilir. */
+            'fiyat'         => ['giris' => 0.0, 'cikis' => 0.0],
+        ],
         'gemini' => [
             'label'         => 'Google Gemini',
             'key_names'     => ['GEMINI_API_KEY', 'GOOGLE_API_KEY', 'AI_API_KEY'],
@@ -121,7 +141,10 @@ final class Ai
         ],
     ];
 
-    private const DEFAULT_PROVIDER = 'gemini';
+    private const DEFAULT_PROVIDER = 'evren';
+
+    /** AI_PROVIDERS ve AI_PROVIDER boşken denenen sıra (anahtarı olmayan atlanır). */
+    public const VARSAYILAN_ZINCIR = ['evren', 'gemini', 'openrouter', 'groq'];
 
     /** Her sağlayıcının ortak anahtarı (AI_API_KEY): zincirde yalnız birincile verilir. */
     private const GENEL_ANAHTAR = 'AI_API_KEY';
@@ -159,14 +182,10 @@ final class Ai
         return (string) self::PROVIDERS[self::provider()]['console'];
     }
 
-    /** Kullanılacak model adı. */
+    /** Seçili (asıl) sağlayıcının modeli: panel, .env ya da varsayılan (varsayilanModel). */
     public static function model(): string
     {
-        $model = trim(Env::get('AI_MODEL', ''));
-
-        return $model !== ''
-            ? $model
-            : (string) self::PROVIDERS[self::provider()]['default_model'];
+        return self::varsayilanModel(self::provider());
     }
 
     /**
@@ -251,6 +270,9 @@ final class Ai
         $zamanAsimi = max(10, $zamanAsimi ?? 120);
 
         return match ($name) {
+            // Bütçe en az 2048 token, süre en az 180 sn (EvrenProvider kurucusu).
+            'evren' => new EvrenProvider($key, $model, self::baseUrl($name), $maxTokens, $zamanAsimi),
+
             'claude' => new ClaudeProvider(
                 $key,
                 $model,
@@ -280,13 +302,20 @@ final class Ai
     /**
      * OpenAI uyumlu sağlayıcılar için taban adres.
      *
-     * .env'deki AI_BASE_URL her zaman kazanır; yoksa sağlayıcının
-     * bilinen adresi kullanılır. "openai-compatible" seçilip adres
+     * Önce sağlayıcının kendi değişkeni (<AD>_BASE_URL, ör. EVREN_BASE_URL),
+     * sonra AI_BASE_URL (asıl sağlayıcıya ya da openai-compatible'a),
+     * yoksa sağlayıcının bilinen adresi. "openai-compatible" seçilip adres
      * verilmediyse tahmin yürütmüyoruz — hangi servise bağlanacağını
      * yalnızca kullanıcı bilir.
      */
     private static function baseUrl(string $name): string
     {
+        $kendi = trim(Env::get(strtoupper(str_replace('-', '_', $name)) . '_BASE_URL', ''));
+
+        if ($kendi !== '') {
+            return $kendi;
+        }
+
         $url = trim(Env::get('AI_BASE_URL', ''));
 
         // Zincirde AI_BASE_URL yalnız kendi sağlayıcısına aittir (birincil ya da openai-compatible).
@@ -310,9 +339,9 @@ final class Ai
 
     /**
      * Sağlayıcının modeli: Transkript ayarlarında o sağlayıcı için seçilen
-     * model (ai.modeller.<ad>), yoksa <AD>_MODEL (ör. GROQ_MODEL,
-     * OPENROUTER_MODEL), yoksa bilinen varsayılan. AI_MODEL yalnız birincil
-     * sağlayıcıya aittir (model()); burada okunmaz.
+     * model (ai.modeller.<ad>; Gemini için "ai_model" alanı, EVREN için
+     * "model_evren"), yoksa .env'deki model (ortamModeli), yoksa bilinen
+     * varsayılan. Zincirdeki her halka, asıl sağlayıcı dahil, bunu kullanır.
      */
     public static function varsayilanModel(string $ad): string
     {
@@ -321,18 +350,36 @@ final class Ai
         return $panel !== '' ? $panel : self::ortamModeli($ad);
     }
 
-    /** Panel değeri olmadan: <AD>_MODEL ya da bilinen varsayılan (ayarlar ekranındaki "Varsayılan: …"). */
+    /**
+     * Panel değeri olmadan: <AD>_MODEL (ör. EVREN_MODEL, GROQ_MODEL), yoksa
+     * AI_MODEL (yalnız sahibinde, aiModelSahibi), yoksa bilinen varsayılan
+     * (ayarlar ekranındaki "Varsayılan: …").
+     */
     public static function ortamModeli(string $ad): string
     {
         $ortam = trim(Env::get(strtoupper(str_replace('-', '_', $ad)) . '_MODEL', ''));
+
+        if ($ortam === '' && $ad === self::aiModelSahibi()) {
+            $ortam = trim(Env::get('AI_MODEL', ''));
+        }
 
         return $ortam !== '' ? $ortam : (string) (self::PROVIDERS[$ad]['default_model'] ?? '');
     }
 
     /**
+     * AI_MODEL hangi sağlayıcının? AI_PROVIDER yazılmışsa onun. Yazılmamışsa
+     * eski varsayılan Gemini'nin: varsayılan EVREN olunca eski kurulumdaki
+     * "AI_MODEL=gemini-…" EVREN'e gidip 404 almasın.
+     */
+    private static function aiModelSahibi(): string
+    {
+        return trim(Env::get('AI_PROVIDER', '')) !== '' ? self::provider() : 'gemini';
+    }
+
+    /**
      * Ayarlar ekranında model kutusunun önerileri (serbest yazılabilir;
-     * ücretsiz modeller sık değişir). Gemini ve Claude için bilinen liste,
-     * ötekilerde varsayılan ve .env'deki model.
+     * ücretsiz modeller sık değişir). Gemini, EVREN ve Claude için bilinen
+     * liste, ötekilerde varsayılan ve .env'deki model.
      *
      * @return list<string>
      */
@@ -340,6 +387,7 @@ final class Ai
     {
         $liste = match ($ad) {
             'gemini' => array_values(array_filter(GeminiProvider::models(), static fn (string $m): bool => str_contains($m, 'flash'))),
+            'evren'  => array_keys(EvrenProvider::MODELLER),
             'claude' => ClaudeProvider::models(),
             default  => [],
         };
@@ -353,8 +401,9 @@ final class Ai
 
     /**
      * Denenecek sağlayıcılar, sırayla: .env AI_PROVIDERS
-     * (ör. "gemini,openrouter,groq"). Boşsa yalnız AI_PROVIDER.
-     * Bilinmeyen ve tekrarlanan adlar atlanır.
+     * (ör. "evren,gemini,openrouter,groq"). Boşsa yalnız AI_PROVIDER;
+     * o da yazılmamışsa VARSAYILAN_ZINCIR. Bilinmeyen ve tekrarlanan
+     * adlar atlanır.
      *
      * @return list<string>
      */
@@ -370,7 +419,11 @@ final class Ai
             }
         }
 
-        return $liste !== [] ? $liste : [self::provider()];
+        if ($liste !== []) {
+            return $liste;
+        }
+
+        return trim(Env::get('AI_PROVIDER', '')) !== '' ? [self::provider()] : self::VARSAYILAN_ZINCIR;
     }
 
     /**
@@ -387,23 +440,27 @@ final class Ai
     }
 
     /**
-     * Ayarlar ekranı için zincirin durumu (anahtar değeri yok).
+     * Ayarlar ekranı için zincirin durumu (anahtar değeri yok; yalnız
+     * değişkenin adı). Asıl sağlayıcıya config'te aşama modeli
+     * (ai.map.model) yazıldıysa o gösterilir: Pipeline da onu kullanır.
      *
-     * @return list<array{ad:string, etiket:string, tanimli:bool, model:string, dinlenme_sn:int, ucretsiz:bool, konsol:string}>
+     * @return list<array{ad:string, etiket:string, tanimli:bool, model:string, dinlenme_sn:int, ucretsiz:bool, konsol:string, anahtar_adi:string}>
      */
     public static function zincirDurumu(): array
     {
         $durum = [];
+        $asama = trim((string) Ayarlar::get('ai.map.model', ''));
 
         foreach (self::zincir() as $i => $ad) {
             $durum[] = [
                 'ad'          => $ad,
                 'etiket'      => (string) self::PROVIDERS[$ad]['label'],
                 'tanimli'     => self::zincirdeKullanilabilir($ad, $i === 0),
-                'model'       => $i === 0 && $ad === self::provider() ? self::model() : self::varsayilanModel($ad),
+                'model'       => $i === 0 && $ad === self::provider() && $asama !== '' ? $asama : self::varsayilanModel($ad),
                 'dinlenme_sn' => YedekliSaglayici::dinlenmeKalan($ad),
                 'ucretsiz'    => (bool) self::PROVIDERS[$ad]['free'],
                 'konsol'      => (string) self::PROVIDERS[$ad]['console'],
+                'anahtar_adi' => self::anahtarAdi($ad),
             ];
         }
 
@@ -414,6 +471,25 @@ final class Ai
     public static function etiket(string $ad): string
     {
         return (string) (self::PROVIDERS[$ad]['label'] ?? $ad);
+    }
+
+    /** Anahtarın .env'deki adı (değeri değil): "EVREN_API_KEY". */
+    public static function anahtarAdi(string $ad): string
+    {
+        return (string) (((array) (self::PROVIDERS[$ad]['key_names'] ?? []))[0] ?? '');
+    }
+
+    /**
+     * Sağlayıcının sabit fiyatı (USD / 1M token): maliyet tahmininde panel
+     * fiyatının yerine geçer. Yalnız tanımlıysa (EVREN: 0); yoksa null.
+     *
+     * @return array{giris:float, cikis:float}|null
+     */
+    public static function sabitFiyat(string $ad): ?array
+    {
+        $fiyat = self::PROVIDERS[$ad]['fiyat'] ?? null;
+
+        return is_array($fiyat) ? ['giris' => (float) $fiyat['giris'], 'cikis' => (float) $fiyat['cikis']] : null;
     }
 
     /** AI_PROVIDERS'a yazılabilecek adlar (ayarlar ekranındaki açıklama için). @return list<string> */
@@ -437,6 +513,7 @@ final class Ai
     {
         return match (self::provider()) {
             'gemini' => GeminiProvider::models(),
+            'evren'  => array_keys(EvrenProvider::MODELLER),
             'claude' => ClaudeProvider::models(),
             default  => [],
         };

@@ -43,8 +43,8 @@ $sekmeler = [
     'durum'      => ['Durum', 'server', 'Salt okunur: sağlayıcıların anlık durumu, anahtarların tanımlı olup olmadığı, kuyruk işçisi ve son yapay zekâ çağrıları.'],
 ];
 $alanlar = [
-    // Zincirdeki her sağlayıcının modeli (asıl: ai_model; yedekler: model_<ad>).
-    'yapay-zeka' => ['ai_model', ...PanelAyarlari::yedekModelAlanlari(), 'altyazi_dili', 'en_uzun_dk'],
+    // Zincirdeki her sağlayıcının modeli, sırasıyla (EVREN, Gemini = ai_model, OpenRouter …).
+    'yapay-zeka' => [...PanelAyarlari::modelAlanlari(), 'altyazi_dili', 'en_uzun_dk'],
     'butce'      => ['gunluk_token_tavani', 'gunluk_maliyet_tavani', 'fiyat_giris', 'fiyat_cikis'],
     'site'       => ['ana_sayfa', 'tarayici_kuyruk'],
 ];
@@ -108,15 +108,35 @@ $girdi = static function (string $alan, string $erisimEtiketi = '', bool $kisa =
     <?php }
 };
 
+/* Model alanının rozeti: zincirdeki yeri ("Asıl sağlayıcı · 1. sırada") ve anahtarı yoksa uyarı. */
+$zincirSirasi = array_flip(Ai::zincir());
+$siraRozeti = static function (string $saglayici) use ($zincirSirasi): string {
+    $sira = $zincirSirasi[$saglayici] ?? null;
+
+    if ($sira === null) {
+        return '<span class="cy-pill tk-ayar-rozet">Sırada değil</span>';
+    }
+
+    $html = $sira === 0
+        ? '<span class="cy-pill is-ok tk-ayar-rozet">Asıl sağlayıcı · 1. sırada</span>'
+        : '<span class="cy-pill tk-ayar-rozet">Yedek · ' . ($sira + 1) . '. sırada</span>';
+
+    if (!Ai::zincirdeKullanilabilir($saglayici, $sira === 0)) {
+        $html .= ' <span class="cy-pill is-warn tk-ayar-rozet" title="' . e(Ai::anahtarAdi($saglayici) . ' .env içinde tanımlı değil; bu sağlayıcı atlanır.') . '">Anahtar yok · atlanır</span>';
+    }
+
+    return $html;
+};
+
 /** Etiketli tam alan (sekmelerdeki iki sütunlu ızgara için). */
-$alanCiz = static function (string $alan) use ($girdi, $hatalar): void {
+$alanCiz = static function (string $alan) use ($girdi, $hatalar, $siraRozeti): void {
     $tanim = PanelAyarlari::ALANLAR[$alan];
     $id    = 'tk_ayar_' . $alan;
     $hata  = $hatalar[$alan] ?? null; ?>
     <div class="col-12<?= $tanim['tur'] === 'metin' ? '' : ' col-md-6' ?>">
         <label class="form-label" for="<?= e($id) ?>">
-            <?php /* Model listesi asıl sağlayıcınındır: etiket onun adıyla ("Gemini modeli"). */ ?>
-            <?= e($alan === 'ai_model' ? Ai::label() . ' modeli' : $tanim['etiket']) ?>
+            <?= e($tanim['etiket']) ?>
+            <?php if (isset($tanim['saglayici'])): ?><?= $siraRozeti((string) $tanim['saglayici']) ?><?php endif; ?>
         </label>
         <?php $girdi($alan); ?>
         <?php if ($hata !== null): ?>
@@ -232,7 +252,18 @@ $sayi     = static fn (int $n): string => number_format($n, 0, ',', '.');
             <h3 class="cy-panel__title mb-2"><?= icon('server', 'cy-icon cy-icon--sm') ?> Genel durum</h3>
             <dl class="tk-bilgi__liste">
                 <dt>Yapay zekâ</dt><dd><?= e($durum['saglayici']) ?></dd>
-                <dt>API anahtarı</dt><dd><?= $tanimli($durum['ai_anahtar']) ?></dd>
+                <dt>API anahtarları</dt><dd>
+                    <?php /* Zincirdeki her sağlayıcı: değişkenin adı ve tanımlı mı (değer asla). */ ?>
+                    <ul class="tk-anahtarlar">
+                        <?php foreach ($durum['zincir'] as $halka): ?>
+                            <li>
+                                <span><?= e($halka['etiket']) ?></span>
+                                <?php if (($halka['anahtar_adi'] ?? '') !== ''): ?><span class="cy-mono small cy-muted"><?= e($halka['anahtar_adi']) ?></span><?php endif; ?>
+                                <?= $tanimli((bool) $halka['tanimli']) ?>
+                            </li>
+                        <?php endforeach; ?>
+                    </ul>
+                </dd>
                 <dt>Yedek sırası</dt><dd>
                     <?php if (count($durum['zincir']) > 1): ?>
                         <ol class="tk-zincir">
@@ -267,10 +298,15 @@ $sayi     = static fn (int $n): string => number_format($n, 0, ',', '.');
             <h3 class="cy-panel__title mb-2"><?= icon('lock', 'cy-icon cy-icon--sm') ?> Anahtarlar nerede?</h3>
             <p class="cy-panel__note mb-0">
                 API anahtarları yalnızca sunucudaki <span class="cy-mono">.env</span> dosyasında durur; burada değeri gösterilmez ve değiştirilemez.
-                Sağlayıcı <span class="cy-mono">AI_PROVIDER</span>, anahtar <span class="cy-mono">GEMINI_API_KEY</span> / <span class="cy-mono">CLAUDE_API_KEY</span>.
+                Asıl sağlayıcı <span class="cy-mono">AI_PROVIDER</span> (varsayılan <span class="cy-mono">evren</span>), anahtarlar
+                <span class="cy-mono">EVREN_API_KEY</span> / <span class="cy-mono">GEMINI_API_KEY</span> / <span class="cy-mono">CLAUDE_API_KEY</span>.
                 Yedek sırası şu an <span class="cy-mono">AI_PROVIDERS=<?= e(implode(',', array_column($durum['zincir'], 'ad'))) ?></span>
                 ve her birinin anahtarı (<span class="cy-mono">OPENROUTER_API_KEY</span> …); biri kota ya da hata verirse sıradaki denenir.
                 Kullanılabilecek adlar: <span class="cy-mono"><?= e(implode(', ', Ai::saglayiciAdlari())) ?></span>.
+            </p>
+            <p class="cy-panel__note mb-0 mt-2">
+                EVREN'in LLM anahtarı <span class="cy-mono">evren_llm_</span> ile başlar. Kullanım şartları ilk çağrıdan önce bir kez
+                evren.ssyz.org.tr → Test Alanı'ndan onaylanmalı; onaylanmamışsa EVREN bir saat atlanır, sıradaki çalışır.
             </p>
         </section>
     </div>
@@ -344,7 +380,16 @@ $sayi     = static fn (int $n): string => number_format($n, 0, ',', '.');
                                 <small class="d-block cy-muted"><?= e($sebepAdi($halka['son_hata_kodu'])) ?></small>
                             <?php endif; ?>
                         </td>
-                        <td><small><?= e($sayi((int) $halka['bugun_cagri'])) ?> çağrı · <?= e($sayi((int) $halka['bugun_token'])) ?> token</small></td>
+                        <td>
+                            <small><?= e($sayi((int) $halka['bugun_cagri'])) ?> çağrı · <?= e($sayi((int) $halka['bugun_token'])) ?> token</small>
+                            <?php $kota = $halka['ad'] === 'evren' ? ($durum['evren_kota'] ?? null) : null; ?>
+                            <?php if ($kota !== null): ?>
+                                <small class="d-block cy-muted" title="Son EVREN yanıtının bildirdiği; 03:00'te yenilenir">
+                                    Kalan günlük kota: <?= e($sayi((int) $kota['kalan'])) ?><?= (int) $kota['limit'] > 0 ? ' / ' . e($sayi((int) $kota['limit'])) : '' ?> token
+                                    (<?= e(date('H:i', (int) $kota['zaman'])) ?> itibarıyla)
+                                </small>
+                            <?php endif; ?>
+                        </td>
                     </tr>
                 <?php endforeach; ?>
             </tbody>

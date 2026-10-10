@@ -26,13 +26,25 @@ declare(strict_types=1);
 
 namespace Modules\Transkript\Ai;
 
+use Closure;
+
 abstract class HttpProvider implements Provider
 {
     /** Geçici hatalarda kaç kez yeniden denensin? */
     protected const MAX_RETRIES = 3;
 
+    /** Bağlantı kurma süresi sınırı (sn); 0: cURL varsayılanı. Toplam süre ayrıca $timeout. */
+    protected const BAGLANTI_ZAMAN_ASIMI = 0;
+
     /** null: MAX_RETRIES. Yedek zincirinde son halka değilse 0 (bkz. yenidenDenemeSiniri). */
     private ?int $denemeSiniri = null;
+
+    /**
+     * null: gerçek cURL. Testler sahte yanıt verir, ağa gidilmez (tasiyici()).
+     *
+     * @var ?Closure(string): array{0:int,1:string,2:array<string,string>,3:string,4:int}
+     */
+    private ?Closure $tasiyici = null;
 
     public function __construct(
         protected readonly string $apiKey,
@@ -64,6 +76,19 @@ abstract class HttpProvider implements Provider
     private function denemeSiniri(): int
     {
         return $this->denemeSiniri ?? static::MAX_RETRIES;
+    }
+
+    /**
+     * HTTP isteğini cURL yerine verilen işlev yapar: gövdeyi alır,
+     * [durum, yanıt gövdesi, başlıklar (küçük harf), cURL hatası, hata no]
+     * döndürür. Birim testleri gerçek API'ye gitmeden hata kodlarını ve
+     * yedeğe geçişi böyle dener (CLAUDE.md, kural 10).
+     */
+    public function tasiyici(?Closure $tasiyici): static
+    {
+        $this->tasiyici = $tasiyici;
+
+        return $this;
     }
 
     /* =================================================================
@@ -102,6 +127,28 @@ abstract class HttpProvider implements Provider
     protected function errorCode(int $status, string $raw): string
     {
         return AiHatasi::kodFor($status);
+    }
+
+    /**
+     * Her HTTP yanıtının başlıkları (küçük harf), başarılı ya da hatalı.
+     * Durumu başlıkta bildiren sağlayıcı (EVREN: kalan günlük token)
+     * errorCode() / retryable()'dan önce burada okur.
+     *
+     * @param array<string,string> $headers
+     */
+    protected function basliklariIsle(int $status, array $headers): void
+    {
+    }
+
+    /**
+     * Hatayla birlikte yedek zincirine / işe giden bekleme önerisi (sn).
+     * Günlük kotada null: bekleme gövdesindeki kısa süre (Gemini retryDelay)
+     * kotanın açılışı değildir; zincir sıfırlama saatini kendisi hesaplar.
+     * Sıfırlama saatini bilen sağlayıcı (EVREN) bunu ezer.
+     */
+    protected function hataBeklemesi(string $kod, ?int $bekle): ?int
+    {
+        return $kod === 'kota_doldu' ? null : $bekle;
     }
 
     /* =================================================================
@@ -172,7 +219,11 @@ abstract class HttpProvider implements Provider
         while (true) {
             $attempt++;
 
-            [$status, $raw, $headers, $curlError, $curlErrno] = $this->curl($body);
+            [$status, $raw, $headers, $curlError, $curlErrno] = $this->tasiyici !== null ? ($this->tasiyici)($body) : $this->curl($body);
+
+            if ($curlError === '') {
+                $this->basliklariIsle($status, $headers);
+            }
 
             if ($curlError !== '') {
                 // Ağ hatası da geçicidir; aynı kurallarla yeniden deniyoruz.
@@ -213,7 +264,9 @@ abstract class HttpProvider implements Provider
             }
 
             // Bekleme önerisi yedek zincirine gider: sağlayıcı o kadar dinlenir.
-            throw new AiHatasi($this->describeError($status, $raw), $this->errorCode($status, $raw), $status, null, $bekle);
+            $kod = $this->errorCode($status, $raw);
+
+            throw new AiHatasi($this->describeError($status, $raw), $kod, $status, null, $this->hataBeklemesi($kod, $bekle));
         }
     }
 
@@ -255,6 +308,10 @@ abstract class HttpProvider implements Provider
                 return strlen($line);
             },
         ]);
+
+        if (static::BAGLANTI_ZAMAN_ASIMI > 0) {
+            curl_setopt($curl, CURLOPT_CONNECTTIMEOUT, static::BAGLANTI_ZAMAN_ASIMI);
+        }
 
         $raw    = curl_exec($curl);
         $status = (int) curl_getinfo($curl, CURLINFO_RESPONSE_CODE);

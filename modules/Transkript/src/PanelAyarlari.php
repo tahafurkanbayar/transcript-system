@@ -27,6 +27,8 @@ namespace Modules\Transkript;
 
 use App\Core\Setting;
 use Modules\Transkript\Ai\Ai;
+use Modules\Transkript\Ai\EvrenProvider;
+use Modules\Transkript\Ai\GeminiProvider;
 use Modules\Transkript\Services\KuyrukDurumu;
 use PDO;
 
@@ -39,26 +41,31 @@ final class PanelAyarlari
      * alan => tanım. "yol": değerin Ayarlar::get()'teki yolu (birden çok
      * olabilir). "tur": tamsayi | ondalik | secim | acik_kapali (açık /
      * kapalı seçimi → bool) | metin (çok satırlı, en_cok_karakter) |
-     * model (serbest model kimliği; "saglayici" hangi sağlayıcının modeli
-     * olduğunu söyler). "plan": üyelik planı alanı (uye | editor); ekran
-     * bunları iki sütunlu tabloda çizer.
+     * model (serbest model kimliği). "saglayici": alan o sağlayıcının
+     * modelidir (seçim ya da serbest); ekran zincir sırasıyla çizer ve
+     * sırasını rozetle gösterir. "plan": üyelik planı alanı (uye | editor);
+     * ekran bunları iki sütunlu tabloda çizer.
      *
      * @var array<string,array{yol: list<string>, tur: string, etiket: string, aciklama: string, en_az?: float, en_cok?: float, birim?: string, saglayici?: string, plan?: string, en_cok_karakter?: int}>
      */
     public const ALANLAR = [
-        'ai_model' => [
-            'yol' => ['ai.map.model', 'ai.reduce.model'], 'tur' => 'secim',
-            'etiket' => 'Asıl sağlayıcının modeli',
-            'aciklama' => 'Asıl sağlayıcının (ilk sıradaki) modeli; bölüm analizi ve birleştirmede kullanılır. Boş: .env\'deki AI_MODEL ya da varsayılan.',
+        /* Sağlayıcıların modeli (kullanıcı isteği, 2026-10-09: "üç API de
+         * burada görünsün"; 2026-10-11: EVREN en üstte). Her sağlayıcı kendi
+         * modelini kullanır, asıl olan dahil (Ai::varsayilanModel). Ekranda
+         * yalnız .env AI_PROVIDERS zincirinde olanlar, o sırayla çizilir
+         * (modelAlanlari); boş: <AD>_MODEL ya da varsayılan. */
+        'model_evren' => [
+            'yol' => ['ai.modeller.evren'], 'tur' => 'secim', 'saglayici' => 'evren',
+            'etiket' => 'EVREN modeli',
+            'aciklama' => 'EVREN LLM API (yurt içi H200 kümesi). 1 Kasım 2026\'ya kadar ücretsiz, günlük 15M token. Anahtar .env\'deki EVREN_API_KEY.',
         ],
-        /* Yedek sağlayıcıların modeli (kullanıcı isteği, 2026-10-09: "üç
-         * API de burada görünsün"). Ekranda yalnız .env AI_PROVIDERS
-         * zincirinde olan ve asıl olmayanlar çizilir (yedekModelAlanlari);
-         * boş: <AD>_MODEL ya da varsayılan (Ai::varsayilanModel). */
-        'model_gemini' => [
-            'yol' => ['ai.modeller.gemini'], 'tur' => 'model', 'saglayici' => 'gemini',
+        /* Adı eski ("asıl sağlayıcının modeli" iken konmuştu); kayıtlı değer
+         * korunsun diye değişmedi. Artık yalnız Gemini'nin modelidir: asıl
+         * sağlayıcı EVREN olunca Gemini modeli EVREN'e gitmesin. */
+        'ai_model' => [
+            'yol' => ['ai.modeller.gemini'], 'tur' => 'secim', 'saglayici' => 'gemini',
             'etiket' => 'Google Gemini modeli',
-            'aciklama' => 'Yedek olarak kullanıldığında. Yalnız Flash ailesi (düşünme kapalı çalışır).',
+            'aciklama' => 'Gemini sırası geldiğinde (önündeki sağlayıcı dinlenirken ya da hata verince) kullanılır. Yalnız Flash ailesi; bölüm analizinde düşünme kapalı çalışır. Boş: .env\'deki GEMINI_MODEL ya da varsayılan.',
         ],
         'model_openrouter' => [
             'yol' => ['ai.modeller.openrouter'], 'tur' => 'model', 'saglayici' => 'openrouter',
@@ -258,7 +265,11 @@ final class PanelAyarlari
     public static function secenekler(string $alan): array
     {
         return match ($alan) {
-            'ai_model'     => ['' => 'Varsayılan (' . Ai::model() . ')'] + self::modeller(),
+            'model_evren'  => ['' => 'Varsayılan (' . Ai::ortamModeli('evren') . ')'] + array_combine(
+                array_keys(EvrenProvider::MODELLER),
+                array_map(static fn (string $id, string $aciklama): string => $id . ' — ' . $aciklama, array_keys(EvrenProvider::MODELLER), EvrenProvider::MODELLER)
+            ),
+            'ai_model'     => ['' => 'Varsayılan (' . Ai::ortamModeli('gemini') . ')'] + self::geminiModelleri(),
             'altyazi_dili' => [
                 '' => 'Varsayılan (' . (Ayarlar::varsayilan('transcript.tercih_diller') === [] ? 'videonun kendi dili' : 'Türkçe altyazı varsa onu') . ')',
                 'tr' => 'Türkçe altyazı varsa onu kullan',
@@ -413,42 +424,51 @@ final class PanelAyarlari
     }
 
     /**
-     * Ekranda çizilecek sağlayıcı model alanları, zincir sırasıyla: .env
-     * AI_PROVIDERS'taki her sağlayıcı; asıl sağlayıcı AI_PROVIDER ise onun
-     * modeli zaten "ai_model" alanındadır, tekrar çizilmez.
+     * Ekranda çizilecek sağlayıcı model alanları, zincir sırasıyla (.env
+     * AI_PROVIDERS; ilki asıl sağlayıcı). Alanı olmayan sağlayıcı
+     * (openai-compatible) atlanır.
      *
      * @return list<string>
      */
-    public static function yedekModelAlanlari(): array
+    public static function modelAlanlari(): array
     {
-        $zincir  = Ai::zincir();
         $alanlar = [];
 
-        foreach ($zincir as $i => $ad) {
-            if (($i === 0 && $ad === Ai::provider()) || !isset(self::ALANLAR['model_' . $ad])) {
-                continue;
-            }
+        foreach (Ai::zincir() as $ad) {
+            $alan = self::modelAlani($ad);
 
-            $alanlar[] = 'model_' . $ad;
+            if ($alan !== null) {
+                $alanlar[] = $alan;
+            }
         }
 
         return $alanlar;
     }
 
+    /** Sağlayıcının model alanı ("evren" → "model_evren", "gemini" → "ai_model"); yoksa null. */
+    public static function modelAlani(string $saglayici): ?string
+    {
+        foreach (self::ALANLAR as $alan => $tanim) {
+            if (($tanim['saglayici'] ?? null) === $saglayici) {
+                return $alan;
+            }
+        }
+
+        return null;
+    }
+
     /** @return array<string,string> */
-    private static function modeller(): array
+    private static function geminiModelleri(): array
     {
         $modeller = [];
 
-        foreach (Ai::models() as $model) {
+        foreach (GeminiProvider::models() as $model) {
             /* config'teki gemini_ek düşünmeyi kapatır (thinkingBudget 0);
              * bu yalnız Flash modellerinde geçerli. Pro seçilirse istek
              * reddedilirdi; listede yalnız Flash ailesi var. */
-            if (Ai::provider() === 'gemini' && !str_contains($model, 'flash')) {
-                continue;
+            if (str_contains($model, 'flash')) {
+                $modeller[$model] = $model;
             }
-
-            $modeller[$model] = $model;
         }
 
         return $modeller;

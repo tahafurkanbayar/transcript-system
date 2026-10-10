@@ -197,6 +197,11 @@ a.tk-zaman.is-oynuyor { background: var(--cy-brand); color: #fff; }
 .tk-zincir { margin: 0; padding-left: 1.1rem; }
 .tk-zincir li { margin-bottom: .35rem; }
 .tk-zincir .cy-pill { margin-left: .25rem; }
+/* Ayarlar: model alanının sıra rozeti ("Asıl sağlayıcı · 1. sırada"); dar ekranda alta kayar */
+.tk-ayar-rozet { display: inline-block; margin-left: .35rem; font-size: .6875rem; vertical-align: .1em; }
+/* Durum: zincirdeki her sağlayıcının anahtarı (yalnız tanımlı mı) */
+.tk-anahtarlar { list-style: none; margin: 0; padding: 0; }
+.tk-anahtarlar li { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem; margin-bottom: .3rem; }
 /* Başarısız analizde yöneticiye zincirin özeti (liste ve rapor) */
 .tk-zincir-ozeti { display: block; margin-top: .25rem; font-size: .8rem; color: var(--cy-text-muted); overflow-wrap: anywhere; }
 .tk-saglayici-tablo td, .tk-gunluk td { vertical-align: top; }

@@ -76,6 +76,7 @@ modules/Transkript/
 │   │   └── YouTubeTranscriptProvider.php · GeminiVideoProvider.php · ExternalTranscriptProvider.php · AsrProvider.php
 │   ├── Ai/                   # ai-integration-system'den
 │   │   └── Provider.php · HttpProvider.php · Ai.php · GeminiProvider.php · ClaudeProvider.php · OpenAiCompatibleProvider.php
+│   │       (sonradan eklendi: YedekliSaglayici · DinlenmeDeposu · EvrenProvider; 2026-10-11 EVREN zincirin başında)
 │   ├── Jobs/                 # App\Core\Queue\Job'dan türer
 │   │   └── KaynakBilgisiAl · TranskriptAl · ParcaAnalizEt · AnalizBirlestir · RaporuTamamla
 │   └── TranskriptPolicy.php  # kayıt sahibine bağlı kurallar (sohbetler, kişisel özet, yüklenen dosyalar)

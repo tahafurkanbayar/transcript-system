@@ -71,7 +71,7 @@ abstract class TranskriptIsi extends Job
     protected const ASAMA = '';
 
     /** Analizi durduran, yeniden denenmeyecek AI hataları. */
-    private const AI_AYAR_HATALARI = ['anahtar_yok', 'ayar_eksik', 'yetkisiz', 'model_bulunamadi'];
+    private const AI_AYAR_HATALARI = ['anahtar_yok', 'ayar_eksik', 'yetkisiz', 'model_bulunamadi', 'sartlar_onaylanmadi'];
 
     /** Bu kodlarla parça değil bütün analiz durur: kalan parçalar da başarısız olur. */
     public const ANALIZI_DURDURAN = ['ai_ayar_eksik', 'ai_kota_doldu'];
@@ -191,8 +191,8 @@ abstract class TranskriptIsi extends Job
 
         return match ($e->kod) {
             'zincir_dinleniyor' => max(30, (int) $e->bekleme),
-            // Tek sağlayıcı (zincir yok): günlük kota yenilenene kadar.
-            'kota_doldu'        => YedekliSaglayici::kotaSifirlanmasinaKadar($simdi ?? time()),
+            // Tek sağlayıcı (zincir yok): günlük kota yenilenene kadar (saati sağlayıcı bildirdiyse o: EVREN 03:00).
+            'kota_doldu'        => (int) $e->bekleme > 0 ? min((int) $e->bekleme, 2 * 86400) : YedekliSaglayici::kotaSifirlanmasinaKadar($simdi ?? time()),
             default             => null,
         };
     }
