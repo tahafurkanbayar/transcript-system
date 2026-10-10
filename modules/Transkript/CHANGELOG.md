@@ -3,6 +3,54 @@
 Starter'ın sürüm geçmişi kökteki `CHANGELOG.md`'dedir; bu dosya yalnız
 `modules/Transkript/` içindir. Biçim [Keep a Changelog](https://keepachangelog.com/tr/1.1.0/).
 
+## 0.8.0 (2026-10-10): üyelik planları (Ücretsiz · Pro)
+
+Kullanıcı isteği: "Üye normal giriş yapan, günlük limitli kullanıcı; editör
+ücretli üyelik, daha yüksek limitler." Ayrıca yönetici ayarlarının
+düzenlenmesi ve alanların anlatımı.
+
+### Çekirdek
+- `editor` rolünün ekrandaki adı **"Pro Üye"** (önceki "Analist"); rol ve üye
+  açıklamaları ücretli / ücretsiz plana göre (`Role::LABELS`, `DESCRIPTIONS`).
+  Rol anahtarı, veritabanı ve yetkiler değişmedi.
+
+### Modül
+- **Planlar** (`Uyelik\Planlar`): plan rolden gelir. Ücretsiz 2/gün · 1/saat ·
+  30 dk, Pro 20/gün · 5/saat · 180 dk; yeniden analiz ve SRT / VTT indirme Pro'da
+  (ikisi de panelden açılıp kapanır), API anahtarı Pro'da (çekirdek `profile.api`).
+  **Ücretsiz plan artık varsayılan olarak analiz başlatır** (önceki "Üyeler analiz
+  başlatabilir" ayarı kapalıydı). Eski genel `analiz.gunluk_sinir` /
+  `saatlik_sinir` / `uye_baslatabilir` kaldırıldı (panelde değer girilmemişti).
+- Planın süre sınırı: istek ve işlerde (`KaynakBilgisiAl`, `TranskriptAl`)
+  başlatanın planına göre; yeni kalıcı hata kodu `plan_video_uzun` (yalnız
+  başlatana ayrıntılı). Altyazı indirme ucu 403 ("Pro planında"); rapor sayfasında
+  kilitli düğme Üyeliğim'e gider.
+- **Pro üyelik yönetimi** (`Uyelik\UyelikYonetimi`, migration `2026_10_10_230016`:
+  `transkript_uyelikler`, `transkript_uyelik_talepleri`): üye "Pro'ya geç" talebi
+  gönderir ve ödeme talimatını görür; yönetici onaylar / reddeder ya da talepsiz
+  verir, uzatır, kaldırır. Süre dolunca rol Ücretsiz'e döner, API anahtarları
+  silinir; bitime 3 gün kala hatırlatma. Saatte bir zamanlanmış görev + görev
+  zamanlayıcısı yoksa panel isteklerinde en çok 10 dakikada bir (`araSira`).
+  E-postalar (`Uyelik\Bildirim`): talep yöneticiye; açıldı / uzatıldı / bitiyor /
+  bitti / reddedildi üyeye. E-posta ayarı yoksa yönetici bunu mesajda görür.
+- Ekranlar: **Üyeliğim** (plan, kullanım ölçerleri, plan kartları, talep, dönemler),
+  **Üyelikler** (yönetici), Transkript sayfalarında **bölüm menüsü** ve plan çipi,
+  Kontrol Paneli'nde "Planınız" ve "Pro üye" kartları, ana sayfada **Planlar**
+  bölümü; SSS'deki sınırlar Ücretsiz planınkini söyler.
+- **Ayarlar sekmelere ayrıldı**: Üyelik planları (Ücretsiz | Pro tablosu, fiyat,
+  para birimi, ödeme talimatı) · Yapay zekâ · Bütçe ve maliyet · Site ve kuyruk ·
+  Durum. Her sekmede açıklama; seçili sekme adreste ve kayıttan sonra korunur;
+  hatalı alanın sekmesi önce açılır; yapışkan "Kaydet"; birimli sayı kutuları.
+  Yeni alan türleri `acik_kapali` ve `metin`. Uyarılar plan başına (saatlik ≥
+  günlük; Ücretsiz'in hakkı Pro'dan yüksekse).
+- Silinen hesapların talepleri gece temizliğine eklendi (dönemler ödeme kaydı
+  olarak kalır).
+- Testler: `tests/transkript.php` 404 (planlar, tarih hesabı, tutar okuma, görünümler,
+  çok tablolu migration denetimi), `tests/transkript-yetki.php` 29 (üyelik uçları);
+  canlı deneme 35 adım (geçici hesaplarla talep → onay → uzatma → süre dolumu →
+  ret → geri çekme → kaldırma → ayar kaydı). K2 testindeki geçmişte kalan sabit
+  tarih ileri alındı.
+
 ## 0.7.0 (2026-10-10): cowork 6. tur (K1–K10)
 
 ### Çekirdek

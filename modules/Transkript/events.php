@@ -34,6 +34,7 @@ declare(strict_types=1);
 use App\Core\DashboardCards;
 use App\Core\DashboardPanels;
 use App\Core\Database;
+use App\Core\Env;
 use App\Core\HomePage;
 use App\Core\Log\Logger;
 use App\Core\Request;
@@ -47,10 +48,13 @@ use Modules\Transkript\Controllers\AnasayfaController;
 use Modules\Transkript\Controllers\AyarController;
 use Modules\Transkript\Repositories\AiKullanimRepository;
 use Modules\Transkript\Repositories\KaynakRepository;
+use Modules\Transkript\Repositories\UyelikRepository;
 use Modules\Transkript\Services\AnalizBaslatici;
 use Modules\Transkript\Services\HesapTemizligi;
 use Modules\Transkript\Services\KuyrukDurumu;
 use Modules\Transkript\TranskriptPolicy;
+use Modules\Transkript\Uyelik\Planlar;
+use Modules\Transkript\Uyelik\UyelikYonetimi;
 
 if (PHP_SAPI === 'cli' && (bool) Ayarlar::get('kuyruk.zamanlanmis_gorev', true)) {
     Schedule::call('transkript-kuyrugu', static function (): void {
@@ -79,6 +83,21 @@ if (PHP_SAPI === 'cli') {
             Logger::info('Silinen hesapların Transkript kayıtları temizlendi', $silinen, 'transkript');
         }
     })->daily('03:40')->describe('Silinen hesapların Transkript kişisel kayıtlarını siler');
+
+    /* Pro üyelik: süresi dolan Ücretsiz plana döner, bitime yakın olana
+     * e-posta (Uyelik\UyelikYonetimi). */
+    Schedule::call('transkript-uyelik-suresi', static function (): void {
+        $yonetim = new UyelikYonetimi(Database::connection());
+        $yonetim->suresiDolanlariIsle();
+        $yonetim->hatirlat();
+    })->hourly()->describe('Süresi dolan Pro üyelikleri Ücretsiz plana döndürür, bitime yakın olanlara e-posta atar');
+}
+
+/* Görev zamanlayıcısı kurulmamış sunucuda da Pro süresi kaçmasın: panel
+ * istekleri arasında en çok 10 dakikada bir (zaman damgası dosyada;
+ * sırası gelmediyse veritabanına gidilmez). */
+if (PHP_SAPI !== 'cli' && Env::exists(CY_BASE . '/.env')) {
+    UyelikYonetimi::araSira(static fn (): PDO => Database::connection());
 }
 
 /* ---------------------------------------------------------------------
@@ -99,11 +118,10 @@ DashboardCards::add('transkript-raporlar', static function (?User $user): ?array
     $policy = new TranskriptPolicy($user);
     $repo   = new KaynakRepository($db);
     $sayi   = $policy->isAdmin() ? $repo->istatistik(null) : $repo->kendiIstatistik($user->id);
-    $hak    = $policy->canAnalyze() ? (new AnalizBaslatici($db, $user))->hakDurumu() : null;
+    // Bugünkü hak ayrı kartta ("Planınız"); burada yalnız kayıtlar.
     $alt    = $policy->canAnalyze() ? array_filter([
         $sayi['suruyor'] > 0 ? $sayi['suruyor'] . ' sürüyor' : '',
         $sayi['hata'] > 0 ? $sayi['hata'] . ' hata' : '',
-        $hak !== null && !$hak['muaf'] && $hak['gunluk_sinir'] > 0 ? 'bugünkü hakkınız ' . $hak['gunluk'] . ' / ' . $hak['gunluk_sinir'] : '',
     ]) : [];
 
     return [
@@ -113,6 +131,68 @@ DashboardCards::add('transkript-raporlar', static function (?User $user): ?array
         'deger'  => $sayi['kaynak'],
         'ipucu'  => $alt !== [] ? implode(' · ', $alt) : ($policy->isAdmin() ? 'raporu hazır video' : 'kütüphanenizdeki'),
         'yol'    => 'panel/transkript',
+    ];
+});
+
+/* ---------------------------------------------------------------------
+ *  KONTROL PANELİ: üyelik planı (yönetici olmayan) ve üyelikler (yönetici)
+ * ---------------------------------------------------------------------
+ *  Üye planını, bugünkü hakkını (AnalizBaslatici::hakDurumu, listeyle
+ *  aynı sayaç) ve Pro'nun bitişini görür; kart Üyeliğim'e gider.
+ *  Yönetici Pro üye sayısını ve onay bekleyen talepleri görür.
+ * ------------------------------------------------------------------ */
+DashboardCards::add('transkript-plan', static function (?User $user): ?array {
+    $plan = Planlar::plan($user);
+
+    if ($user === null || $plan === null || !$user->can('transkript.view')) {
+        return null;
+    }
+
+    $db  = Database::connection();
+    $hak = (new AnalizBaslatici($db, $user))->hakDurumu();
+    $pro = $plan === Planlar::PRO;
+
+    try {
+        $ozet = $pro ? (new UyelikRepository($db))->ozet($user->id) : null;
+    } catch (Throwable) {
+        $ozet = null; // tablo henüz yok
+    }
+
+    return [
+        'ikon'   => $pro ? 'star' : 'user',
+        'renk'   => $hak['bekleme_sn'] > 0 ? 'warning' : 'brand',
+        'etiket' => 'Planınız: ' . Planlar::ad($plan),
+        'deger'  => !Planlar::haklar($user)['analiz'] ? 'Analiz kapalı'
+            : ($hak['gunluk_sinir'] > 0 ? $hak['gunluk'] . ' / ' . $hak['gunluk_sinir'] . ' analiz' : 'Sınırsız analiz'),
+        'ipucu'  => match (true) {
+            !$pro                                     => 'bugünkü hakkınız · Pro\'ya geç →',
+            $ozet !== null && $ozet['bitis'] !== null => 'bugünkü hakkınız · Pro bitişi ' . date('d.m.Y', (int) strtotime($ozet['bitis'])),
+            default                                   => 'bugünkü hakkınız · Pro, süresiz',
+        },
+        'yol'    => 'panel/transkript/uyelik',
+    ];
+});
+
+DashboardCards::add('transkript-uyelikler', static function (?User $user): ?array {
+    if ($user === null || !$user->can('transkript.admin')) {
+        return null;
+    }
+
+    try {
+        $repo     = new UyelikRepository(Database::connection());
+        $bekleyen = $repo->bekleyenSayisi();
+        $pro      = count($repo->proUyeler());
+    } catch (Throwable) {
+        return null; // tablo henüz yok (migration bekliyor)
+    }
+
+    return [
+        'ikon'   => 'star',
+        'renk'   => $bekleyen > 0 ? 'warning' : 'brand',
+        'etiket' => 'Pro üye',
+        'deger'  => $pro,
+        'ipucu'  => $bekleyen > 0 ? $bekleyen . ' talep onay bekliyor →' : 'bekleyen talep yok',
+        'yol'    => 'panel/transkript/uyelikler',
     ];
 });
 

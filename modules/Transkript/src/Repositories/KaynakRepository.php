@@ -174,7 +174,7 @@ final class KaynakRepository
      * Kullanıcının KENDİ kaynakları: yüklediği dosya ya da kütüphanesindeki
      * video (başlattığı ya da önbellekten eklediği). Yönetici dışında liste,
      * sayaçlar, Kontrol Paneli kartı ve API'nin varsayılan kapsamı budur
-     * (kullanıcı kararı, 2026-10-09: üye ve analist yalnız kendi işlemlerini
+     * (kullanıcı kararı, 2026-10-09: üye ve Pro üye yalnız kendi işlemlerini
      * görür; yöneticinin paylaştıkları ayrı "Paylaşılanlar" seçeneğinde).
      *
      * @return array{0: string, 1: array<string,int>} [koşul, parametreler]
@@ -373,7 +373,7 @@ final class KaynakRepository
     }
 
     /**
-     * Yönetici olmayanın kutucukları (analist de üye de): KENDİ raporları,
+     * Yönetici olmayanın kutucukları (Pro da Ücretsiz de): KENDİ raporları,
      * yani kendi() kapsamı: kütüphanesindeki YouTube kayıtları ile kendi
      * dosyaları (yöneticinin paylaştıkları sayılmaz). Liste, Kontrol Paneli
      * ve API aynı kapsamı sayar; "kaynak", liste "Raporu hazır" süzgecinin

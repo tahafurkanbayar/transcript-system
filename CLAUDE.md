@@ -70,16 +70,23 @@ iddialar, fikirler ve kullanıcıya özel bölüm. Türkçe önceliklidir.
 
 ## Mimari özeti (ayrıntı `docs/TEKNIK_RAPOR.md`'de)
 
-**Tablolar** (11 modül tablosu + `ai_kullanim_kaydi`):
+**Tablolar** (13 modül tablosu + `ai_kullanim_kaydi`):
 `transkript_kaynaklar` (`tur`: youtube / ses_dosyasi / video_dosyasi, `dis_kimlik`,
 `sahip_id`, UNIQUE(`tur`, `dis_kimlik`, `sahip_id`), `paylasildi`), `transkript_metinler`,
 `transkript_segmentler`, `transkript_analizler`, `transkript_parcalar`,
 `transkript_analiz_ogeleri`, `transkript_kisisel_ozetler`, `transkript_sohbetler`,
-`transkript_sohbet_mesajlari`, `transkript_ilgi_alanlari`, `transkript_kutuphane`.
+`transkript_sohbet_mesajlari`, `transkript_ilgi_alanlari`, `transkript_kutuphane`,
+`transkript_uyelikler` (Pro dönemleri), `transkript_uyelik_talepleri`.
 Kaynak türünü yalnız `transkript_kaynaklar` bilir; diğer tablolar `kaynak_id` ile
 bağlanır. Önbellek ortak, görünürlük kişisel: rapor yalnız kütüphanesine
 ekleyene ve yöneticinin paylaştığına görünür (`TranskriptPolicy::canViewSource`,
 SQL'de `KaynakRepository::gorunurluk()`).
+
+**Üyelik planları** (2026-10-10, kullanıcı isteği): plan = rol. `uye` Ücretsiz
+(kısıtlı sınırlar), `editor` Pro (ücretli, ekranda "Pro Üye"). Sınırlar
+`config.php` → `uyelik` ve Transkript ayarları → Üyelik planları; kural
+`Uyelik\Planlar::haklar()`, süre / talep `Uyelik\UyelikYonetimi`. Çevrim içi
+ödeme yok: talep → ödeme talimatı → yönetici onayı.
 
 **Transcript zinciri** (`TranscriptProviderInterface`, sıra `.env` / config'ten):
 1. `YouTubeTranscriptProvider`: YouTube altyazısı.

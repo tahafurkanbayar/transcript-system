@@ -187,6 +187,11 @@ final class KaynakController extends Controller
             throw HttpException::notFound();
         }
 
+        // SRT / VTT altyazı Pro özelliği (Uyelik\Planlar); kaynağı görmek yetmez.
+        if (!(new TranskriptPolicy(Auth::user()))->canDownload($bicim)) {
+            throw HttpException::forbidden('Altyazı indirme Pro planında. Üyeliğim sayfasından Pro\'ya geçebilirsiniz.');
+        }
+
         if ($bicim === 'rapor.md') {
             $veri = (new RaporVerisi($this->db, new TranskriptPolicy(Auth::user())))->getir($kaynak);
 

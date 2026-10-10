@@ -23,10 +23,14 @@
  *  @var bool  $kayitAcik
  *  @var array{sayi:int,birim:string}|null $sure
  *  @var list<array{soru:string,cevap:string}> $sss
+ *  @var list<array<string,mixed>>            $planlar  Uyelik\Planlar::karsilastirma() (Planlar bölümü)
+ *  @var string|null                          $planim   ziyaretçinin planı (misafir / yönetici: null)
+ *  @var bool                                 $yonetici
  * =====================================================================
  */
 
 use App\Core\Setting;
+use Modules\Transkript\Uyelik\Planlar;
 use Modules\Transkript\Varliklar;
 
 $siteAdi = Setting::get('site_adi', 'Transkript');
@@ -476,6 +480,71 @@ $kimler = [
             </div>
         </div>
     </section>
+
+    <!-- ================= PLANLAR (Uyelik\Planlar; sınırlar panelden) ================= -->
+    <?php
+    $planlar ??= [];
+    $planim  ??= null;
+    $yonetici ??= false;
+    $proFiyat = Planlar::fiyatMetni(Planlar::PRO);
+    $proYillik = Planlar::fiyatMetni(Planlar::PRO, 'yillik');
+    /* Kartın düğmesi: misafire kayıt, Ücretsiz üyeye Pro'ya geçiş, kendi planında düğme yok. */
+    $planEylemi = static function (string $plan) use ($girisli, $kayitAcik, $planim, $yonetici): ?array {
+        return match (true) {
+            $yonetici, $plan === $planim                => null,
+            !$girisli && $plan === Planlar::UCRETSIZ    => $kayitAcik ? [url('kayit'), 'Ücretsiz kaydolun'] : [url('giris'), 'Giriş yapın'],
+            !$girisli                                   => $kayitAcik ? [url('kayit'), 'Kaydolun, sonra Pro\'ya geçin'] : [url('giris'), 'Giriş yapın'],
+            $plan === Planlar::PRO                      => [url('panel/transkript/uyelik'), 'Pro\'ya geçin'],
+            default                                     => null,
+        };
+    };
+    ?>
+    <?php if ($planlar !== []): ?>
+    <section class="tka-bolum" id="planlar" aria-labelledby="tka-planlar-baslik">
+        <div class="tka-kap">
+            <header class="tka-bas" data-tka-belir>
+                <span class="tka-ust-baslik">Planlar</span>
+                <h2 id="tka-planlar-baslik">Ücretsiz başlayın, ihtiyaç olunca Pro</h2>
+                <p>Kayıt olan herkes Ücretsiz plandadır. Daha önce analiz edilmiş bir videoyu açmak hiçbir planda hakkınızdan düşmez.</p>
+            </header>
+
+            <div class="tka-planlar">
+                <?php foreach (Planlar::ADLAR as $plan => $ad): ?>
+                    <?php $pro = $plan === Planlar::PRO; $eylem = $planEylemi($plan); ?>
+                    <article class="tka-plan<?= $pro ? ' tka-plan--pro' : '' ?>" data-tka-belir aria-labelledby="tka-plan-<?= e($plan) ?>">
+                        <?php if ($pro): ?><span class="tka-plan__serit">Daha çok analiz</span><?php endif; ?>
+                        <h3 id="tka-plan-<?= e($plan) ?>"><?= icon($pro ? 'star' : 'user', 'cy-icon cy-icon--sm') ?> <?= e($ad) ?>
+                            <?php if ($plan === $planim): ?><span class="tka-plan__rozet">Planınız</span><?php endif; ?></h3>
+                        <p class="tka-plan__fiyat">
+                            <?php if (!$pro): ?>
+                                <strong>0 <?= e(Planlar::paraBirimi() === 'TL' ? '₺' : Planlar::PARA_BIRIMLERI[Planlar::paraBirimi()]) ?></strong><small>kayıt olan herkese, süresiz</small>
+                            <?php elseif ($proFiyat !== ''): ?>
+                                <strong><?= e($proFiyat) ?></strong><?php if ($proYillik !== ''): ?><small>ya da <?= e($proYillik) ?></small><?php endif; ?>
+                            <?php else: ?>
+                                <strong class="tka-plan__sor">Fiyat için bize yazın</strong>
+                            <?php endif; ?>
+                        </p>
+                        <ul class="tka-plan__liste">
+                            <?php foreach ($planlar as $satir): ?>
+                                <?php $deger = $satir['degerler'][$plan] ?? false; ?>
+                                <li class="<?= $deger === false ? 'is-yok' : 'is-var' ?>">
+                                    <?= icon($deger === false ? 'close' : 'check', 'cy-icon cy-icon--sm') ?>
+                                    <span><?= e($satir['etiket']) ?><?php if (is_string($deger)): ?>: <strong><?= e($deger) ?></strong><?php endif; ?></span>
+                                </li>
+                            <?php endforeach; ?>
+                        </ul>
+                        <?php if ($eylem !== null): ?>
+                            <a class="tka-dugme <?= $pro ? 'tka-dugme--ana' : 'tka-dugme--cizgi' ?> tka-plan__dugme" href="<?= e($eylem[0]) ?>"><?= e($eylem[1]) ?> <?= icon('chevron', 'cy-icon cy-icon--sm') ?></a>
+                        <?php endif; ?>
+                    </article>
+                <?php endforeach; ?>
+            </div>
+            <?php if ($proFiyat === ''): ?>
+                <p class="tka-planlar__not" data-tka-belir>Çevrim içi ödeme henüz yok: kaydolduktan sonra panelde <strong>Üyeliğim → Pro'ya geç</strong> ile talep gönderin; ödeme talimatı orada görünür, ödeme görülünce Pro açılır.</p>
+            <?php endif; ?>
+        </div>
+    </section>
+    <?php endif; ?>
 
     <!-- ================= SIK SORULAN SORULAR ================= -->
     <section class="tka-bolum" id="sss" aria-labelledby="tka-sss-baslik">

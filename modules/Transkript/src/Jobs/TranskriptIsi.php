@@ -48,6 +48,7 @@ use App\Core\Database;
 use App\Core\Log\Logger;
 use App\Core\Queue\Job;
 use App\Core\Queue\Queue;
+use App\Repositories\UserRepository;
 use Modules\Transkript\Ai\Ai;
 use Modules\Transkript\Ai\AiHatasi;
 use Modules\Transkript\Ai\YedekliSaglayici;
@@ -60,6 +61,7 @@ use Modules\Transkript\Repositories\SegmentRepository;
 use Modules\Transkript\Services\KuyrukDurumu;
 use Modules\Transkript\Services\Pipeline;
 use Modules\Transkript\Transcript\TranscriptHatasi;
+use Modules\Transkript\Uyelik\Planlar;
 use PDO;
 use Throwable;
 
@@ -317,6 +319,20 @@ abstract class TranskriptIsi extends Job
     protected function db(): PDO
     {
         return Database::connection();
+    }
+
+    /**
+     * Analizi başlatanın planındaki en uzun video (dakika, sistem tavanı
+     * içinde; Uyelik\Planlar::haklar). Başlatan yoksa ya da silindiyse
+     * sistemin tavanı. 0 = sınır yok.
+     *
+     * @param array<string,mixed> $analiz
+     */
+    protected function planDakikasi(array $analiz): int
+    {
+        $id = (int) ($analiz['kullanici_id'] ?? 0);
+
+        return Planlar::haklar($id > 0 ? (new UserRepository($this->db()))->find($id) : null)['en_uzun_dk'];
     }
 
     protected function analizler(): AnalizRepository

@@ -63,20 +63,19 @@ $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format(
 ?>
 <link rel="stylesheet" href="<?= e(Varliklar::adres('transkript.css')) ?>">
 
+<?php View::partial('Transkript::_parcalar/alt-menu', ['policy' => $policy, 'etkin' => 'analizler']); ?>
+
 <?php View::partial('Transkript::_parcalar/kuyruk-uyarisi', ['kuyruk' => $kuyruk, 'policy' => $policy]); ?>
 
-<?php if ($policy->isAdmin()): ?>
+<?php if ($policy->isAdmin() && ($bekleyen ?? 0) > 0): ?>
     <div class="tk-ust tk-ust--sag mb-3">
-        <?php if (($bekleyen ?? 0) > 0): ?>
-            <?php /* Geçici sebeple (kota, servis) duran analizler kaldığı yerden sürer; biten bölümler korunur. */ ?>
-            <form method="post" action="<?= e(url('panel/transkript/yeniden-dene')) ?>" class="d-inline">
-                <?= csrf_field() ?>
-                <button type="submit" class="btn cy-btn cy-btn--ghost cy-btn--sm" title="Kota ya da servis yüzünden duran analizler kaldığı yerden sürer">
-                    <?= icon('refresh', 'cy-icon cy-icon--sm') ?> Bekleyenleri yeniden dene (<?= (int) $bekleyen ?>)
-                </button>
-            </form>
-        <?php endif; ?>
-        <a class="btn cy-btn cy-btn--ghost cy-btn--sm" href="<?= e(url('panel/transkript/ayarlar')) ?>"><?= icon('settings', 'cy-icon cy-icon--sm') ?> Transkript ayarları</a>
+        <?php /* Geçici sebeple (kota, servis) duran analizler kaldığı yerden sürer; biten bölümler korunur. */ ?>
+        <form method="post" action="<?= e(url('panel/transkript/yeniden-dene')) ?>" class="d-inline">
+            <?= csrf_field() ?>
+            <button type="submit" class="btn cy-btn cy-btn--ghost cy-btn--sm" title="Kota ya da servis yüzünden duran analizler kaldığı yerden sürer">
+                <?= icon('refresh', 'cy-icon cy-icon--sm') ?> Bekleyenleri yeniden dene (<?= (int) $bekleyen ?>)
+            </button>
+        </form>
     </div>
 <?php endif; ?>
 
@@ -90,18 +89,22 @@ $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format(
             </div>
             <?php if ($hak !== null && !$hak['muaf'] && ($hak['gunluk_sinir'] > 0 || $hak['saatlik_sinir'] > 0)): ?>
                 <?php /* Bugünkü hak (AnalizBaslatici::hakDurumu; kotaKontrolu ile aynı sayaç). */ ?>
-                <p class="tk-hak<?= $hakDolu ? ' is-dolu' : '' ?>">
+                <a class="tk-hak<?= $hakDolu ? ' is-dolu' : '' ?>" href="<?= e(url('panel/transkript/uyelik')) ?>" title="Planınız ve sınırlarınız: Üyeliğim">
                     <?= icon('clock', 'cy-icon cy-icon--sm') ?>
                     <?= e(implode(' · ', array_filter([
                         $hak['gunluk_sinir'] > 0 ? 'Bugünkü hakkınız: ' . $hak['gunluk'] . ' / ' . $hak['gunluk_sinir'] : '',
                         $hak['saatlik_sinir'] > 0 ? 'saatlik ' . $hak['saatlik'] . ' / ' . $hak['saatlik_sinir'] : '',
                     ]))) ?>
-                </p>
+                </a>
             <?php endif; ?>
         </header>
         <?php if ($hakDolu): ?>
             <p class="cy-panel__note is-warn mb-2"><?= icon('info', 'cy-icon cy-icon--sm') ?>
-                Analiz hakkınız doldu; <?= e($hak['yenilenme']) ?> itibarıyla yenilenir. Daha önce analiz edilmiş videoları eklemek hakkınızdan düşmez.</p>
+                Analiz hakkınız doldu; <?= e($hak['yenilenme']) ?> itibarıyla yenilenir. Daha önce analiz edilmiş videoları eklemek hakkınızdan düşmez.
+                <?php if (($hak['plan'] ?? null) === 'uye'): ?>
+                    Daha yüksek sınır için <a class="cy-link" href="<?= e(url('panel/transkript/uyelik')) ?>">Pro'ya geçebilirsiniz</a>.
+                <?php endif; ?>
+            </p>
         <?php endif; ?>
         <form class="tk-analiz__form" id="tk_analiz_form" novalidate>
             <label class="visually-hidden" for="tk_url">YouTube bağlantısı</label>
@@ -125,7 +128,8 @@ $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format(
         </details>
     </section>
 <?php else: ?>
-    <p class="cy-panel__note mb-3"><?= icon('info', 'cy-icon cy-icon--sm') ?> Analiz başlatma yetkiniz yok. Yöneticinin sizinle paylaştığı raporlar listedeki “Paylaşılanlar” seçeneğindedir.</p>
+    <p class="cy-panel__note mb-3"><?= icon('info', 'cy-icon cy-icon--sm') ?> Planınızda video analizi şu an kapalı. Yöneticinin sizinle paylaştığı raporlar listedeki “Paylaşılanlar” seçeneğindedir;
+        kendi videolarınızı analiz ettirmek için <a class="cy-link" href="<?= e(url('panel/transkript/uyelik')) ?>">Pro'ya geçebilirsiniz</a>.</p>
 <?php endif; ?>
 
 <?php $analizci = $policy->canAnalyze(); ?>

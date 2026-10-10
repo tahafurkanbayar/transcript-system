@@ -223,3 +223,213 @@ a.tk-zaman.is-oynuyor { background: var(--cy-brand); color: #fff; }
 .tk-stat-baglanti { color: inherit; text-decoration: none; transition: border-color var(--cy-transition), box-shadow var(--cy-transition); }
 .tk-stat-baglanti:hover,
 .tk-stat-baglanti:focus-visible { border-color: var(--cy-brand); box-shadow: var(--cy-shadow-sm); }
+
+/* =====================================================================
+ *  BÖLÜM MENÜSÜ (Analizler · Üyeliğim · Üyelikler · Ayarlar)
+ *  Telefonda yatay kaydırılır; plan çipi alta iner.
+ * ===================================================================== */
+.tk-altmenu-sarici { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem .75rem; margin-bottom: 1rem; }
+.tk-altmenu {
+    display: flex; gap: .25rem; padding: .25rem; max-width: 100%;
+    overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch;
+    background: var(--cy-surface); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-pill);
+}
+.tk-altmenu::-webkit-scrollbar { display: none; }
+.tk-altmenu__oge {
+    display: inline-flex; align-items: center; gap: .4rem; flex-shrink: 0;
+    padding: .45rem .9rem; border-radius: var(--cy-radius-pill);
+    color: var(--cy-text-soft); font-size: .9rem; font-weight: 500; text-decoration: none; white-space: nowrap;
+    transition: background var(--cy-transition), color var(--cy-transition);
+}
+.tk-altmenu__oge:hover { background: var(--cy-surface-hover); color: var(--cy-text); text-decoration: none; }
+.tk-altmenu__oge.is-etkin { background: var(--cy-brand); color: #fff; }
+.tk-altmenu__rozet {
+    min-width: 1.25rem; padding: 0 .35rem; border-radius: var(--cy-radius-pill);
+    background: var(--cy-warning); color: #1a1a1a; font-size: .72rem; font-weight: 700; line-height: 1.25rem; text-align: center;
+}
+.tk-plan-cip {
+    display: inline-flex; align-items: center; gap: .4rem; padding: .35rem .8rem; border-radius: var(--cy-radius-pill);
+    background: var(--cy-surface-soft); color: var(--cy-text-soft); font-size: .85rem; text-decoration: none; white-space: nowrap;
+}
+.tk-plan-cip strong { color: var(--cy-brand-text); font-weight: 600; }
+.tk-plan-cip.is-pro { background: var(--cy-warning-soft); color: var(--cy-warning-text); }
+.tk-plan-cip:hover { text-decoration: none; box-shadow: inset 0 0 0 1px var(--cy-border-strong); }
+
+/* =====================================================================
+ *  PLAN KARTLARI (Ücretsiz · Pro)
+ * ===================================================================== */
+.tk-bolum-baslik { margin-bottom: .75rem; }
+.tk-planlar { display: grid; grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); gap: 1rem; }
+.tk-plan {
+    display: flex; flex-direction: column; padding: 1.25rem; border-radius: var(--cy-radius-lg);
+    background: var(--cy-surface); border: 1px solid var(--cy-border); box-shadow: var(--cy-shadow-xs);
+}
+.tk-plan--pro { border-color: var(--cy-brand-200); box-shadow: 0 0 0 1px var(--cy-brand-200), var(--cy-shadow-sm); }
+.tk-plan.is-etkin { border-color: var(--cy-brand); box-shadow: 0 0 0 2px var(--cy-brand); }
+.tk-plan__ust { padding-bottom: .9rem; margin-bottom: .9rem; border-bottom: 1px solid var(--cy-border); }
+.tk-plan__ad { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
+.tk-plan__ad h3 { display: inline-flex; align-items: center; gap: .4rem; margin: 0; font-size: 1.1rem; font-weight: 700; }
+.tk-plan--pro .tk-plan__ad h3 { color: var(--cy-brand-text); }
+.tk-plan__rozet { padding: .1rem .55rem; border-radius: var(--cy-radius-pill); background: var(--cy-brand); color: #fff; font-size: .72rem; font-weight: 700; }
+.tk-plan__fiyat { margin: .5rem 0 .25rem; display: flex; flex-wrap: wrap; align-items: baseline; gap: .25rem .6rem; }
+.tk-plan__fiyat strong { font-size: 1.6rem; font-weight: 800; line-height: 1.2; }
+.tk-plan__fiyat small { color: var(--cy-text-muted); }
+.tk-plan__fiyat .tk-plan__fiyat--sor { font-size: 1rem; font-weight: 600; color: var(--cy-text-soft); }
+.tk-plan__ozet { margin: 0; color: var(--cy-text-muted); font-size: .875rem; }
+.tk-plan__liste { list-style: none; margin: 0; padding: 0; display: grid; gap: .55rem; flex: 1 1 auto; align-content: start; }
+.tk-plan__liste li { display: flex; gap: .55rem; align-items: flex-start; font-size: .9rem; line-height: 1.4; }
+.tk-plan__liste li > .cy-icon { flex-shrink: 0; margin-top: .1rem; }
+.tk-plan__liste li.is-var > .cy-icon { color: var(--cy-success); }
+.tk-plan__liste li.is-yok { color: var(--cy-text-muted); }
+.tk-plan__liste li.is-yok > .cy-icon { color: var(--cy-text-muted); opacity: .7; }
+.tk-plan__liste small { display: block; color: var(--cy-text-muted); font-size: .78rem; }
+.tk-plan__alt { margin-top: 1rem; }
+
+/* =====================================================================
+ *  ÜYELİĞİM: plan özeti ve kullanım ölçerleri
+ * ===================================================================== */
+.tk-planim__govde { display: grid; grid-template-columns: minmax(14rem, 1fr) 2fr; gap: 1.25rem 2rem; align-items: start; }
+.tk-planim__etiket { font-size: .78rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--cy-text-muted); }
+.tk-planim__ad { display: flex; align-items: center; gap: .45rem; margin: .15rem 0 .35rem; font-size: 1.6rem; font-weight: 800; }
+.tk-planim.is-pro .tk-planim__ad { color: var(--cy-brand-text); }
+.tk-planim__durum { margin: 0 0 .75rem; color: var(--cy-text-soft); }
+.tk-planim__durum.is-yakin { color: var(--cy-warning-text); }
+.tk-planim__sag { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: 1rem; }
+.tk-planim__not { display: flex; gap: .5rem; align-items: flex-start; font-size: .85rem; color: var(--cy-text-soft); }
+.tk-planim__not .cy-icon { flex-shrink: 0; margin-top: .15rem; }
+.tk-olcer { display: grid; gap: .35rem; padding: .75rem .9rem; border-radius: var(--cy-radius); background: var(--cy-surface-soft); }
+.tk-olcer__ust { display: flex; justify-content: space-between; gap: .5rem; font-size: .85rem; color: var(--cy-text-soft); }
+.tk-olcer__ust strong { color: var(--cy-text); font-size: 1rem; }
+.tk-olcer small { color: var(--cy-text-muted); font-size: .76rem; }
+.tk-olcer.is-dolu .cy-progress__bar { background: var(--cy-warning); }
+.tk-olcer.is-dolu .tk-olcer__ust strong { color: var(--cy-warning-text); }
+
+/* Pro'ya geç: adımlar, talep durumu, ödeme talimatı */
+.tk-adimlar { counter-reset: tk-adim; list-style: none; margin: 0 0 1.25rem; padding: 0; display: grid; gap: .6rem; }
+.tk-adimlar li { counter-increment: tk-adim; display: flex; flex-wrap: wrap; gap: .1rem .4rem; align-items: baseline; padding-left: 2.1rem; position: relative; }
+.tk-adimlar li::before {
+    content: counter(tk-adim); position: absolute; left: 0; top: -.05rem;
+    width: 1.5rem; height: 1.5rem; border-radius: 50%; display: grid; place-items: center;
+    background: var(--cy-brand-50); color: var(--cy-brand-text); font-size: .8rem; font-weight: 700;
+}
+.tk-adimlar span { color: var(--cy-text-muted); font-size: .875rem; }
+.tk-talep-durum { display: grid; gap: .35rem; justify-items: start; padding: .9rem 1rem; margin-bottom: 1rem; border-radius: var(--cy-radius); background: var(--cy-surface-soft); }
+.tk-alt-baslik { font-size: .95rem; font-weight: 700; margin: 0 0 .5rem; }
+.tk-odeme-bilgisi {
+    white-space: pre-line; overflow-wrap: anywhere; padding: .9rem 1rem; border-radius: var(--cy-radius);
+    border: 1px dashed var(--cy-border-strong); background: var(--cy-surface); font-family: var(--cy-font-mono); font-size: .875rem;
+}
+
+/* Rapor: Pro'ya bağlı dışa aktarma düğmesi */
+.tk-pro-kilit { color: var(--cy-text-muted); }
+.tk-pro-rozet { padding: 0 .4rem; border-radius: var(--cy-radius-pill); background: var(--cy-brand); color: #fff; font-size: .7rem; font-weight: 700; }
+
+/* =====================================================================
+ *  ÜYELİKLER (yönetici): talepler ve Pro üyeler satırları
+ * ===================================================================== */
+.tk-talepler, .tk-prolar { list-style: none; margin: 0; padding: 0; }
+.tk-talep, .tk-pro {
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .75rem 1rem;
+    padding: .9rem 1rem; border-top: 1px solid var(--cy-border);
+}
+.tk-talep:first-child, .tk-pro:first-child { border-top: 0; }
+.tk-talep__kim, .tk-pro__kim { display: flex; flex-direction: column; gap: .15rem; min-width: 0; flex: 1 1 14rem; }
+.tk-talep__kim small, .tk-pro__kim small { overflow-wrap: anywhere; }
+.tk-talep__istek { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem; font-size: .85rem; color: var(--cy-text-soft); }
+.tk-talep__not { font-size: .85rem; color: var(--cy-text-soft); font-style: italic; overflow-wrap: anywhere; }
+.tk-talep__eylem { display: grid; gap: .4rem; flex: 1 1 20rem; justify-items: end; }
+.tk-satir-form { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; justify-content: flex-end; }
+.tk-satir-form .form-select { width: auto; min-width: 6.5rem; }
+.tk-satir-form .form-control { width: 8rem; flex: 1 1 7rem; }
+.tk-reddet > summary, .tk-uzat > summary { list-style: none; cursor: pointer; }
+.tk-reddet > summary::-webkit-details-marker, .tk-uzat > summary::-webkit-details-marker { display: none; }
+.tk-pro__sure { display: flex; flex-direction: column; align-items: flex-start; gap: .15rem; min-width: 7rem; }
+.tk-pro__eylem { display: flex; flex-wrap: wrap; align-items: flex-start; gap: .4rem; justify-content: flex-end; }
+.tk-uzat[open] { flex-basis: 100%; }
+
+@media (max-width: 767.98px) {
+    .tk-altmenu-sarici { flex-direction: column; align-items: stretch; }
+    .tk-altmenu { border-radius: var(--cy-radius); }
+    .tk-plan-cip { align-self: flex-start; }
+    .tk-planim__govde { grid-template-columns: 1fr; }
+    .tk-planim__ad { font-size: 1.35rem; }
+    .tk-talep__eylem { justify-items: stretch; }
+    .tk-satir-form { justify-content: stretch; }
+    .tk-satir-form > * { flex: 1 1 100%; width: 100%; }
+    .tk-satir-form .form-select, .tk-satir-form .form-control { width: 100%; }
+    .tk-pro { align-items: flex-start; }
+}
+
+/* =====================================================================
+ *  AYARLAR: sekmeler, plan sınırları tablosu, kaydet çubuğu
+ *  JS yoksa sekmeler çapadır ve bütün bölümler alt alta görünür.
+ * ===================================================================== */
+.tk-sekmeler {
+    display: flex; gap: .25rem; margin-bottom: 1rem; overflow-x: auto; scrollbar-width: none;
+    border-bottom: 1px solid var(--cy-border);
+}
+.tk-sekmeler::-webkit-scrollbar { display: none; }
+.tk-sekme {
+    display: inline-flex; align-items: center; gap: .4rem; flex-shrink: 0; white-space: nowrap;
+    padding: .6rem .9rem; margin-bottom: -1px; border-bottom: 2px solid transparent;
+    color: var(--cy-text-soft); font-weight: 500; text-decoration: none;
+}
+.tk-sekme:hover { color: var(--cy-text); text-decoration: none; }
+.tk-sekme.is-etkin { color: var(--cy-brand-text); border-bottom-color: var(--cy-brand); }
+.tk-sekme-panel[hidden] { display: none !important; }
+.tk-sekme-panel + .tk-sekme-panel { margin-top: 1rem; }
+.tk-sekmeler.is-hazir ~ .tk-ayar-form .tk-sekme-panel + .tk-sekme-panel { margin-top: 0; }
+
+/* Plan sınırları: satır = ayar, sütun = Ücretsiz | Pro */
+.tk-plan-ayar { display: grid; border: 1px solid var(--cy-border); border-radius: var(--cy-radius); overflow: hidden; }
+.tk-plan-ayar__bas, .tk-plan-ayar__satir {
+    display: grid; grid-template-columns: minmax(12rem, 1.3fr) 1fr 1fr; gap: .75rem 1rem; align-items: center; padding: .75rem 1rem;
+}
+.tk-plan-ayar__bas { background: var(--cy-surface-soft); font-size: .8rem; font-weight: 700; color: var(--cy-text-soft); text-transform: uppercase; letter-spacing: .04em; }
+.tk-plan-ayar__bas span { display: inline-flex; align-items: center; gap: .35rem; }
+.tk-plan-ayar__satir { border-top: 1px solid var(--cy-border); }
+.tk-plan-ayar__etiket { display: flex; flex-direction: column; gap: .15rem; }
+.tk-plan-ayar__etiket small { color: var(--cy-text-muted); font-size: .8rem; line-height: 1.35; }
+.tk-plan-ayar__sabit { display: inline-flex; align-items: center; gap: .35rem; color: var(--cy-success-text); font-size: .875rem; }
+
+/* Sayı + birim ("10 analiz", "30 dakika") */
+.tk-girdi-birim { display: flex; align-items: stretch; }
+.tk-girdi-birim .form-control { min-width: 0; }
+.tk-girdi-birim__ek {
+    display: inline-flex; align-items: center; padding: 0 .65rem; white-space: nowrap;
+    border: 1px solid var(--cy-border); border-left: 0; border-radius: 0 var(--cy-radius-sm) var(--cy-radius-sm) 0;
+    background: var(--cy-surface-soft); color: var(--cy-text-muted); font-size: .8rem;
+}
+.tk-girdi-birim .form-control:not(:last-child) { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+
+/* Formun altında yapışkan kaydet çubuğu (uzun sekmede de görünür) */
+.tk-kaydet-cubugu {
+    position: sticky; bottom: 0; z-index: 4; margin-top: 1rem;
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem 1rem;
+    padding: .75rem 1rem; border: 1px solid var(--cy-border); border-radius: var(--cy-radius);
+    background: var(--cy-surface); box-shadow: var(--cy-shadow);
+}
+.tk-kaydet-cubugu[hidden] { display: none; }
+
+/* Liste: bugünkü hak rozeti Üyeliğim'e bağlantıdır */
+a.tk-hak { text-decoration: none; }
+a.tk-hak:hover, a.tk-hak:focus-visible { text-decoration: none; box-shadow: inset 0 0 0 1px currentColor; }
+
+@media (max-width: 767.98px) {
+    .tk-plan-ayar__bas { display: none; }
+    .tk-plan-ayar__satir { grid-template-columns: 1fr 1fr; }
+    .tk-plan-ayar__etiket { grid-column: 1 / -1; }
+    .tk-plan-ayar__deger .form-select, .tk-plan-ayar__deger .form-control { font-size: .875rem; padding-left: .6rem; }
+    .tk-plan-ayar__deger .form-select { padding-right: 1.75rem; background-position: right .45rem center; }
+    .tk-plan-ayar__deger .tk-girdi-birim__ek { display: none; }
+    .tk-plan-ayar__deger .tk-girdi-birim .form-control { border-radius: var(--cy-radius-sm); }
+    /* Sekmeler sağa taşar: kenarda solma, kaydırılabildiği belli olsun. */
+    .tk-sekmeler { -webkit-mask-image: linear-gradient(to right, #000 85%, transparent); mask-image: linear-gradient(to right, #000 85%, transparent); padding-right: 2rem; }
+    .tk-plan-ayar__deger::before {
+        content: attr(data-plan); display: block; margin-bottom: .25rem;
+        font-size: .72rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--cy-text-muted);
+    }
+    .tk-kaydet-cubugu { margin-left: -.25rem; margin-right: -.25rem; }
+    .tk-kaydet-cubugu > span { display: none; }
+    .tk-kaydet-cubugu .btn { width: 100%; }
+}

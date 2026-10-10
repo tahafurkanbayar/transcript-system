@@ -62,10 +62,13 @@ modules/Transkript/
 
 ## Roller ve yetkiler
 
-| Yetki | Ne sağlar | Yönetici | Analist (`editor`) | Üye |
+Rol aynı zamanda **üyelik planıdır** (aşağıda "Üyelik planları"): `uye` = Ücretsiz,
+`editor` = Pro (ekranda "Pro Üye"; önceki adı "Analist").
+
+| Yetki | Ne sağlar | Yönetici | Pro (`editor`) | Ücretsiz (`uye`) |
 |---|---|:-:|:-:|:-:|
 | `transkript.view` | Kütüphanesindeki ve paylaşılan raporları görmek | ✓ | ✓ | ✓ |
-| `transkript.analyze` | Analiz başlatmak, dosya yüklemek (maliyet oluşturur) | ✓ | ✓ | ayarla |
+| `transkript.analyze` | Analiz başlatmak, dosya yüklemek (maliyet oluşturur) | ✓ | ✓ | plan ayarıyla (varsayılan açık) |
 | `transkript.chat` | Kayda soru sormak | ✓ | ✓ | ✓ |
 | `transkript.admin` | Herkesin kaydı, paylaşım, tamamen silme, tüm maliyet | ✓ | | |
 
@@ -91,10 +94,10 @@ varsayılan olarak yalnız **kendi** kütüphanesini görür
 "Paylaşılanlar" seçeneğindedir (API'de `?kapsam=paylasilan`). Sayaçlar ve
 Kontrol Paneli kartı varsayılan kapsamı sayar (`kendiIstatistik`).
 
-**"Üyeler analiz başlatabilir"** (Transkript ayarları, varsayılan kapalı)
-rol yetkisi değil ayardır: açıkken üye analistle aynı kurallar ve kotalarla
-analiz başlatır. Bu yüzden analiz başlatan panel uçları rotada yalnız giriş
-ister, kararı `TranskriptPolicy::canAnalyze` verir.
+**Ücretsiz planın "Analiz başlatabilir"** ayarı (Transkript ayarları →
+Üyelik planları, varsayılan açık) rol yetkisi değil ayardır. Bu yüzden analiz
+başlatan panel uçları rotada yalnız giriş ister, kararı
+`TranskriptPolicy::canAnalyze` verir.
 
 Eylem bazında (HTTP kodları `tests/transkript-yetki.php`'de gerçek rota ve
 ara katmanlarla, kararlar `tests/transkript.php`'deki matriste sınanır;
@@ -104,20 +107,23 @@ ara katmanlarla, kararlar `tests/transkript.php`'deki matriste sınanır;
 |---|:-:|:-:|:-:|:-:|
 | Rapor, ilerleme, transcript, indirme: kütüphanesindeki ya da paylaşılan | giriş | ✓ | ✓ | ✓ |
 | … başkasının, paylaşılmamış | giriş | 404 | 404 | ✓ |
-| Analiz başlat (önbellekteyse AI'a gidilmez, haktan düşmez) | 401 | 403 (ayarla ✓) | ✓ | ✓ |
-| Duran analizi sürdür ("Yeniden dene") | 401 | 403 | kendi; başkasının videosunu gönderirse kendi analizi açılır | ✓ |
-| Yeniden analiz (`yeniden=1`, haktan düşer) | 401 | 403 | kendi raporu (başkasınınki 403) | ✓ |
-| Süren analizi iptal | 401 | 403 | kendi (başkasınınki 403; süren yoksa 409) | ✓ |
+| Analiz başlat (önbellekteyse AI'a gidilmez, haktan düşmez) | 401 | ✓ Ücretsiz sınırlarıyla (plan ayarı kapalıysa 403) | ✓ Pro sınırlarıyla | ✓ |
+| Duran analizi sürdür ("Yeniden dene") | 401 | kendi | kendi; başkasının videosunu gönderirse kendi analizi açılır | ✓ |
+| Yeniden analiz (`yeniden=1`, haktan düşer) | 401 | 403 (planda açılırsa kendi raporu) | kendi raporu (başkasınınki 403) | ✓ |
+| Altyazı indirme (SRT / VTT; rapor ve TXT herkese) | 401 | 403 (planda açılabilir) | ✓ | ✓ |
+| Süren analizi iptal | 401 | kendi | kendi (başkasınınki 403; süren yoksa 409) | ✓ |
+| Üyeliğim, "Pro'ya geç" talebi | 401 | ✓ | ✓ (uzatma) | sayfa: plan yok |
+| Üyelikler: Pro ver / uzat / kaldır, talebi onayla / reddet | 401 | 403 | 403 | ✓ |
 | Kütüphanemden çıkar (ortak kayıt kalır) | 401 | kendi kütüphanesi | kendi kütüphanesi | ✓ |
 | Tamamen sil | 401 | kendi yüklediği | kendi yüklediği (YouTube 403) | ✓ (kaç kullanıcıda olduğunu söyler) |
 | Üyelerle paylaş / paylaşımı kaldır | 401 | 403 | 403 | ✓ |
 | "Şimdi işle" (kuyruk), Transkript ayarları | 401 | 403 | 403 | ✓ |
 | Hatanın iç nedeni (kota, servis, ayar) | | genel metin | kendi başlattığı | ✓ |
 | "Raporlarınız" / "Bugün eklediğiniz" | | kütüphane + paylaşılan | kütüphane + paylaşılan | herkesin |
-| Bugünkü analiz hakkı ("3 / 10 · saatlik 1 / 20") | | (ayarla) | ✓ | muaf |
+| Bugünkü analiz hakkı ("1 / 2 · saatlik 0 / 1") | | ✓ | ✓ | muaf |
 | Süren / hatalı sayısı (liste, kontrol paneli) | | | ✓ | ✓ |
 | Token / maliyet (liste kartları, rapor kartı, API özeti) | | | | ✓ |
-| API anahtarı (çekirdek `profile.api`) | | | ✓ | ✓ |
+| API anahtarı (çekirdek `profile.api`; Pro düşünce anahtarları silinir) | | | ✓ | ✓ |
 | Sayfalar, iletişim mesajları, e-posta geçmişi (çekirdek) | | 403 | 403 | ✓ |
 
 Kontrol sırası her uçta aynıdır: giriş → yetki ve sahiplik (görmüyorsa 404,
@@ -136,15 +142,56 @@ bağlantısı yalnız `profile.api` yetkisi olana. Misafir için kayıt formunun
 açtığı üye hesabının yetkisine bakılır; varsayılan kurulumda misafir ve üye
 rapor okumayı anlatan metni ve "API erişimi için bize yazın" bağlantısını görür.
 
-**Kotalar** (`config.php` → `analiz`; yalnız yeni AI işi açan istek sayılır,
-önbellekten dönen sayılmaz): kullanıcı başına saatte `saatlik_sinir` (5; günlükten
-küçük olmalı, değilse kayıtta uyarı) ve günde `gunluk_sinir` (10) analiz; hiç yapay
-zekâ çağrısı yapılmadan iptal edilen ya da kalıcı hatayla düşen analiz günlük
-haktan düşmez (`AnalizBaslatici::BUGUN_SAYILAN`); bütün kullanıcılar için günlük
+**Kotalar** (yalnız yeni AI işi açan istek sayılır, önbellekten dönen sayılmaz):
+kişi başına saatlik ve günlük sınır **planındadır** (aşağıda); hiç yapay zekâ
+çağrısı yapılmadan iptal edilen ya da kalıcı hatayla düşen analiz günlük haktan
+düşmez (`AnalizBaslatici::BUGUN_SAYILAN`). Bütün kullanıcılar için günlük
 `gunluk_token_tavani` (0 = kapalı) ve `gunluk_maliyet_tavani` (5 USD, ücretli
-katman fiyatıyla tahmin). Aşılınca 429 + `Retry-After` (gün sonuna kadar) ve
-Türkçe mesaj (`gunluk_sinir`, `gunluk_butce`). Yönetici kişisel sınırlardan
-muaftır (`yonetici_muaf`); genel bütçe tavanı herkese uygulanır.
+katman fiyatıyla tahmin) `config.php` → `analiz`'tedir. Aşılınca 429 +
+`Retry-After` ve Türkçe mesaj (`gunluk_sinir`, `gunluk_butce`, `rate_limit`).
+Yönetici plan sınırlarından muaftır (`yonetici_muaf`; kapatılırsa Pro sınırları);
+genel bütçe tavanı herkese uygulanır.
+
+## Üyelik planları
+
+Kullanıcı isteği (2026-10-10): "Üye ücretsiz ve kısıtlı işlem yapar, editör
+ücretli üyeliktir; limitleri daha yüksektir." Plan rolden gelir, ayrı sütun
+yoktur (`Uyelik\Planlar`):
+
+| | Ücretsiz (`uye`) | Pro (`editor`, "Pro Üye") |
+|---|:-:|:-:|
+| Analiz başlatabilir | ✓ (ayarla kapatılır) | ✓ her zaman |
+| Günlük / saatlik yeni analiz | 2 / 1 | 20 / 5 |
+| En uzun video | 30 dk | 180 dk |
+| Yeniden analiz | | ✓ |
+| Altyazı indirme (SRT / VTT) | | ✓ |
+| API anahtarı (çekirdek `profile.api`) | | ✓ |
+| Fiyat | 0 | panelden (boş: "iletişime geçin") |
+
+Varsayılanlar `config.php` → `uyelik`; hepsi Transkript ayarları → **Üyelik
+planları** sekmesinden değişir (iki sütunlu tablo). Planın süre sınırı sistemin
+`analiz.en_uzun_dk` tavanını aşamaz. Süre çoğu zaman ancak iş sırasında
+öğrenilir: sistem tavanı aşılırsa `video_cok_uzun` (herkese söylenir), yalnız
+planınki aşılırsa `plan_video_uzun` (kalıcı hata, yalnız başlatana; AI'a
+gidilmediği için haktan düşmez).
+
+**Pro nasıl verilir?** Çevrim içi ödeme yok (ödeme altyapısı kullanıcı kararı
+bekliyor). Akış (`Uyelik\UyelikYonetimi`):
+1. Üye **Üyeliğim → Pro'ya geç** ile 1 / 3 / 6 / 12 aylık talep gönderir
+   (`transkript_uyelik_talepleri`; kişi başına bir bekleyen talep, günde 5 deneme).
+   Yöneticiye e-posta gider; üye panelde yazılan **ödeme talimatını** görür.
+2. Yönetici **Üyelikler**'de talebi onaylar (süre, alınan tutar, not) ya da
+   talepsiz "Pro ver" der. Dönem açılır (`transkript_uyelikler`), rol `editor`
+   olur, üyeye e-posta gider. Süren Pro'ya eklenen dönem eskisinin bitişinde başlar.
+3. Bitime `uyelik.hatirlatma_gun` (3) kala e-posta; süre dolunca rol `uye`ye
+   döner, API anahtarları silinir, e-posta gider. Bu kontrol zamanlanmış görevle
+   saatte bir (`transkript-uyelik-suresi`) ve görev zamanlayıcısı yoksa panel
+   istekleri arasında en çok 10 dakikada bir çalışır (`UyelikYonetimi::araSira`).
+
+Kullanıcılar ekranından elle "Pro Üye" yapılan hesabın dönemi yoktur:
+süresizdir. Yönetici hesabına plan verilmez; rol değişikliği yalnız `uye` ↔
+`editor` arasındadır (her UPDATE "AND rol = …" koşullu). E-posta ayarı yoksa
+işlem yine yapılır, yönetici "e-posta gönderilemedi" uyarısı görür.
 
 ## Tablolar
 
@@ -160,6 +207,8 @@ muaftır (`yonetici_muaf`); genel bütçe tavanı herkese uygulanır.
 | `transkript_sohbetler` / `transkript_sohbet_mesajlari` | Kayda sor |
 | `transkript_ilgi_alanlari` | Kişisel filtrenin ilgi alanları |
 | `transkript_kutuphane` | Kişisel kütüphane: kullanıcı × kaynak, `ekleme_turu` = baslatti / onbellek; UNIQUE(`kullanici_id`, `kaynak_id`) |
+| `transkript_uyelikler` | Pro dönemleri (ödeme kaydı): başlangıç, bitiş (NULL süresiz), durum aktif / bitti / iptal, tutar |
+| `transkript_uyelik_talepleri` | "Pro'ya geç" talepleri: süre, not, durum bekliyor / onaylandi / reddedildi / iptal, yönetici yanıtı |
 | `ai_kullanim_kaydi` | Her AI / ASR çağrısının token ve maliyeti (adı genel, başka modüller de yazabilir) |
 
 **Arama neden katlanmış sütunda?** `utf8mb4_turkish_ci`'de "I"nın küçüğü
@@ -183,6 +232,8 @@ Panel: `panel/transkript` (liste), `panel/transkript/{kaynak_id}` (rapor),
 `panel/transkript/{kaynak_id}/sil`, `…/iptal`, `…/kutuphaneden-cikar` ve
 `…/paylas` (POST, kayıt yönetimi; paylaşım yalnız yönetici),
 `panel/transkript/kuyruk/isle` (POST, yönetici; "Şimdi işle"),
+`panel/transkript/uyelik` (Üyeliğim) + `…/uyelik/talep` ve `…/uyelik/talebi-geri-cek` (POST),
+`panel/transkript/uyelikler` (yönetici) + `…/uyelikler/ver`, `…/kaldir`, `…/reddet` (POST),
 `panel/transkript/{kaynak_id}/sohbet` (POST, sonraki aşama).
 
 API (`Authorization: Bearer cy_…`): hazır olanlar `analiz`, `kaynaklar`
@@ -256,10 +307,27 @@ YouTube açıklamasına yapıştırılacak bölüm listesi (ilk 0:00, en az 3, 1
 kuralı); kısa özeti kopyala; "~N dk okuma"; `panel/transkript?url=…` ile dolu
 açılış ve masaüstü yer imi. Hepsi kayıtlı rapordan üretilir, AI çağrısı yok.
 
-**Ayarlar (`panel/transkript/ayarlar`, yalnız yönetici):** yapay zekâ modeli
-(Gemini'de yalnız Flash ailesi: map'te düşünme kapalı, `thinkingBudget 0` Pro'da
-geçersiz), tercih edilen altyazı (Türkçe varsa o / videonun kendi dili), en uzun
-video, kotalar, 1M token giriş / çıkış fiyatı. Değerler çekirdeğin `ayarlar`
+**Bölüm menüsü:** Transkript sayfalarının üstünde sekmeler: Analizler · Üyeliğim
+(yönetici olmayan; yanında plan çipi "Ücretsiz plan · Pro'ya geç →") ·
+Üyelikler (yönetici; bekleyen talep rozeti) · Ayarlar (yönetici). Telefonda yatay kayar.
+
+**Üyeliğim (`panel/transkript/uyelik`):** planınız, bugünkü kullanım ölçerleri
+(liste ve Kontrol Paneli ile aynı sayaç), plan karşılaştırma kartları, "Pro'ya
+geç" / "Süremi uzat" talebi ve talepten sonra ödeme talimatı, Pro dönemleri.
+**Üyelikler (`panel/transkript/uyelikler`, yönetici):** bekleyen talepler
+(onayla: süre + tutar + not; reddet: üyeye not), "Pro üyelik ver" (kullanıcı
+adı / e-posta), Pro üyeler (bitiş, kalan gün, uzat, kaldır), son 30 dönem ve
+girilen ödeme toplamı.
+
+**Ayarlar (`panel/transkript/ayarlar`, yalnız yönetici):** beş sekme; her
+sekmenin başında ne işe yaradığı yazar, seçili sekme adreste (`#uyelik`) durur
+ve kayıttan sonra korunur. **Üyelik planları** (Ücretsiz | Pro iki sütunlu
+tablo, fiyat, para birimi, ödeme talimatı), **Yapay zekâ** (asıl ve yedek
+sağlayıcıların modeli (Gemini'de yalnız Flash ailesi: map'te düşünme kapalı,
+`thinkingBudget 0` Pro'da geçersiz), tercih edilen altyazı (Türkçe varsa o /
+videonun kendi dili), sistemin en uzun videosu), **Bütçe ve maliyet** (günlük
+token / maliyet tavanı, 1M token giriş / çıkış fiyatı), **Site ve kuyruk**,
+**Durum** (salt okunur). Değerler çekirdeğin `ayarlar`
 tablosunda gizli `transkript` grubunda (`transkript_<alan>`, düzenlenemez
 işaretli; çekirdeğin Ayarlar ekranı göstermez, ezemez) durur ve
 `config.php`'nin üstüne yazılır (`PanelAyarlari`, `Ayarlar::get`). Boş alan
@@ -268,7 +336,9 @@ varsayılana döner. API anahtarları yalnız "tanımlı / tanımsız" görünü
 işçisinin durumu.
 
 **Kontrol Paneli** (çekirdeğin `DashboardCards` kancası): "Transkript raporu"
-(raporu hazır video; sürüyor / hata sayısı), yöneticiye "Bugünkü yapay zekâ
+(raporu hazır video; sürüyor / hata sayısı), yönetici olmayana "Planınız:
+Ücretsiz · 1 / 2 analiz" (Pro'da bitiş tarihi), yöneticiye "Pro üye" (onay
+bekleyen talep sayısı), "Bugünkü yapay zekâ
 kullanımı" (token + tahmini $) ve işçi çalışmıyorsa kırmızı kart. Son analizler
 listesi ve panelde hızlı analiz kutusu için çekirdekte bir bileşen kancası yok
 (kartlar yalnız sayı gösterir).

@@ -39,8 +39,8 @@ final class KaynakBilgisiAl extends TranskriptIsi
             $this->kaynaklar()->bilgiyiYaz((int) $kaynak['id'], $bilgi);
 
             // Süre ancak şimdi öğrenildi (oEmbed vermez, Data API verir).
-            if (AnalizBaslatici::cokUzun($bilgi->sureSn)) {
-                throw new KaynakHatasi('video_cok_uzun', sprintf('Video %d sn; sınır analiz.en_uzun_dk', (int) $bilgi->sureSn));
+            if (($uzun = AnalizBaslatici::uzunlukHatasi($bilgi->sureSn, $this->planDakikasi($analiz))) !== null) {
+                throw new KaynakHatasi($uzun, sprintf('Video %d sn; sınır %d dk', (int) $bilgi->sureSn, $this->planDakikasi($analiz)));
             }
         }
 

@@ -49,9 +49,12 @@ final class AyarController extends Controller
         foreach (PanelAyarlari::ALANLAR as $alan => $tanim) {
             /* Ekranda olmayan model alanı (sağlayıcı şu an zincirde değil)
              * formla gelmez; kayıtlı değeri silinmesin. */
-            $girdi[$alan] = $tanim['tur'] === 'model' && $request->raw($alan) === null
-                ? (PanelAyarlari::ham($alan) ?? '')
-                : mb_substr($request->input($alan), 0, 100);
+            $girdi[$alan] = match (true) {
+                $tanim['tur'] === 'model' && $request->raw($alan) === null => PanelAyarlari::ham($alan) ?? '',
+                // Çok satırlı metin: sınırın bir fazlası alınır ki uzunluk hatası görünsün.
+                $tanim['tur'] === 'metin' => mb_substr(str_replace("\r\n", "\n", $request->input($alan)), 0, (int) ($tanim['en_cok_karakter'] ?? 1000) + 1),
+                default => mb_substr($request->input($alan), 0, 100),
+            };
         }
 
         $hatalar = PanelAyarlari::kaydet($this->db, $girdi);
@@ -69,7 +72,10 @@ final class AyarController extends Controller
         foreach (PanelAyarlari::uyarilar($girdi) as $uyari) {
             Flash::warning($uyari);
         }
-        Response::redirect(url('panel/transkript/ayarlar'));
+
+        // Kayıttan sonra aynı sekme açılsın (views/ayarlar.php; JS gönderir).
+        $sekme = $request->input('sekme');
+        Response::redirect(url('panel/transkript/ayarlar') . (in_array($sekme, ['uyelik', 'yapay-zeka', 'butce', 'site'], true) ? '#' . $sekme : ''));
     }
 
     /**
@@ -90,7 +96,7 @@ final class AyarController extends Controller
 
         $this->view('Transkript::ayarlar', [
             'title'         => 'Transkript ayarları',
-            'subtitle'      => 'Yapay zekâ modeli, altyazı tercihi, süre sınırı, kotalar, maliyet tahmini ve ana sayfa.',
+            'subtitle'      => 'Üyelik planları ve sınırlar, yapay zekâ modeli, bütçe, ana sayfa ve sistem durumu.',
             'degerler'      => $degerler,
             'varsayilanlar' => $varsayilanlar,
             'hatalar'       => $hatalar,
@@ -164,8 +170,22 @@ final class AyarController extends Controller
             return Ai::ortamModeli((string) PanelAyarlari::ALANLAR[$alan]['saglayici']);
         }
 
+        $tur = PanelAyarlari::ALANLAR[$alan]['tur'] ?? '';
+
+        if ($tur === 'acik_kapali') {
+            return $deger ? 'açık' : 'kapalı';
+        }
+
+        if ($tur === 'metin') {
+            return (string) $deger !== '' ? (string) $deger : 'boş';
+        }
+
         return match ($alan) {
             'ai_model'     => (string) ($deger ?: Ai::model()),
+            'para_birimi'  => (string) ($deger ?: 'TL'),
+            'pro_fiyat_aylik', 'pro_fiyat_yillik' => (float) $deger > 0 ? str_replace('.', ',', (string) $deger) : '0 (fiyat gösterilmez)',
+            'uye_gunluk', 'pro_gunluk', 'uye_saatlik', 'pro_saatlik', 'uye_en_uzun_dk', 'pro_en_uzun_dk'
+                => (int) $deger === 0 ? '0 (sınırsız)' : (string) (int) $deger,
             'altyazi_dili' => $deger === [] ? 'videonun kendi dili' : 'Türkçe altyazı varsa onu',
             'ana_sayfa'    => $deger === false ? 'genel vitrin' : 'Transkript tanıtım sayfası',
             'fiyat_giris', 'fiyat_cikis' => (float) $deger > 0 ? '$' . number_format((float) $deger, 2, ',', '.') : 'sağlayıcının fiyat tablosu',

@@ -24,13 +24,15 @@
  *       Yüklenen dosya, sohbet ve kişisel özet yalnızca sahibine ve
  *       yöneticiye açıktır.
  *
- *  ROL MATRİSİ (kendi = analizi başlatan / kütüphanesindeki)
+ *  ROL MATRİSİ (kendi = analizi başlatan / kütüphanesindeki). Rol aynı
+ *  zamanda ÜYELİK PLANIDIR (Uyelik\Planlar): editor = Pro, uye = Ücretsiz.
  *
- *    eylem                     yönetici   analist (editor)   üye
+ *    eylem                     yönetici   Pro (editor)       Ücretsiz (uye)
  *    rapor görmek              hepsi      kütüphane + paylaşılan
- *    analiz başlatmak          kotasız    kotayla            ayar açıksa, kotayla
+ *    analiz başlatmak          kotasız    Pro sınırlarıyla   plan ayarı açıksa, Ücretsiz sınırlarıyla
  *    duran analizi sürdürmek   hepsi      yalnız kendi       (ayarla) yalnız kendi
- *    yeniden analiz            hepsi      yalnız kendi raporu, kotadan düşer
+ *    yeniden analiz            hepsi      planda açıksa yalnız kendi raporu, kotadan düşer
+ *    altyazı indirme (SRT/VTT) hepsi      planda açıksa (rapor ve düz metin herkese)
  *    süren analizi iptal       hepsi      yalnız kendi
  *    kütüphaneden çıkarmak     kendi kütüphanesinden (ortak kayıt kalır)
  *    tamamen silmek            YouTube: yalnız yönetici · dosya: sahibi de
@@ -56,6 +58,7 @@ use App\Core\Database;
 use App\Models\Role;
 use App\Models\User;
 use Modules\Transkript\Repositories\KutuphaneRepository;
+use Modules\Transkript\Uyelik\Planlar;
 
 final class TranskriptPolicy
 {
@@ -84,30 +87,47 @@ final class TranskriptPolicy
     }
 
     /**
-     * Analiz başlatmak: transkript.analyze yetkisi (yönetici, analist) ya
-     * da üye + Transkript ayarlarındaki "Üyeler analiz başlatabilir".
+     * Analiz başlatmak: transkript.analyze yetkisi (yönetici, Pro) ya da
+     * Ücretsiz üye + planındaki "Analiz başlatabilir" (Transkript
+     * ayarları → Üyelik planları; varsayılan açık).
      */
     public function canAnalyze(): bool
     {
         return $this->can('transkript.analyze') || $this->uyeBaslatabilir();
     }
 
-    /** Ayar açıksa üye de analiz başlatır (varsayılan kapalı). */
+    /** Ücretsiz plan analiz başlatır mı (uyelik.planlar.uye.analiz). */
     public static function uyelerBaslatabilir(): bool
     {
-        return (bool) Ayarlar::get('analiz.uye_baslatabilir', false);
+        return Planlar::tanim(Planlar::UCRETSIZ)['analiz'];
     }
 
     /**
      * Güncel raporu bırakıp videoyu yeniden yapay zekâya göndermek
      * (yeniden=1): yönetici her raporu, analiz başlatabilen yalnız KENDİ
-     * başlattığı raporu (kotadan düşer).
+     * başlattığı raporu (kotadan düşer) ve planında "Yeniden analiz"
+     * açıksa (varsayılan: Pro açık, Ücretsiz kapalı).
      *
      * @param array<string,mixed>|null $rapor güncel tamamlanmış analiz (kullanici_id); yoksa yalnız yönetici
      */
     public function canReanalyze(?array $rapor = null): bool
     {
-        return $this->isAdmin() || ($rapor !== null && $this->canAnalyze() && $this->isUser((int) ($rapor['kullanici_id'] ?? 0)));
+        return $this->isAdmin() || ($rapor !== null && $this->canAnalyze() && $this->isUser((int) ($rapor['kullanici_id'] ?? 0))
+            && Planlar::haklar($this->user)['yeniden_analiz']);
+    }
+
+    /**
+     * Dışa aktarma biçimi (Services\DisaAktarim::BICIMLER): rapor ve düz
+     * metin herkese; SRT / VTT altyazı planında "Altyazı indirme" açık
+     * olana (varsayılan: Pro). Kaynağı görme kuralı ayrıca denetlenir.
+     */
+    public function canDownload(string $bicim): bool
+    {
+        if (!$this->can('transkript.view')) {
+            return false;
+        }
+
+        return !in_array($bicim, ['transkript.srt', 'transkript.vtt'], true) || Planlar::haklar($this->user)['altyazi_indir'];
     }
 
     /**
@@ -161,7 +181,7 @@ final class TranskriptPolicy
 
     /**
      * API anahtarı üretebilir mi? Çekirdeğin profile.api yetkisi
-     * (yönetici ve analist; üye üretemez). Ana sayfadaki API kartı da
+     * (yönetici ve Pro üye; Ücretsiz üye üretemez). Ana sayfadaki API kartı da
      * buna göre konuşur.
      */
     public function canCreateApiKey(): bool

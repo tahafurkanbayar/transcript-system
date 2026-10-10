@@ -25,7 +25,7 @@
  *  hangi sayaca yazılacağını belirler. Parola değişince geçersizdir.
  *
  *  KULLANICI OLARAK OTURUM AÇMA (transcript-system, 2026-10-09)
- *  Yönetici, parolasını bilmeden bir üyenin ya da analistin gözünden
+ *  Yönetici, parolasını bilmeden bir üyenin ya da Pro üyenin gözünden
  *  paneli gezebilir (Kullanıcılar → "Bu kullanıcı olarak gir"). Oturumda
  *  üyenin kimliğinin yanında asıl yöneticinin kimliği ve oturum sürümü
  *  de tutulur; yönetici de her istekte yeniden doğrulanır (pasife

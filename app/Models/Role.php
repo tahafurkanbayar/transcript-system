@@ -9,9 +9,13 @@
  *
  *  ROLLER
  *    admin  → Yönetici. Her şeyi yapabilir.
- *    editor → Ekranda "Analist" (transcript-system, 2026-10-10: rol artık
- *             içerik düzenlemiyor, analiz yapıyor; rol anahtarı "editor"
- *             kaldı, veritabanı ve module.json değişmedi). Modüllerin
+ *    editor → Ekranda "Pro Üye": ÜCRETLİ ÜYELİK (transcript-system,
+ *             2026-10-10, kullanıcı isteği: "üye ücretsiz ve kısıtlı,
+ *             editör ücretli ve daha yüksek sınırlı"). Önceki adı
+ *             "Analist"ti; rol anahtarı "editor" kaldı, veritabanı ve
+ *             module.json değişmedi. Pro'nun süresi ve sınırları
+ *             Transkript modülündedir (Uyelik\Planlar, Transkript →
+ *             Üyelikler); süre dolunca rol "uye"ye döner. Modüllerin
  *             kendisine açtığı alanlarda çalışır (analiz başlatır,
  *             kütüphanesini yönetir) ve API anahtarı
  *             alır. Sayfalara, iletişim mesajlarına (ziyaretçinin
@@ -28,7 +32,8 @@
  *             (UserApiController::mayManage). Bir yöneticinin ya da
  *             kendi hesabının e-posta/parolasını değiştiren, kendi
  *             parolasıyla onaylar (PasswordConfirm).
- *    uye    → Üye. Yalnızca kendi profilini görür ve düzenler.
+ *    uye    → Üye (Ücretsiz plan). Kendi profilini görür ve düzenler;
+ *             modüllerin ona açtığı alanları kısıtlı sınırlarla kullanır.
  * =====================================================================
  */
 
@@ -76,15 +81,15 @@ final class Role
     /** @var array<string,string> */
     private const LABELS = [
         self::ADMIN  => 'Yönetici',
-        self::EDITOR => 'Analist',
+        self::EDITOR => 'Pro Üye',
         self::MEMBER => 'Üye',
     ];
 
     /** @var array<string,string> */
     private const DESCRIPTIONS = [
         self::ADMIN  => 'Her şeye erişir: kullanıcılar, site ayarları, sistem ve toplu e-posta.',
-        self::EDITOR => 'Analiz yapabilen üye: video analiz ettirir, kendi kütüphanesini yönetir ve API anahtarı alır; sayfalara, mesajlara, e-posta geçmişine, kullanıcılara ve ayarlara erişemez.',
-        self::MEMBER => 'Yalnızca kendi profilini ve açık modüllerde kendisine verilen alanları kullanır.',
+        self::EDITOR => 'Ücretli üye: Ücretsiz plandan yüksek analiz sınırları, uzun video, yeniden analiz, altyazı indirme ve API anahtarı. Süre Transkript → Üyelikler\'den verilir; elle seçilirse süresizdir. Sayfalara, mesajlara, kullanıcılara ve ayarlara erişemez.',
+        self::MEMBER => 'Ücretsiz plan: kayıt olan herkes. Günlük sınırlı analiz yapar, kendi kütüphanesini ve profilini kullanır.',
     ];
 
     /** @var array<string,string> */

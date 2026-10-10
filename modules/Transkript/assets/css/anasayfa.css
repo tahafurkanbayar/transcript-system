@@ -1384,6 +1384,82 @@
 .tka-kim h3 { margin: 0 0 .5rem; color: var(--cy-text); font-size: 1.08rem; font-weight: 700; }
 .tka-kim p { margin: 0; color: var(--cy-text-soft); font-size: .95rem; line-height: 1.65; }
 
+/* ================= PLANLAR (Ücretsiz · Pro) ================= */
+.tka-planlar { display: grid; gap: 1.25rem; max-width: 880px; margin-inline: auto; }
+
+@media (min-width: 720px) {
+    .tka-planlar { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; }
+}
+
+.tka-plan {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    padding: 1.75rem 1.5rem 1.5rem;
+    border: 1px solid var(--cy-border);
+    border-radius: 20px;
+    background: var(--cy-surface);
+    transition: transform .4s var(--tka-yumusak), border-color .3s, opacity .9s var(--tka-yumusak);
+}
+
+.tka-plan:hover { transform: translateY(-4px); border-color: var(--cy-brand-200); }
+
+.tka-plan--pro {
+    border-color: var(--cy-brand-400);
+    box-shadow: var(--tka-golge), 0 0 0 1px var(--cy-brand-400);
+}
+
+.tka-plan__serit {
+    position: absolute;
+    top: -.75rem;
+    right: 1.25rem;
+    padding: .25rem .75rem;
+    border-radius: 999px;
+    background: linear-gradient(135deg, var(--cy-brand-500), var(--tka-mor));
+    color: #fff;
+    font-size: .75rem;
+    font-weight: 700;
+}
+
+.tka-plan h3 {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: .45rem;
+    margin: 0 0 .5rem;
+    color: var(--cy-text);
+    font-size: 1.2rem;
+    font-weight: 800;
+}
+
+.tka-plan--pro h3 { color: var(--cy-brand-text); }
+
+.tka-plan__rozet {
+    padding: .1rem .55rem;
+    border-radius: 999px;
+    background: var(--cy-brand-50);
+    color: var(--cy-brand-text);
+    font-size: .72rem;
+    font-weight: 700;
+}
+
+.tka-plan__fiyat { display: flex; flex-wrap: wrap; align-items: baseline; gap: .25rem .6rem; margin: 0 0 1.1rem; }
+.tka-plan__fiyat strong { color: var(--cy-text); font-size: 1.75rem; font-weight: 800; line-height: 1.2; }
+.tka-plan__fiyat small { color: var(--cy-text-muted); }
+.tka-plan__fiyat .tka-plan__sor { font-size: 1.05rem; color: var(--cy-text-soft); }
+
+.tka-plan__liste { display: grid; gap: .6rem; margin: 0 0 1.5rem; padding: 0; list-style: none; flex: 1 1 auto; align-content: start; }
+.tka-plan__liste li { display: flex; gap: .55rem; align-items: flex-start; color: var(--cy-text-soft); font-size: .95rem; line-height: 1.45; }
+.tka-plan__liste li > .cy-icon { flex-shrink: 0; margin-top: .15rem; }
+.tka-plan__liste li.is-var > .cy-icon { color: var(--cy-success); }
+.tka-plan__liste li.is-yok { color: var(--cy-text-muted); }
+.tka-plan__liste li.is-yok > .cy-icon { opacity: .6; }
+.tka-plan__liste strong { color: var(--cy-text); }
+
+.tka-plan__dugme { width: 100%; white-space: normal; text-align: center; }
+
+.tka-planlar__not { max-width: 680px; margin: 1.5rem auto 0; color: var(--cy-text-muted); font-size: .92rem; text-align: center; }
+
 /* ================= SIK SORULAN SORULAR ================= */
 .tka-sss { display: grid; gap: 2rem; }
 

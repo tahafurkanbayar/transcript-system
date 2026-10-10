@@ -37,10 +37,13 @@ final class PanelAyarlari
 
     /**
      * alan => tanım. "yol": değerin Ayarlar::get()'teki yolu (birden çok
-     * olabilir). "tur": tamsayi | ondalik | secim | model (serbest model
-     * kimliği; "saglayici" hangi sağlayıcının modeli olduğunu söyler).
+     * olabilir). "tur": tamsayi | ondalik | secim | acik_kapali (açık /
+     * kapalı seçimi → bool) | metin (çok satırlı, en_cok_karakter) |
+     * model (serbest model kimliği; "saglayici" hangi sağlayıcının modeli
+     * olduğunu söyler). "plan": üyelik planı alanı (uye | editor); ekran
+     * bunları iki sütunlu tabloda çizer.
      *
-     * @var array<string,array{yol: list<string>, tur: string, etiket: string, aciklama: string, en_az?: float, en_cok?: float, birim?: string, saglayici?: string}>
+     * @var array<string,array{yol: list<string>, tur: string, etiket: string, aciklama: string, en_az?: float, en_cok?: float, birim?: string, saglayici?: string, plan?: string, en_cok_karakter?: int}>
      */
     public const ALANLAR = [
         'ai_model' => [
@@ -89,23 +92,85 @@ final class PanelAyarlari
         ],
         'en_uzun_dk' => [
             'yol' => ['analiz.en_uzun_dk'], 'tur' => 'tamsayi', 'en_az' => 0, 'en_cok' => 1440, 'birim' => 'dakika',
-            'etiket' => 'En uzun video',
-            'aciklama' => 'Bundan uzun video analiz edilmez. 0 = sınır yok.',
+            'etiket' => 'Sistemin en uzun videosu',
+            'aciklama' => 'Herkes için (yönetici dahil) üst sınır; planların süre sınırı bunu aşamaz. 0 = sınır yok.',
         ],
+        /* ÜYELİK PLANLARI (Uyelik\Planlar). Plan = rol: "uye" Ücretsiz,
+         * "editor" Pro. Ekranda iki sütunlu tablo (views/ayarlar.php). */
         'uye_analiz' => [
-            'yol' => ['analiz.uye_baslatabilir'], 'tur' => 'secim',
-            'etiket' => 'Üyeler analiz başlatabilir',
-            'aciklama' => 'Açıksa üye rolü de video analiz ettirir (analistle aynı kotalar). Kapalıyken üye yalnız kendisiyle paylaşılan raporları okur.',
+            'yol' => ['uyelik.planlar.uye.analiz'], 'tur' => 'acik_kapali', 'plan' => 'uye',
+            'etiket' => 'Analiz başlatabilir',
+            'aciklama' => 'Kapalıysa Ücretsiz üye yalnız kendisiyle paylaşılan raporları okur. Pro her zaman analiz başlatır.',
         ],
-        'gunluk_sinir' => [
-            'yol' => ['analiz.gunluk_sinir'], 'tur' => 'tamsayi', 'en_az' => 0, 'en_cok' => 10000, 'birim' => 'analiz',
-            'etiket' => 'Kullanıcı başına günlük analiz',
-            'aciklama' => 'Önbellekten açılan rapor sayılmaz; yöneticiler muaf. 0 = sınır yok.',
+        'uye_gunluk' => [
+            'yol' => ['uyelik.planlar.uye.gunluk_sinir'], 'tur' => 'tamsayi', 'en_az' => 0, 'en_cok' => 10000, 'birim' => 'analiz', 'plan' => 'uye',
+            'etiket' => 'Günlük yeni analiz',
+            'aciklama' => 'Gün içinde yapay zekâya gönderilebilecek video. Önceden analiz edilmiş video sayılmaz. 0 = sınırsız.',
         ],
-        'saatlik_sinir' => [
-            'yol' => ['analiz.saatlik_sinir'], 'tur' => 'tamsayi', 'en_az' => 0, 'en_cok' => 10000, 'birim' => 'analiz',
-            'etiket' => 'Kullanıcı başına saatlik analiz',
-            'aciklama' => 'Kısa sürede çok istek gelmesini önler; günlük sınırdan küçük olmalı (yoksa hiç devreye girmez). Yöneticiler muaf. 0 = sınır yok.',
+        'pro_gunluk' => [
+            'yol' => ['uyelik.planlar.editor.gunluk_sinir'], 'tur' => 'tamsayi', 'en_az' => 0, 'en_cok' => 10000, 'birim' => 'analiz', 'plan' => 'editor',
+            'etiket' => 'Günlük yeni analiz',
+            'aciklama' => 'Gün içinde yapay zekâya gönderilebilecek video. Önceden analiz edilmiş video sayılmaz. 0 = sınırsız.',
+        ],
+        'uye_saatlik' => [
+            'yol' => ['uyelik.planlar.uye.saatlik_sinir'], 'tur' => 'tamsayi', 'en_az' => 0, 'en_cok' => 10000, 'birim' => 'analiz', 'plan' => 'uye',
+            'etiket' => 'Saatlik yeni analiz',
+            'aciklama' => 'Art arda gönderimi yavaşlatır; günlük sınırdan küçük olmalı (yoksa hiç devreye girmez). 0 = sınırsız.',
+        ],
+        'pro_saatlik' => [
+            'yol' => ['uyelik.planlar.editor.saatlik_sinir'], 'tur' => 'tamsayi', 'en_az' => 0, 'en_cok' => 10000, 'birim' => 'analiz', 'plan' => 'editor',
+            'etiket' => 'Saatlik yeni analiz',
+            'aciklama' => 'Art arda gönderimi yavaşlatır; günlük sınırdan küçük olmalı (yoksa hiç devreye girmez). 0 = sınırsız.',
+        ],
+        'uye_en_uzun_dk' => [
+            'yol' => ['uyelik.planlar.uye.en_uzun_dk'], 'tur' => 'tamsayi', 'en_az' => 0, 'en_cok' => 1440, 'birim' => 'dakika', 'plan' => 'uye',
+            'etiket' => 'En uzun video',
+            'aciklama' => 'Bundan uzun video bu planda analiz edilmez; sistemin tavanını aşamaz. 0 = yalnız sistem tavanı.',
+        ],
+        'pro_en_uzun_dk' => [
+            'yol' => ['uyelik.planlar.editor.en_uzun_dk'], 'tur' => 'tamsayi', 'en_az' => 0, 'en_cok' => 1440, 'birim' => 'dakika', 'plan' => 'editor',
+            'etiket' => 'En uzun video',
+            'aciklama' => 'Bundan uzun video bu planda analiz edilmez; sistemin tavanını aşamaz. 0 = yalnız sistem tavanı.',
+        ],
+        'uye_yeniden_analiz' => [
+            'yol' => ['uyelik.planlar.uye.yeniden_analiz'], 'tur' => 'acik_kapali', 'plan' => 'uye',
+            'etiket' => 'Yeniden analiz',
+            'aciklama' => 'Kendi raporunu baştan yapay zekâya göndermek (hakkından düşer).',
+        ],
+        'pro_yeniden_analiz' => [
+            'yol' => ['uyelik.planlar.editor.yeniden_analiz'], 'tur' => 'acik_kapali', 'plan' => 'editor',
+            'etiket' => 'Yeniden analiz',
+            'aciklama' => 'Kendi raporunu baştan yapay zekâya göndermek (hakkından düşer).',
+        ],
+        'uye_altyazi' => [
+            'yol' => ['uyelik.planlar.uye.altyazi_indir'], 'tur' => 'acik_kapali', 'plan' => 'uye',
+            'etiket' => 'Altyazı indirme (SRT / VTT)',
+            'aciklama' => 'Rapor (Markdown) ve düz metin her planda indirilir.',
+        ],
+        'pro_altyazi' => [
+            'yol' => ['uyelik.planlar.editor.altyazi_indir'], 'tur' => 'acik_kapali', 'plan' => 'editor',
+            'etiket' => 'Altyazı indirme (SRT / VTT)',
+            'aciklama' => 'Rapor (Markdown) ve düz metin her planda indirilir.',
+        ],
+        'pro_fiyat_aylik' => [
+            'yol' => ['uyelik.planlar.editor.fiyat_aylik'], 'tur' => 'ondalik', 'en_az' => 0, 'en_cok' => 1000000,
+            'etiket' => 'Pro aylık fiyat',
+            'aciklama' => 'Fiyat tablosunda ve Üyeliğim sayfasında görünür. Boş ya da 0: "fiyat için iletişime geçin".',
+        ],
+        'pro_fiyat_yillik' => [
+            'yol' => ['uyelik.planlar.editor.fiyat_yillik'], 'tur' => 'ondalik', 'en_az' => 0, 'en_cok' => 10000000,
+            'etiket' => 'Pro yıllık fiyat',
+            'aciklama' => 'İsteğe bağlı. Boş ya da 0: yıllık seçenek gösterilmez.',
+        ],
+        'para_birimi' => [
+            'yol' => ['uyelik.para_birimi'], 'tur' => 'secim',
+            'etiket' => 'Para birimi',
+            'aciklama' => 'Fiyatların yanında yazar.',
+        ],
+        'odeme_bilgisi' => [
+            'yol' => ['uyelik.odeme_bilgisi'], 'tur' => 'metin', 'en_cok_karakter' => 1000,
+            'etiket' => 'Ödeme talimatı',
+            'aciklama' => 'Üye "Pro\'ya geç" talebi gönderince görür: banka, IBAN, alıcı adı, açıklamaya ne yazacağı. Yalnız giriş yapmış kullanıcıya gösterilir; kart bilgisi ya da parola yazmayın.',
         ],
         'gunluk_token_tavani' => [
             'yol' => ['analiz.gunluk_token_tavani'], 'tur' => 'tamsayi', 'en_az' => 0, 'en_cok' => 1000000000, 'birim' => 'token',
@@ -148,8 +213,8 @@ final class PanelAyarlari
     /** Tarayıcıdan kuyruk seçeneği → kuyruk.tarayicidan_isle değeri. */
     private const TARAYICI_KUYRUK = ['acik' => true, 'kapali' => false];
 
-    /** Üye analizi seçeneği → analiz.uye_baslatabilir değeri. */
-    private const UYE_ANALIZ = ['acik' => true, 'kapali' => false];
+    /** Açık / kapalı seçimi → bool. */
+    private const ACIK_KAPALI = ['acik' => true, 'kapali' => false];
 
     /**
      * Ayarlar::get() sonucunun üstüne panelden girilen değeri yazar. Yol
@@ -209,12 +274,20 @@ final class PanelAyarlari
                 'acik' => 'Açık: işçi yokken panel sayfası işler',
                 'kapali' => 'Kapalı: yalnız kuyruk işçisi',
             ],
-            'uye_analiz' => [
-                '' => 'Varsayılan (' . (Ayarlar::varsayilan('analiz.uye_baslatabilir', false) ? 'açık' : 'kapalı') . ')',
-                'acik' => 'Açık: üyeler de analiz başlatır',
-                'kapali' => 'Kapalı: yalnız analist ve yönetici',
+            'para_birimi' => [
+                '' => 'Varsayılan (' . (string) Ayarlar::varsayilan('uyelik.para_birimi', 'TL') . ')',
+                'TL' => 'Türk lirası (₺)',
+                'USD' => 'ABD doları ($)',
+                'EUR' => 'Avro (€)',
             ],
-            default        => [],
+            default        => (self::ALANLAR[$alan]['tur'] ?? '') === 'acik_kapali'
+                ? [
+                    // Değer önde: dar sütunda kesilse de "Açık" / "Kapalı" görünsün.
+                    '' => (Ayarlar::varsayilan(self::ALANLAR[$alan]['yol'][0], false) ? 'Açık' : 'Kapalı') . ' (varsayılan)',
+                    'acik' => 'Açık',
+                    'kapali' => 'Kapalı',
+                ]
+                : [],
         };
     }
 
@@ -272,13 +345,24 @@ final class PanelAyarlari
             ? (int) $girdi[$alan]
             : (int) Ayarlar::varsayilan(self::ALANLAR[$alan]['yol'][0], 0);
 
-        $saatlik = $deger('saatlik_sinir');
-        $gunluk  = $deger('gunluk_sinir');
         $uyarilar = [];
 
         // Cowork 6. tur K3: saatlik 20, günlük 10 iken saatlik sınır hiç devreye girmiyordu.
-        if ($saatlik > 0 && $gunluk > 0 && $saatlik >= $gunluk) {
-            $uyarilar[] = sprintf('Saatlik sınır (%d) günlük sınırdan (%d) küçük değil; saatlik sınır hiç devreye girmez. Günlükten küçük bir sayı yazın (ör. %d) ya da 0 ile kapatın.', $saatlik, $gunluk, max(1, intdiv($gunluk, 2)));
+        foreach (['uye' => 'Ücretsiz', 'pro' => 'Pro'] as $onek => $plan) {
+            $saatlik = $deger($onek . '_saatlik');
+            $gunluk  = $deger($onek . '_gunluk');
+
+            if ($saatlik > 0 && $gunluk > 0 && $saatlik >= $gunluk) {
+                $uyarilar[] = sprintf('%s planında saatlik sınır (%d) günlük sınırdan (%d) küçük değil; saatlik sınır hiç devreye girmez. Günlükten küçük bir sayı yazın (ör. %d) ya da 0 ile kapatın.', $plan, $saatlik, $gunluk, max(1, intdiv($gunluk, 2)));
+            }
+        }
+
+        // Ücretli plan ücretsizden geride kalmasın (0 = sınırsız).
+        $uyeGunluk = $deger('uye_gunluk');
+        $proGunluk = $deger('pro_gunluk');
+
+        if ($proGunluk > 0 && ($uyeGunluk === 0 || $uyeGunluk > $proGunluk)) {
+            $uyarilar[] = sprintf('Ücretsiz planın günlük hakkı (%s) Pro\'dan (%d) yüksek; Pro\'ya geçmenin anlamı kalmaz.', $uyeGunluk === 0 ? 'sınırsız' : (string) $uyeGunluk, $proGunluk);
         }
 
         return $uyarilar;
@@ -293,8 +377,19 @@ final class PanelAyarlari
             return 'Bilinmeyen ayar.';
         }
 
-        if ($tanim['tur'] === 'secim') {
+        if ($tanim['tur'] === 'secim' || $tanim['tur'] === 'acik_kapali') {
             return array_key_exists($ham, self::secenekler($alan)) ? null : 'Listeden bir seçenek seçin.';
+        }
+
+        if ($tanim['tur'] === 'metin') {
+            $sinir = (int) ($tanim['en_cok_karakter'] ?? 1000);
+
+            return match (true) {
+                mb_strlen($ham) > $sinir => sprintf('En çok %s karakter yazın.', self::sayi($sinir)),
+                // Satır sonu ve sekme serbest; öteki denetim karakterleri değil.
+                preg_match('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/u', $ham) === 1 => 'Metinde izin verilmeyen bir karakter var.',
+                default => null,
+            };
         }
 
         if ($tanim['tur'] === 'model') {
@@ -364,11 +459,11 @@ final class PanelAyarlari
         return match (self::ALANLAR[$alan]['tur']) {
             'tamsayi' => (int) $ham,
             'ondalik' => (float) str_replace(',', '.', $ham),
+            'acik_kapali' => self::ACIK_KAPALI[$ham] ?? false,
             default   => match ($alan) {
                 'altyazi_dili' => self::ALTYAZI[$ham] ?? ['tr'],
                 'ana_sayfa'    => self::ANA_SAYFA[$ham] ?? true,
                 'tarayici_kuyruk' => self::TARAYICI_KUYRUK[$ham] ?? null,
-                'uye_analiz'   => self::UYE_ANALIZ[$ham] ?? false,
                 default        => $ham,
             },
         };

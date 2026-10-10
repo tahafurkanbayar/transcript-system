@@ -62,6 +62,7 @@ use Modules\Transkript\Ayarlar;
 use Modules\Transkript\Controllers\AnasayfaController;
 use Modules\Transkript\Controllers\AyarController;
 use Modules\Transkript\Controllers\KaynakController;
+use Modules\Transkript\Controllers\UyelikController;
 use Modules\Transkript\HataKodlari;
 use Modules\Transkript\Jobs\AnalizBirlestir;
 use Modules\Transkript\Jobs\KaynakBilgisiAl;
@@ -79,6 +80,7 @@ use Modules\Transkript\Repositories\AnalizRepository;
 use Modules\Transkript\Repositories\KaynakRepository;
 use Modules\Transkript\Repositories\KutuphaneRepository;
 use Modules\Transkript\Services\AnalizBaslatici;
+use Modules\Transkript\Services\HesapTemizligi;
 use Modules\Transkript\Services\AnalizReddedildi;
 use Modules\Transkript\Services\Chunker;
 use Modules\Transkript\Services\DisaAktarim;
@@ -106,6 +108,8 @@ use Modules\Transkript\Transcript\TranscriptResult;
 use Modules\Transkript\Transcript\TranscriptZinciri;
 use Modules\Transkript\Transcript\YouTubeTranscriptProvider;
 use Modules\Transkript\TranskriptPolicy;
+use Modules\Transkript\Uyelik\Planlar;
+use Modules\Transkript\Uyelik\UyelikYonetimi;
 use Modules\Transkript\Varliklar;
 use Modules\Transkript\Zaman;
 
@@ -200,7 +204,11 @@ dogrula('Yüklenen dosyayı sahibi ve yönetici görür', $pU->canViewSource($uy
 dogrula('Editör başkasının yüklediği dosyayı göremez', !$pE->canViewSource($uyeDosyasi));
 dogrula('Giriş yapmamış kullanıcı hiçbir kaynağı göremez',
     !$pM->canViewSource($youtube) && !$pM->canViewSource($ytPaylasim) && !$pM->canViewSource($uyeDosyasi));
-dogrula('Analizi editör ve yönetici başlatır, üye (ayar kapalıyken) başlatamaz', $pY->canAnalyze() && $pE->canAnalyze() && !$pU->canAnalyze());
+/* Üyelik planları (2026-10-10): Ücretsiz plan varsayılan olarak analiz
+ * başlatır (kısıtlı sınırlarla); yönetici panelden kapatabilir. */
+dogrula('Analizi Pro (editör) ve yönetici başlatır; Ücretsiz üye varsayılan olarak da başlatır, plan ayarı kapalıyken başlatamaz',
+    $pY->canAnalyze() && $pE->canAnalyze() && $pU->canAnalyze()
+    && (static function () use ($pU): bool { Ayarlar::set('uyelik.planlar.uye.analiz', false); $sonuc = !$pU->canAnalyze(); Ayarlar::forget(); return $sonuc; })());
 dogrula('Raporu olmayan videoda yeniden analiz ve tüm maliyet yalnız yöneticide',
     $pY->canReanalyze() && !$pE->canReanalyze() && !$pU->canReanalyze() && $pY->canSeeAllCosts() && !$pE->canSeeAllCosts());
 dogrula('Üye görebildiği kaynağa soru sorar, göremediğine soramaz',
@@ -214,7 +222,7 @@ dogrula('Kişisel özet yalnız sahibine ve yöneticiye açık',
 dogrula('Sahibi 0 olan sohbet kimseye "senin" sayılmaz', !$pU->canAccessChat(['kullanici_id' => 0]) && !$pM->canAccessChat(['kullanici_id' => 0]));
 
 /* ---------------------------------------------------------------- */
-echo "\nRol × eylem × sahiplik matrisi (Y yönetici · E analist · U üye · P üye, \"Üyeler analiz başlatabilir\" açık · M misafir)\n";
+echo "\nRol × eylem × sahiplik matrisi (Y yönetici · E Pro üye · U Ücretsiz üye, planda analiz kapalı · P Ücretsiz üye, analiz açık (varsayılan) · M misafir)\n";
 
 /*
  * Veri sağlayıcı: her satır bir eylem + sahiplik, beklenen = izinli
@@ -231,7 +239,10 @@ $yetkiMatrisi = [
     'raporu görmek (başkasının, paylaşılmamış)'       => ['Y',    static fn (TranskriptPolicy $p, int $ben): bool => $p->canViewSource($ytKaynak(false))],
     'raporu görmek (paylaşılan)'                      => ['YEUP', static fn (TranskriptPolicy $p, int $ben): bool => $p->canViewSource($ytKaynak(false, true))],
     'analiz başlatmak'                                => ['YEP',  static fn (TranskriptPolicy $p, int $ben): bool => $p->canAnalyze()],
-    'yeniden analiz (kendi raporu)'                   => ['YEP',  static fn (TranskriptPolicy $p, int $ben): bool => $p->canReanalyze(['kullanici_id' => $ben])],
+    // Yeniden analiz plan özelliği: Pro'da açık, Ücretsiz'de kapalı (varsayılan).
+    'yeniden analiz (kendi raporu)'                   => ['YE',   static fn (TranskriptPolicy $p, int $ben): bool => $p->canReanalyze(['kullanici_id' => $ben])],
+    'altyazı indirme (SRT / VTT)'                     => ['YE',   static fn (TranskriptPolicy $p, int $ben): bool => $p->canDownload('transkript.srt') && $p->canDownload('transkript.vtt')],
+    'rapor ve metin indirme (MD / TXT)'               => ['YEUP', static fn (TranskriptPolicy $p, int $ben): bool => $p->canDownload('rapor.md') && $p->canDownload('transkript.txt')],
     'yeniden analiz (başkasının raporu)'              => ['Y',    static fn (TranskriptPolicy $p, int $ben): bool => $p->canReanalyze(['kullanici_id' => $baskasi])],
     'duran analizi sürdürmek (kendi)'                 => ['YEP',  static fn (TranskriptPolicy $p, int $ben): bool => $p->canRetry(['kullanici_id' => $ben])],
     'duran analizi sürdürmek (başkasının)'            => ['Y',    static fn (TranskriptPolicy $p, int $ben): bool => $p->canRetry(['kullanici_id' => $baskasi])],
@@ -254,7 +265,7 @@ foreach ($yetkiMatrisi as $eylem => [$beklenenRoller, $sor]) {
     $gercekRoller = '';
 
     foreach ($roller as $harf => [$kim, $ben, $uyeAyari]) {
-        Ayarlar::set('analiz.uye_baslatabilir', $uyeAyari);
+        Ayarlar::set('uyelik.planlar.uye.analiz', $uyeAyari);
 
         if ($sor(new TranskriptPolicy($kim), $ben)) {
             $gercekRoller .= $harf;
@@ -268,8 +279,14 @@ foreach ($yetkiMatrisi as $eylem => [$beklenenRoller, $sor]) {
 
 Ayarlar::forget();
 dogrula('Her hücre beklenen gibi (' . count($yetkiMatrisi) . ' eylem × ' . count($roller) . ' rol)', $matrisFarki === [], implode('; ', $matrisFarki));
-dogrula('Ayar kapalıyken üye analiz başlatamaz; açıkken analistle aynı kurallar',
-    !(new TranskriptPolicy($uye))->canAnalyze() && !TranskriptPolicy::uyelerBaslatabilir());
+dogrula('Ücretsiz plan varsayılan olarak analiz başlatır (config: uyelik.planlar.uye.analiz)',
+    (new TranskriptPolicy($uye))->canAnalyze() && TranskriptPolicy::uyelerBaslatabilir());
+Ayarlar::set('uyelik.planlar.uye.yeniden_analiz', true);
+Ayarlar::set('uyelik.planlar.uye.altyazi_indir', true);
+dogrula('Ücretsiz planda yeniden analiz ve altyazı panelden açılınca üye de kullanır (kendi raporu)',
+    (new TranskriptPolicy($uye))->canReanalyze(['kullanici_id' => 3]) && (new TranskriptPolicy($uye))->canDownload('transkript.srt')
+    && !(new TranskriptPolicy($uye))->canReanalyze(['kullanici_id' => 999]));
+Ayarlar::forget();
 
 /* ---------------------------------------------------------------- */
 echo "\nRota erişim matrisi (M misafir · U üye · E editör · Y yönetici)\n";
@@ -303,7 +320,15 @@ $beklenen = [
     'POST panel/transkript/{kaynak_id}/sil'                  => 'UEY',
     'POST panel/transkript/{kaynak_id}/kutuphaneden-cikar'   => 'UEY',
     'POST panel/transkript/{kaynak_id}/paylas'               => 'Y',
-    // Analiz başlatan uçlar rotada yalnız giriş ister; "Üyeler analiz
+    // Üyelik planları: Üyeliğim ve talep herkese, yönetim yalnız yöneticiye.
+    'GET panel/transkript/uyelik'                            => 'UEY',
+    'POST panel/transkript/uyelik/talep'                     => 'UEY',
+    'POST panel/transkript/uyelik/talebi-geri-cek'           => 'UEY',
+    'GET panel/transkript/uyelikler'                         => 'Y',
+    'POST panel/transkript/uyelikler/ver'                    => 'Y',
+    'POST panel/transkript/uyelikler/kaldir'                 => 'Y',
+    'POST panel/transkript/uyelikler/reddet'                 => 'Y',
+    // Analiz başlatan uçlar rotada yalnız giriş ister; planın "Analiz
     // başlatabilir" ayarını TranskriptPolicy::canAnalyze denetler (403).
     'POST panel/transkript/{kaynak_id}/iptal'                => 'UEY',
     'POST panel/transkript/{kaynak_id}/sohbet'               => 'UEY',
@@ -444,6 +469,7 @@ $beklenenTablolar = [
     'transkript_kaynaklar', 'transkript_metinler', 'transkript_segmentler', 'transkript_analizler',
     'transkript_parcalar', 'transkript_analiz_ogeleri', 'transkript_kisisel_ozetler', 'transkript_sohbetler',
     'transkript_sohbet_mesajlari', 'transkript_ilgi_alanlari', 'ai_kullanim_kaydi', 'transkript_kutuphane',
+    'transkript_uyelikler', 'transkript_uyelik_talepleri',
 ];
 
 $dosyalar = glob(MODUL_YOLU . '/migrations/*.php') ?: [];
@@ -479,7 +505,7 @@ foreach ($dosyalar as $dosya) {
     $migration->up();
     $yukari = implode("\n", $pdo->sorgular);
 
-    if (!preg_match('/CREATE TABLE IF NOT EXISTS `([a-z_]+)`/', $yukari, $m)) {
+    if (!preg_match_all('/CREATE TABLE IF NOT EXISTS `([a-z_]+)`/', $yukari, $m)) {
         SahteSorgu::$varMi = $sonra;
         $pdo->sorgular = [];
         $migration->down();
@@ -492,32 +518,39 @@ foreach ($dosyalar as $dosya) {
         continue;
     }
 
-    $tablo = $m[1];
-
-    if (!str_contains($yukari, 'ENGINE=InnoDB') || !str_contains($yukari, 'COLLATE=utf8mb4_turkish_ci')) {
-        $sorunlar[] = "$tablo InnoDB / utf8mb4_turkish_ci değil";
-    }
-
-    preg_match_all('/REFERENCES `([a-z_]+)`/', $yukari, $hedefler);
-
-    foreach ($hedefler[1] as $hedef) {
-        if (!in_array($hedef, $olusan, true)) {
-            $sorunlar[] = "$tablo → $hedef (hedef tablo daha önce kurulmuyor ya da modülün değil)";
-        }
-    }
+    // Bir migration birden çok tablo kurabilir (ör. üyelikler + talepler): her CREATE ayrı denetlenir.
+    $kurulumlar = array_values(array_filter($pdo->sorgular, static fn (string $s): bool => str_contains($s, 'CREATE TABLE IF NOT EXISTS')));
 
     SahteSorgu::$varMi = $sonra;
     $pdo->sorgular = [];
     $migration->down();
+    $asagi = implode("\n", $pdo->sorgular);
 
-    if (!str_contains(implode("\n", $pdo->sorgular), 'DROP TABLE IF EXISTS `' . $tablo . '`')) {
-        $geriAlinmayan[] = $tablo;
+    foreach ($kurulumlar as $kurulum) {
+        preg_match('/CREATE TABLE IF NOT EXISTS `([a-z_]+)`/', $kurulum, $tm);
+        $tablo = $tm[1];
+
+        if (!str_contains($kurulum, 'ENGINE=InnoDB') || !str_contains($kurulum, 'COLLATE=utf8mb4_turkish_ci')) {
+            $sorunlar[] = "$tablo InnoDB / utf8mb4_turkish_ci değil";
+        }
+
+        preg_match_all('/REFERENCES `([a-z_]+)`/', $kurulum, $hedefler);
+
+        foreach ($hedefler[1] as $hedef) {
+            if (!in_array($hedef, $olusan, true)) {
+                $sorunlar[] = "$tablo → $hedef (hedef tablo daha önce kurulmuyor ya da modülün değil)";
+            }
+        }
+
+        if (!str_contains($asagi, 'DROP TABLE IF EXISTS `' . $tablo . '`')) {
+            $geriAlinmayan[] = $tablo;
+        }
+
+        $olusan[] = $tablo;
     }
-
-    $olusan[] = $tablo;
 }
 
-dogrula('12 tablo, bağımlılık sırasıyla kurulur', $olusan === $beklenenTablolar, 'Kurulan: ' . implode(', ', $olusan));
+dogrula('14 tablo, bağımlılık sırasıyla kurulur', $olusan === $beklenenTablolar, 'Kurulan: ' . implode(', ', $olusan));
 dogrula('Her tablo InnoDB + utf8mb4_turkish_ci; yabancı anahtarlar yalnız önceden kurulan modül tablolarına', $sorunlar === [], implode('; ', $sorunlar));
 dogrula('Her migration down() ile geri alınır', $geriAlinmayan === [], 'Geri alınmayan: ' . implode(', ', $geriAlinmayan));
 
@@ -1304,27 +1337,32 @@ function baslatmaReddi(?User $kullanici, string $url, bool $yeniden = false, ?Sa
 
 $gecerliUrl = 'https://youtu.be/dQw4w9WgXcQ';
 dogrula('Geçersiz URL → gecersiz_url 422, veritabanına gidilmez', baslatmaReddi($editor, 'https://ornek.com/video') === ['gecersiz_url', 422, 0]);
-dogrula('Analiz yetkisi olmayan üye → 403, veritabanına gidilmez', baslatmaReddi($uye, $gecerliUrl) === ['yetkisiz', 403, 0]);
+Ayarlar::set('uyelik.planlar.uye.analiz', false);
+dogrula('Planında analiz kapalı üye → 403, veritabanına gidilmez', baslatmaReddi($uye, $gecerliUrl) === ['yetkisiz', 403, 0]);
 $edYeniden = baslatmaReddi($editor, $gecerliUrl, true);
 dogrula('Analist başlatmadığı (ya da raporu olmayan) videoyu yeniden analiz edemez → 403',
     $edYeniden[0] === 'yetkisiz' && $edYeniden[1] === 403, json_encode($edYeniden));
 dogrula('Yetki girdiden önce: analiz yetkisi olmayan üyenin bozuk bağlantısı da 403 (422 değil)',
     baslatmaReddi($uye, 'https://ornek.com/video') === ['yetkisiz', 403, 0]);
+Ayarlar::forget();
+$uyeYeniden = baslatmaReddi($uye, $gecerliUrl, true);
+dogrula('Ücretsiz plan (varsayılan): analiz başlatır ama yeniden analiz Pro özelliği → 403',
+    baslatmaReddi($uye, 'https://ornek.com/video') === ['gecersiz_url', 422, 0] && $uyeYeniden[0] === 'yetkisiz' && $uyeYeniden[1] === 403, json_encode($uyeYeniden));
 dogrula('Oturumsuz istek → 403', baslatmaReddi(null, $gecerliUrl) === ['yetkisiz', 403, 0]);
 
 $hizKlasoru = sys_get_temp_dir() . '/transkript-hiz-' . bin2hex(random_bytes(4));
 Throttle::useDirectory($hizKlasoru);
-Ayarlar::set('analiz.saatlik_sinir', 1);
+Ayarlar::set('uyelik.planlar.editor.saatlik_sinir', 1);
 $ilk    = baslatmaReddi($editor, $gecerliUrl);
 $ikinci = baslatmaReddi($editor, $gecerliUrl);
-dogrula('Yeni iş saatlik sınıra tabi: ikinci istek → rate_limit 429',
+dogrula('Yeni iş planın saatlik sınırına tabi (Pro: 1): ikinci istek → rate_limit 429',
     $ilk[0] === '' && $ikinci[0] === 'rate_limit' && $ikinci[1] === 429, json_encode([$ilk, $ikinci]));
 $yoneticiIlk    = baslatmaReddi($yonetici, $gecerliUrl);
 $yoneticiIkinci = baslatmaReddi($yonetici, $gecerliUrl);
 Ayarlar::set('analiz.yonetici_muaf', false);
 $muafDegil = baslatmaReddi($yonetici, $gecerliUrl);
 $muafDegil2 = baslatmaReddi($yonetici, $gecerliUrl);
-dogrula('Yönetici kişisel sınırlardan muaf (yonetici_muaf = false olunca o da sınıra takılır)',
+dogrula('Yönetici plan sınırlarından muaf (yonetici_muaf = false olunca Pro sınırına takılır)',
     $yoneticiIlk[0] === '' && $yoneticiIkinci[0] === '' && $muafDegil[0] === '' && $muafDegil2[0] === 'rate_limit', json_encode([$yoneticiIkinci, $muafDegil2]));
 Ayarlar::forget();
 
@@ -1336,7 +1374,7 @@ dogrula('Genel günlük bütçe: token ya da tahmini maliyet tavanı dolunca gun
     AnalizBaslatici::kotaKarari(0, 10, 1000, 1000, 0.0, 0.0)['kod'] === 'gunluk_butce'
     && AnalizBaslatici::kotaKarari(10, 10, 0, 0, 5.01, 5.0)['kod'] === 'gunluk_butce'
     && AnalizBaslatici::kotaKarari(0, 10, 999, 1000, 4.99, 5.0) === null);
-Ayarlar::set('analiz.gunluk_sinir', 0);
+Ayarlar::set('uyelik.planlar.editor.gunluk_sinir', 0);
 Ayarlar::set('analiz.gunluk_maliyet_tavani', 0.0);
 $kotaPdo = new KayitPdo();
 try {
@@ -1348,7 +1386,7 @@ Ayarlar::forget();
 
 /* oEmbed ön kontrolü (sahte HTTP): kayıt açılmadan ret. Ret, INSERT'ten önce
  * gelir: sahte veritabanına giden sorgular yalnız "kaynak var mı?" sorusudur. */
-Ayarlar::set('analiz.saatlik_sinir', 0);
+Ayarlar::set('uyelik.planlar.editor.saatlik_sinir', 0);
 $oembedYanit = static fn (int $durum, string $govde = ''): SahteHttp => new SahteHttp([OEMBED => new HttpYanit($durum, $govde, [], '', 0)]);
 $yokVideo    = baslatmaReddi($yonetici, $gecerliUrl, false, $oembedYanit(404, 'Not Found'));
 $bozukKimlik = baslatmaReddi($yonetici, $gecerliUrl, false, $oembedYanit(400, 'Bad Request'));
@@ -1396,6 +1434,17 @@ dogrula('Süre sınırı mesajı dakikayı söyler; kod kalıcı hatadır (yenid
     HataKodlari::mesaj('video_cok_uzun') === 'Bu video çok uzun; en çok 90 dakikalık videolar analiz edilebiliyor.'
     && TranskriptIsi::kaliciKod(new KaynakHatasi('video_cok_uzun')) === 'video_cok_uzun');
 Ayarlar::forget();
+
+/* Planın süre sınırı (Ücretsiz 30 dk, Pro 180 dk; sistem tavanı 180). */
+dogrula('uzunlukHatasi: sistem tavanı → video_cok_uzun, yalnız plan sınırı → plan_video_uzun, sığarsa ya da süre bilinmiyorsa null',
+    AnalizBaslatici::uzunlukHatasi(181 * 60, 30) === 'video_cok_uzun' && AnalizBaslatici::uzunlukHatasi(31 * 60, 30) === 'plan_video_uzun'
+    && AnalizBaslatici::uzunlukHatasi(30 * 60, 30) === null && AnalizBaslatici::uzunlukHatasi(null, 30) === null
+    && AnalizBaslatici::uzunlukHatasi(31 * 60, 0) === null);
+dogrula('plan_video_uzun: kalıcı hata, yalnız başlatana ve yöneticiye ayrıntılı; mesaj iki planın sınırını söyler',
+    TranskriptIsi::kaliciKod(new KaynakHatasi('plan_video_uzun')) === 'plan_video_uzun' && !HataKodlari::herkeseAcik('plan_video_uzun')
+    && !HataKodlari::devamEdilebilir('plan_video_uzun')
+    && HataKodlari::mesaj('plan_video_uzun') === 'Bu video üyelik planınızın süre sınırını aşıyor (Ücretsiz: en çok 30 dk, Pro: 3 saat). Üyeliğim sayfasından Pro\'ya geçebilirsiniz.',
+    HataKodlari::mesaj('plan_video_uzun'));
 
 Throttle::useDirectory(null);
 array_map('unlink', glob($hizKlasoru . '/*') ?: []);
@@ -1922,9 +1971,13 @@ dogrula('Ortak YouTube kaydını yalnız yönetici siler (editör, üye, misafir
     $pY->canDeleteSource($ortak) && !$pE->canDeleteSource($ortak) && !$pU->canDeleteSource($ortak) && !$pM->canDeleteSource($ortak));
 dogrula('Yüklenen dosyayı sahibi ve yönetici siler, başkası silemez',
     $pU->canDeleteSource(['sahip_id' => $uye->id]) && $pY->canDeleteSource(['sahip_id' => $uye->id]) && !$pE->canDeleteSource(['sahip_id' => $uye->id]));
-dogrula('Süren analizi başlatan editör ve yönetici iptal eder; başka editör ve üye edemez',
+dogrula('Süren analizi başlatan (Pro ya da Ücretsiz) ve yönetici iptal eder; başkasınınkini edemez',
     $pE->canCancelAnalysis(['kullanici_id' => $editor->id]) && $pY->canCancelAnalysis(['kullanici_id' => $editor->id])
-    && !$pE->canCancelAnalysis(['kullanici_id' => $yonetici->id]) && !$pU->canCancelAnalysis(['kullanici_id' => $uye->id]) && !$pM->canCancelAnalysis(['kullanici_id' => 0]));
+    && !$pE->canCancelAnalysis(['kullanici_id' => $yonetici->id]) && $pU->canCancelAnalysis(['kullanici_id' => $uye->id])
+    && !$pU->canCancelAnalysis(['kullanici_id' => $editor->id]) && !$pM->canCancelAnalysis(['kullanici_id' => 0]));
+Ayarlar::set('uyelik.planlar.uye.analiz', false);
+dogrula('Planında analiz kapalı üye kendi eski analizini de iptal edemez', !$pU->canCancelAnalysis(['kullanici_id' => $uye->id]));
+Ayarlar::forget();
 
 $kuyrukSatirlari = [
     ['id' => 1, 'veri' => '{"analiz_id":1}'],
@@ -1979,13 +2032,25 @@ $ayarYaz([]);
 $varsayilanMap = Ayarlar::get('ai.map');
 dogrula('Panel değeri yoksa config.php aynen', Ayarlar::get('analiz.en_uzun_dk') === 180 && Ayarlar::get('transcript.tercih_diller') === ['tr'] && ($varsayilanMap['model'] ?? null) === '');
 $ayarYaz(['transkript_en_uzun_dk' => '90', 'transkript_ai_model' => 'gemini-2.5-flash-lite', 'transkript_altyazi_dili' => 'orijinal',
-    'transkript_gunluk_maliyet_tavani' => '2.5', 'transkript_gunluk_sinir' => '']);
+    'transkript_gunluk_maliyet_tavani' => '2.5', 'transkript_uye_gunluk' => '']);
 dogrula('Panel değeri üstüne yazılır: tam yol, dizinin içi ("ai.map" → model), altyazı seçimi, ondalık',
     Ayarlar::get('analiz.en_uzun_dk') === 90 && Ayarlar::get('ai.map.model') === 'gemini-2.5-flash-lite'
     && (Ayarlar::get('ai.reduce')['model'] ?? null) === 'gemini-2.5-flash-lite' && (Ayarlar::get('ai.map')['max_token'] ?? null) === 8192
     && Ayarlar::get('transcript.tercih_diller') === [] && Ayarlar::get('analiz.gunluk_maliyet_tavani') === 2.5);
 dogrula('Boş panel değeri config varsayılanına döner; varsayilan() paneli yok sayar',
-    Ayarlar::get('analiz.gunluk_sinir') === 10 && Ayarlar::varsayilan('analiz.en_uzun_dk') === 180 && Ayarlar::get('analiz.en_uzun_dk') === 90);
+    Ayarlar::get('uyelik.planlar.uye.gunluk_sinir') === 2 && Ayarlar::varsayilan('analiz.en_uzun_dk') === 180 && Ayarlar::get('analiz.en_uzun_dk') === 90);
+dogrula('Plan süre sınırı sistem tavanını aşamaz (sistem panelde 90: Pro 180 → 90, Ücretsiz 30 kalır)',
+    Planlar::haklar($editor)['en_uzun_dk'] === 90 && Planlar::haklar($uye)['en_uzun_dk'] === 30 && Planlar::haklar($yonetici)['en_uzun_dk'] === 90);
+$ayarYaz(['transkript_uye_gunluk' => '4', 'transkript_pro_gunluk' => '50', 'transkript_uye_analiz' => 'kapali', 'transkript_pro_altyazi' => 'kapali',
+    'transkript_uye_en_uzun_dk' => '45', 'transkript_para_birimi' => 'USD', 'transkript_pro_fiyat_aylik' => '9.5', 'transkript_uye_yeniden_analiz' => 'acik']);
+dogrula('Panelden plan ayarları: Ücretsiz 4/gün ve analiz kapalı, Pro 50/gün ve altyazı kapalı, fiyat ve para birimi',
+    Planlar::tanim('uye')['gunluk_sinir'] === 4 && !Planlar::tanim('uye')['analiz'] && Planlar::tanim('editor')['gunluk_sinir'] === 50
+    && !Planlar::haklar($editor)['altyazi_indir'] && !(new TranskriptPolicy($editor))->canDownload('transkript.vtt')
+    && Planlar::haklar($uye)['en_uzun_dk'] === 45 && Planlar::fiyatMetni('editor') === '$9,50 / ay'
+    && !(new TranskriptPolicy($uye))->canAnalyze() && Planlar::tanim('uye')['yeniden_analiz']
+    // Analizi kapalı üyeye yeniden analiz özelliği açık olsa da yetki yok (önce analiz yetkisi).
+    && !(new TranskriptPolicy($uye))->canReanalyze(['kullanici_id' => $uye->id]));
+$ayarYaz(['transkript_en_uzun_dk' => '90']);
 dogrula('Süre sınırı mesajı panel değerini kullanır', HataKodlari::mesaj('video_cok_uzun') === 'Bu video çok uzun; en çok 90 dakikalık videolar analiz edilebiliyor.');
 $ayarYaz(['transkript_fiyat_giris' => '1', 'transkript_fiyat_cikis' => '10']);
 dogrula('Panelde fiyat girildiyse maliyet ondan; yoksa sağlayıcının tahmini',
@@ -2093,7 +2158,8 @@ dogrula('Günlük kota sıfırlanması: Pasifik gece yarısı + 1 dk (yaz saati 
  * saati); kayıt kalıcı dosyada (önbellek değil); "Dinlenmeleri sıfırla" günlük kotayı
  * kutu işaretlenmedikçe korur. */
 $trSaat = static fn (int $t): string => (new DateTimeImmutable('@' . $t))->setTimezone(new DateTimeZone('Europe/Istanbul'))->format('Y-m-d H:i');
-$kotaAni = $utc('2026-10-09 18:56');   // 21:56 TR
+// Gelecekte bir an: geçmiş tarih seçilirse kayıt test günü "süresi dolmuş" sayılır (2026-10-10'da kırıldı).
+$kotaAni = $utc('2030-10-09 18:56');   // 21:56 TR
 YedekliSaglayici::dinlendir('test-a', 'kota_doldu', $kotaAni);
 YedekliSaglayici::dinlendir('test-b', 'sunucu');
 $dosyada = (array) json_decode((string) @file_get_contents(DinlenmeDeposu::yol()), true);
@@ -2101,7 +2167,7 @@ $korunan = YedekliSaglayici::hepsiniSifirla(['test-a', 'test-b']);
 $kotaSonra = YedekliSaglayici::dinlenmeKaydi('test-a');
 $hepsi = YedekliSaglayici::hepsiniSifirla(['test-a', 'test-b'], true);
 dogrula('K2: günlük kota (21:56 TR) ertesi gün 10:01\'e kadar; kayıt kalıcı dosyada; sıfırlama günlük kotayı kutu işaretlenmedikçe korur',
-    $trSaat((int) ($dosyada['test-a']['bitis'] ?? 0)) === '2026-10-10 10:01' && ($dosyada['test-a']['kod'] ?? '') === 'kota_doldu'
+    $trSaat((int) ($dosyada['test-a']['bitis'] ?? 0)) === '2030-10-10 10:01' && ($dosyada['test-a']['kod'] ?? '') === 'kota_doldu'
     && isset($dosyada['test-b']) && !str_contains(DinlenmeDeposu::yol(), 'storage' . DIRECTORY_SEPARATOR . 'cache')
     && $korunan === ['test-b'] && ($kotaSonra['kod'] ?? '') === 'kota_doldu' && YedekliSaglayici::dinlenmeKalan('test-b') === 0
     && $hepsi === ['test-a', 'test-b'] && YedekliSaglayici::dinlenmeKaydi('test-a') === null);
@@ -2308,13 +2374,33 @@ $ayarYaz([]);
 dogrula('Panelden ana sayfa seçimi: genel → false, tanıtım → true, boş → config (true)',
     $genel === false && $tanitim === true && Ayarlar::get('anasayfa.tanitim') === true
     && PanelAyarlari::dogrula('ana_sayfa', 'baska') === 'Listeden bir seçenek seçin.' && PanelAyarlari::dogrula('ana_sayfa', 'genel') === null);
-dogrula('K3: saatlik sınırın varsayılanı 5 (günlük 10); saatlik ≥ günlük kaydedilince uyarı, 0 ya da küçükse uyarı yok',
-    Ayarlar::varsayilan('analiz.saatlik_sinir') === 5 && Ayarlar::varsayilan('analiz.gunluk_sinir') === 10
-    && PanelAyarlari::uyarilar(['saatlik_sinir' => '', 'gunluk_sinir' => '']) === []
-    && count(PanelAyarlari::uyarilar(['saatlik_sinir' => '20', 'gunluk_sinir' => ''])) === 1
-    && str_contains(PanelAyarlari::uyarilar(['saatlik_sinir' => '20', 'gunluk_sinir' => '10'])[0] ?? '', 'hiç devreye girmez')
-    && PanelAyarlari::uyarilar(['saatlik_sinir' => '0', 'gunluk_sinir' => '10']) === []
-    && PanelAyarlari::uyarilar(['saatlik_sinir' => '20', 'gunluk_sinir' => '0']) === []);
+/* Üyelik planları: sınırlar plan başına (Ücretsiz 1/saat · 2/gün · 30 dk; Pro 5/saat · 20/gün · 180 dk). */
+dogrula('Plan varsayılanları: Ücretsiz 1/saat, 2/gün, 30 dk; Pro 5/saat, 20/gün, 180 dk; saatlik günlükten küçük',
+    Ayarlar::varsayilan('uyelik.planlar.uye.saatlik_sinir') === 1 && Ayarlar::varsayilan('uyelik.planlar.uye.gunluk_sinir') === 2
+    && Ayarlar::varsayilan('uyelik.planlar.editor.saatlik_sinir') === 5 && Ayarlar::varsayilan('uyelik.planlar.editor.gunluk_sinir') === 20
+    && Ayarlar::varsayilan('uyelik.planlar.uye.en_uzun_dk') === 30 && Ayarlar::varsayilan('uyelik.planlar.editor.en_uzun_dk') === 180
+    && Ayarlar::varsayilan('uyelik.planlar.uye.analiz') === true && Ayarlar::varsayilan('uyelik.planlar.uye.yeniden_analiz') === false);
+dogrula('K3 (plan başına): saatlik ≥ günlük kaydedilince o planın uyarısı; 0 ya da küçükse uyarı yok',
+    PanelAyarlari::uyarilar([]) === []
+    && count(PanelAyarlari::uyarilar(['pro_saatlik' => '20'])) === 1
+    && str_contains(PanelAyarlari::uyarilar(['pro_saatlik' => '20', 'pro_gunluk' => '10'])[0] ?? '', 'Pro planında saatlik sınır (20)')
+    && str_contains(PanelAyarlari::uyarilar(['uye_saatlik' => '2'])[0] ?? '', 'Ücretsiz planında')
+    && PanelAyarlari::uyarilar(['pro_saatlik' => '0', 'pro_gunluk' => '10']) === []
+    && PanelAyarlari::uyarilar(['pro_saatlik' => '20', 'pro_gunluk' => '0']) === []);
+dogrula('Ücretsiz planın günlük hakkı Pro\'dan yüksekse (ya da sınırsızsa) uyarı',
+    str_contains(implode(' ', PanelAyarlari::uyarilar(['uye_gunluk' => '30'])), 'Pro\'ya geçmenin anlamı kalmaz')
+    && str_contains(implode(' ', PanelAyarlari::uyarilar(['uye_gunluk' => '0'])), 'sınırsız')
+    && PanelAyarlari::uyarilar(['uye_gunluk' => '0', 'pro_gunluk' => '0']) === []);
+dogrula('Plan alanları doğrulanır: açık / kapalı seçimi, metin uzunluğu ve denetim karakteri, para birimi',
+    PanelAyarlari::dogrula('uye_analiz', 'acik') === null && PanelAyarlari::dogrula('uye_analiz', 'evet') === 'Listeden bir seçenek seçin.'
+    && PanelAyarlari::dogrula('pro_altyazi', 'kapali') === null && PanelAyarlari::dogrula('para_birimi', 'EUR') === null
+    && PanelAyarlari::dogrula('para_birimi', 'GBP') !== null
+    && PanelAyarlari::dogrula('odeme_bilgisi', "Banka: X
+IBAN: TR00") === null
+    && PanelAyarlari::dogrula('odeme_bilgisi', str_repeat('a', 1001)) === 'En çok 1.000 karakter yazın.'
+    && PanelAyarlari::dogrula('odeme_bilgisi', "ab") !== null
+    && PanelAyarlari::dogrula('pro_fiyat_aylik', '149,90') === null && PanelAyarlari::dogrula('pro_fiyat_aylik', '-5') !== null
+    && array_keys(PanelAyarlari::secenekler('uye_yeniden_analiz')) === ['', 'acik', 'kapali']);
 
 /* ---------------------------------------------------------------- */
 echo "\nRol testi (editör ve üye): sayaçlar, hata metni, iptal, vaat\n";
@@ -2381,6 +2467,9 @@ $listeCiz = static fn (TranskriptPolicy $p, string $durum): string => App\Core\V
     'istatistik' => ['bugun' => 3, 'kaynak' => 3, 'suruyor' => 0, 'hata' => 1, 'token' => 0, 'maliyet' => 0.0],
     'hepsi' => $p->canSeeAllCosts(), 'onUrl' => '', 'kuyruk' => ['takildi' => false],
 ]);
+/* Bu görünüm testleri "Ücretsiz planda analiz kapalı" üyeyi çizer (yalnız
+ * paylaşılan raporları okuyan üye); varsayılan açık plan aşağıda ayrıca. */
+Ayarlar::set('uyelik.planlar.uye.analiz', false);
 $uyeHepsi  = $listeCiz($prU, '');
 $uyeHazir  = $listeCiz($prU, 'hazir');
 $edListe   = $listeCiz($prE2, '');
@@ -2436,6 +2525,13 @@ dogrula('Liste boşken üyeye "kutuya yapıştırın" denmez; kendi kütüphanes
     && str_contains($bosKendi, 'Paylaşılanlar (2)') && !str_contains($bosKendi, 'paylaştığı 0 raporu')
     && str_contains($bosListe('paylasilan', 0), 'Sizinle paylaşılan rapor henüz yok.')
     && !str_contains($bosListe('', 0), 'raporu göster'));
+dogrula('Analizi kapalı üyeye liste Pro\'ya geçişi gösterir (Üyeliğim bağlantısı)',
+    str_contains($uyeHepsi, 'Planınızda video analizi şu an kapalı') && str_contains($uyeHepsi, 'panel/transkript/uyelik'));
+Ayarlar::forget();
+$uyeAcik = $listeCiz($prU, '');
+dogrula('Ücretsiz plan varsayılan (analiz açık): üye analiz kutusunu ve sekme menüsünü görür, "Bugün eklediğiniz" kartı',
+    str_contains($uyeAcik, 'id="tk_analiz_form"') && str_contains($uyeAcik, 'tk-altmenu') && str_contains($uyeAcik, 'Bugün eklediğiniz')
+    && str_contains($uyeAcik, 'Üyeliğim') && !str_contains($uyeAcik, 'panel/transkript/ayarlar"'));
 
 $vaatCiz = static fn (bool $girisli, bool $analiz, bool $api): string => App\Core\View::capture('Transkript::anasayfa', [
     'girisli' => $girisli, 'analizEdebilir' => $girisli && $analiz, 'analizVaadi' => $analiz, 'apiAcik' => $api, 'kayitAcik' => true,
@@ -2550,7 +2646,8 @@ $eskiModu = $uyariCiz(false, $prY);
 dogrula('Uyarı kutusu tarayıcı modunda "tarayıcı üzerinden işleniyor" der, komut göstermez, tik adresini taşır; kapalıyken kurulum dosyasını önerir',
     str_contains($tikModu, 'Kuyruk tarayıcı üzerinden işleniyor') && preg_match('#data-tik="[^"]*panel/transkript/kuyruk/tik"#', $tikModu) === 1
     && !str_contains($tikModu, 'queue:work') && !str_contains($tikModu, 'Şimdi işle')
-    && str_contains($eskiModu, 'kuyruk-isci-kur.bat') && !str_contains($uyariCiz(true, $prU), 'data-tik'));
+    && str_contains($eskiModu, 'kuyruk-isci-kur.bat') && !str_contains($uyariCiz(true, new TranskriptPolicy(null)), 'data-tik'));
+dogrula('Analiz başlatabilen Ücretsiz üye de tik adresini taşır (kendi analizi tarayıcıdan ilerler)', str_contains($uyariCiz(true, $prU), 'data-tik'));
 
 $kaynakKodu2 = (string) file_get_contents(MODUL_YOLU . '/src/Controllers/KaynakController.php');
 preg_match('#function kuyrukTik\(.*?\n    }\n#s', $kaynakKodu2, $tikGovde);
@@ -2700,14 +2797,15 @@ dogrula('Liste: "Bugünkü hakkınız: 3 / 10 · saatlik 1 / 20"; dolunca yenile
 
 Ayarlar::forget();
 $uyeAyarHatasi = PanelAyarlari::dogrula('uye_analiz', 'evet');
-dogrula('Ayar: "Üyeler analiz başlatabilir" seçimi (varsayılan kapalı); listede olmayan değer reddedilir',
+dogrula('Ayar: Ücretsiz planın "Analiz başlatabilir" seçimi (varsayılan açık); listede olmayan değer reddedilir',
     PanelAyarlari::dogrula('uye_analiz', 'acik') === null && $uyeAyarHatasi !== null
     && array_keys(PanelAyarlari::secenekler('uye_analiz')) === ['', 'acik', 'kapali']
-    && str_contains(PanelAyarlari::secenekler('uye_analiz')[''], 'kapalı'));
+    && PanelAyarlari::secenekler('uye_analiz')[''] === 'Açık (varsayılan)');
 $anasayfaKodu = (string) file_get_contents(MODUL_YOLU . '/views/anasayfa.php');
 dogrula('Ana sayfa API kartı "yönetici onayıyla" demiyor; Kontrol Paneli açıklamasında yükleme sözü yok',
     !str_contains($anasayfaKodu, 'yönetici onayıyla') && !str_contains((string) ($kunye['aciklama'] ?? ''), 'sonraki aşamada'));
-dogrula('Çekirdek: editor rolü ekranda "Analist"', Role::label(Role::EDITOR) === 'Analist');
+dogrula('Çekirdek: editor rolü ekranda "Pro Üye" (ücretli plan), uye "Üye"', Role::label(Role::EDITOR) === 'Pro Üye' && Role::label(Role::MEMBER) === 'Üye'
+    && str_contains(Role::description(Role::EDITOR), 'Ücretli') && str_contains(Role::description(Role::MEMBER), 'Ücretsiz'));
 
 /* ---------------------------------------------------------------- */
 echo "\nYönetici Kontrol Paneli (sağlayıcılar, kuyruk, son analizler)\n";
@@ -2734,6 +2832,129 @@ dogrula('Sağlayıcı kartı, kuyruk kartı ve son analizler yalnız yöneticiye
 dogrula('Kuyruk kartı: işçi yokken tarayıcıdan işleme açıksa "tarayıcı üzerinden işleniyor", kapalıysa kırmızı uyarı',
     str_contains($olayKodu, "'Kuyruk tarayıcı üzerinden işleniyor'") && str_contains($olayKodu, "'Kuyruk işçisi çalışmıyor'")
     && strpos($olayKodu, 'KuyrukDurumu::tarayicidanIslenir()') < strpos($olayKodu, "'Kuyruk işçisi çalışmıyor'"));
+
+Setting::flush();
+Ayarlar::forget();
+
+/* ---------------------------------------------------------------- */
+echo "\nÜyelik planları (Ücretsiz · Pro; veritabanı gerekmez)\n";
+
+$plYon = new User(id: 1, ad: 'Y', soyad: 'Y', kullaniciAdi: 'y', eposta: 'y@ornek.com', rol: Role::ADMIN);
+$plPro = new User(id: 2, ad: 'E', soyad: 'E', kullaniciAdi: 'e', eposta: 'e@ornek.com', rol: Role::EDITOR);
+$plUye = new User(id: 3, ad: 'U', soyad: 'U', kullaniciAdi: 'u', eposta: 'u@ornek.com', rol: Role::MEMBER);
+
+dogrula('Plan rolden gelir: üye → Ücretsiz, editör → Pro, yönetici ve misafir → plan yok',
+    Planlar::plan($plUye) === 'uye' && Planlar::plan($plPro) === 'editor' && Planlar::plan($plYon) === null && Planlar::plan(null) === null
+    && Planlar::ad('uye') === 'Ücretsiz' && Planlar::ad('editor') === 'Pro' && Planlar::ad(null) === 'Yönetici');
+$hU = Planlar::haklar($plUye);
+$hE = Planlar::haklar($plPro);
+$hY = Planlar::haklar($plYon);
+$hM = Planlar::haklar(null);
+dogrula('Haklar: Ücretsiz 2/gün · 1/saat · 30 dk, yeniden analiz ve altyazı yok; Pro 20 · 5 · 180 dk, ikisi de var',
+    $hU['analiz'] && $hU['gunluk_sinir'] === 2 && $hU['saatlik_sinir'] === 1 && $hU['en_uzun_dk'] === 30 && !$hU['yeniden_analiz'] && !$hU['altyazi_indir'] && !$hU['muaf']
+    && $hE['analiz'] && $hE['gunluk_sinir'] === 20 && $hE['saatlik_sinir'] === 5 && $hE['en_uzun_dk'] === 180 && $hE['yeniden_analiz'] && $hE['altyazi_indir']);
+dogrula('Yönetici muaf: sınır 0 (yok), sistemin en uzun videosu, bütün özellikler; misafirin hiçbir hakkı yok',
+    $hY['muaf'] && $hY['gunluk_sinir'] === 0 && $hY['saatlik_sinir'] === 0 && $hY['en_uzun_dk'] === 180 && $hY['yeniden_analiz'] && $hY['altyazi_indir']
+    && !$hM['analiz'] && $hM['gunluk_sinir'] === 0 && !$hM['yeniden_analiz'] && $hM['plan'] === null);
+Ayarlar::set('analiz.yonetici_muaf', false);
+dogrula('yonetici_muaf kapalıyken yönetici Pro sınırlarına tabi', Planlar::haklar($plYon)['gunluk_sinir'] === 20 && !Planlar::haklar($plYon)['muaf']);
+Ayarlar::forget();
+dogrula('Pro "analiz" ayarı kapatılsa da Pro analiz başlatır (rol yetkisi)', (static function () use ($plPro): bool {
+    Ayarlar::set('uyelik.planlar.editor.analiz', false);
+    $sonuc = Planlar::haklar($plPro)['analiz'] && (new TranskriptPolicy($plPro))->canAnalyze();
+    Ayarlar::forget();
+    return $sonuc;
+})());
+dogrula('etkinEnUzunDk: plan sistemi aşamaz; 0 = sınır yok (ikisi de 0 → sınırsız)',
+    Planlar::etkinEnUzunDk(30, 180) === 30 && Planlar::etkinEnUzunDk(240, 180) === 180 && Planlar::etkinEnUzunDk(0, 180) === 180
+    && Planlar::etkinEnUzunDk(30, 0) === 30 && Planlar::etkinEnUzunDk(0, 0) === 0 && Planlar::etkinEnUzunDk(-5, 60) === 60);
+dogrula('sureMetni ve tutar biçimi (TL sonda, $ / € önde; kuruş yalnız gerekirse)',
+    Planlar::sureMetni(30) === '30 dk' && Planlar::sureMetni(180) === '3 saat' && Planlar::sureMetni(90) === '1 sa 30 dk' && Planlar::sureMetni(0) === 'Sınırsız'
+    && Planlar::tutar(149.0) === '149 ₺' && Planlar::tutar(1490.5) === '1.490,50 ₺' && Planlar::tutar(9.5, 'USD') === '$9,50' && Planlar::tutar(12.0, 'EUR') === '€12'
+    && Planlar::tutar(5.0, 'XYZ') === '5 ₺');
+dogrula('Fiyat girilmemişse fiyat metni boş ("iletişime geçin" görünür); yıllık 0 ise yıllık yok',
+    Planlar::fiyatMetni('editor') === '' && Planlar::fiyatMetni('editor', 'yillik') === '' && Planlar::paraBirimi() === 'TL');
+$karsi = Planlar::karsilastirma();
+$satirBul = static fn (string $etiket): array => array_values(array_filter($karsi, static fn (array $s): bool => $s['etiket'] === $etiket))[0]['degerler'] ?? [];
+dogrula('Karşılaştırma tablosu: günlük 2 / 20, süre 30 dk / 3 saat, yeniden analiz ve altyazı yalnız Pro, API yalnız Pro (çekirdek profile.api)',
+    $satirBul('Günlük yeni analiz') === ['uye' => '2', 'editor' => '20'] && $satirBul('En uzun video') === ['uye' => '30 dk', 'editor' => '3 saat']
+    && $satirBul('Yeniden analiz') === ['uye' => false, 'editor' => true] && $satirBul('Altyazı indirme') === ['uye' => false, 'editor' => true]
+    && $satirBul('API erişimi') === ['uye' => false, 'editor' => true] && $satirBul('Raporları okuma') === ['uye' => true, 'editor' => true]);
+Ayarlar::set('uyelik.planlar.uye.analiz', false);
+dogrula('Ücretsiz planda analiz kapalıysa tabloda analiz satırları "yok" görünür', Planlar::karsilastirma()[2]['degerler']['uye'] === false);
+Ayarlar::forget();
+
+dogrula('Bitiş: ay eklenir, ayın son gününü taşırmaz (31 Ocak + 1 ay = 28/29 Şubat), yıl atlar, saat korunur',
+    UyelikYonetimi::bitisHesapla('2026-01-31 10:00:00', 1) === '2026-02-28 10:00:00'
+    && UyelikYonetimi::bitisHesapla('2028-01-31 10:00:00', 1) === '2028-02-29 10:00:00'
+    && UyelikYonetimi::bitisHesapla('2026-10-10 11:31:03', 3) === '2027-01-10 11:31:03'
+    && UyelikYonetimi::bitisHesapla('2026-11-15 00:00:00', 14) === '2028-01-15 00:00:00'
+    && UyelikYonetimi::bitisHesapla('2026-08-31 09:00:00', 1) === '2026-09-30 09:00:00');
+dogrula('Talep notu: denetim karakteri atılır, satır sonu kalır, uzunluk kesilir',
+    UyelikYonetimi::temizMetin("  a\x07b\r\nc  ", 500) === "ab\nc" && mb_strlen(UyelikYonetimi::temizMetin(str_repeat('ş', 600), 500)) === 500);
+dogrula('Tutar okuma: "149", "149,90", "1.490,50", "1490.5", "₺ 99" → sayı; boş → null; harf ve eksi → geçersiz',
+    UyelikController::tutar('149') === 149.0 && UyelikController::tutar('149,90') === 149.9 && UyelikController::tutar('1.490,50') === 1490.5
+    && UyelikController::tutar('1490.5') === 1490.5 && UyelikController::tutar('₺ 99') === 99.0 && UyelikController::tutar('') === null
+    && UyelikController::tutar('abc') === false && UyelikController::tutar('-5') === false);
+dogrula('Talep süreleri 1 / 3 / 6 / 12 ay; yönetici en çok 36 ay (0 süresiz)', UyelikYonetimi::TALEP_SURELERI === [1, 3, 6, 12] && UyelikYonetimi::EN_COK_AY === 36);
+
+$plUyelikKodu = (string) file_get_contents(MODUL_YOLU . '/src/Uyelik/UyelikYonetimi.php');
+dogrula('Rol yalnız uye ↔ editor arasında değişir; yönetici hesabına dokunulmaz (UPDATE "AND rol = :once")',
+    str_contains($plUyelikKodu, 'UPDATE kullanicilar SET rol = :sonra WHERE id = :id AND rol = :once')
+    && substr_count($plUyelikKodu, 'UPDATE kullanicilar') === 1 && str_contains($plUyelikKodu, "in_array(\$kullanici->rol, [Role::MEMBER, Role::EDITOR], true)"));
+dogrula('Pro düşünce API anahtarları silinir (Ücretsiz planda API yok); süre dolumu kilitli (GET_LOCK), e-posta iki kez gitmez',
+    substr_count($plUyelikKodu, 'revokeApiTokens(') === 2 && str_contains($plUyelikKodu, 'GET_LOCK') && str_contains($plUyelikKodu, 'hatirlatildiYaz'));
+dogrula('Süre dolumu görev zamanlayıcısıyla saatte bir ve zamanlayıcı yoksa panel isteklerinde en çok 10 dakikada bir',
+    preg_match("#Schedule::call\('transkript-uyelik-suresi'.*?->hourly\(\)#s", $olayKodu) === 1 && str_contains($olayKodu, 'UyelikYonetimi::araSira('));
+$zamanDosyasi = sys_get_temp_dir() . '/tk-uyelik-zaman-' . bin2hex(random_bytes(3));
+touch($zamanDosyasi);
+$cagrildi = false;
+UyelikYonetimi::araSira(static function () use (&$cagrildi): PDO { $cagrildi = true; throw new RuntimeException('olmamalı'); }, 600, $zamanDosyasi);
+$tazeAtlandi = !$cagrildi;
+touch($zamanDosyasi, time() - 700);
+UyelikYonetimi::araSira(static function () use (&$cagrildi): PDO { $cagrildi = true; throw new RuntimeException('bağlantı yok'); }, 600, $zamanDosyasi);
+clearstatcache(true, $zamanDosyasi);
+dogrula('araSira: zamanı gelmediyse veritabanına gitmez; gelince çalışır, hata isteği bozmaz ve damgayı yeniler',
+    $tazeAtlandi && $cagrildi && (int) filemtime($zamanDosyasi) >= time() - 5);
+@unlink($zamanDosyasi);
+
+$planHtml = App\Core\View::capture('Transkript::_parcalar/plan-tablosu', ['karsilastirma' => Planlar::karsilastirma(), 'etkinPlan' => 'uye',
+    'eylemler' => ['editor' => ['#tk-pro-gec', 'Pro\'ya geç']]]);
+dogrula('Plan kartları: iki kart, "Planınız" rozeti Ücretsiz\'de, fiyat yoksa "iletişime geçin", Pro\'da düğme',
+    preg_match_all('/<article class="tk-plan[ "]/', $planHtml) === 2 && str_contains($planHtml, 'tk-plan__rozet') && str_contains($planHtml, 'Fiyat için iletişime geçin')
+    && str_contains($planHtml, 'href="#tk-pro-gec"') && strpos($planHtml, 'Planınız') < strpos($planHtml, 'tk-plan--pro'));
+$plUyelikCiz = static fn (User $kim, array $ozet, ?array $talep): string => App\Core\View::capture('Transkript::uyelik', [
+    'policy' => new TranskriptPolicy($kim), 'haklar' => Planlar::haklar($kim),
+    'hak' => AnalizBaslatici::hakKarari(false, 1, 2, 0, 1, time()) + ['plan' => Planlar::plan($kim), 'plan_adi' => Planlar::ad(Planlar::plan($kim)), 'en_uzun_dk' => 30],
+    'ozet' => $ozet, 'talep' => $talep, 'donemler' => [], 'karsilastirma' => Planlar::karsilastirma(), 'odemeBilgisi' => "IBAN: TR00 <b>",
+]);
+$bosOzet = ['aktif' => false, 'suresiz' => false, 'bitis' => null, 'baslangic' => null, 'donem' => 0];
+$plUyeSayfa = $plUyelikCiz($plUye, $bosOzet, null);
+dogrula('Üyeliğim (Ücretsiz): ölçerler 1 / 2 ve 0 / 1, talep formu, ödeme talimatı talepten önce görünmez',
+    str_contains($plUyeSayfa, 'Bugünkü yeni analiz') && str_contains($plUyeSayfa, '1 / 2') && str_contains($plUyeSayfa, '0 / 1')
+    && str_contains($plUyeSayfa, 'panel/transkript/uyelik/talep') && !str_contains($plUyeSayfa, 'IBAN'));
+$bekleyenSayfa = $plUyelikCiz($plUye, $bosOzet, ['id' => 1, 'durum' => 'bekliyor', 'sure_ay' => 3, 'mesaj' => '<i>not</i>', 'yanit' => '', 'created_at' => date('Y-m-d H:i:s')]);
+dogrula('Üyeliğim (talep bekliyor): durum, kaçışlanmış not ve ödeme talimatı, geri çekme düğmesi; form yok',
+    str_contains($bekleyenSayfa, 'Onay bekliyor') && str_contains($bekleyenSayfa, '&lt;i&gt;not&lt;/i&gt;') && str_contains($bekleyenSayfa, 'IBAN: TR00 &lt;b&gt;')
+    && str_contains($bekleyenSayfa, 'talebi-geri-cek') && !str_contains($bekleyenSayfa, 'name="sure_ay"'));
+$proSayfa = $plUyelikCiz($plPro, ['aktif' => true, 'suresiz' => false, 'bitis' => date('Y-m-d H:i:s', time() + 2 * 86400), 'baslangic' => date('Y-m-d H:i:s'), 'donem' => 1], null);
+dogrula('Üyeliğim (Pro, 2 gün kaldı): bitiş uyarı renginde, "Süremi uzat" ve uzatma formu',
+    str_contains($proSayfa, 'is-yakin') && str_contains($proSayfa, 'gün kaldı') && str_contains($proSayfa, 'Süremi uzat') && str_contains($proSayfa, 'Pro sürenizi uzatın'));
+$yonetimSayfa = App\Core\View::capture('Transkript::uyelikler', [
+    'talepler' => [['id' => 7, 'ad' => '<b>Ali</b>', 'soyad' => 'Veli', 'kullanici_adi' => 'ali', 'eposta' => 'ali@ornek.test', 'rol' => 'uye',
+                    'sure_ay' => 3, 'mesaj' => 'fatura <script>', 'created_at' => date('Y-m-d H:i:s')]],
+    'proUyeler' => [['id' => 9, 'ad' => 'Pro', 'soyad' => 'Kişi', 'kullanici_adi' => 'pro', 'eposta' => 'p@ornek.test', 'hesap_durumu' => 'aktif',
+                     'donem' => 1, 'bitis' => date('Y-m-d H:i:s', time() + 40 * 86400), 'suresiz' => 0, 'baslangic' => date('Y-m-d H:i:s')]],
+    'donemler' => [], 'gelir' => ['bu_ay' => ['TL' => 447.5], 'toplam' => ['TL' => 1000.0]], 'karsilastirma' => Planlar::karsilastirma(), 'onKullanici' => '',
+]);
+dogrula('Üyelikler (yönetici): talep adı ve notu kaçışlanır; onay formu talep kimliğiyle, 3 ay seçili; reddet; Pro listesinde uzat ve kaldır; gelir',
+    str_contains($yonetimSayfa, '&lt;b&gt;Ali&lt;/b&gt;') && str_contains($yonetimSayfa, 'fatura &lt;script&gt;') && !str_contains($yonetimSayfa, '<script>')
+    && str_contains($yonetimSayfa, 'name="talep_id" value="7"') && str_contains($yonetimSayfa, '<option value="3" selected>3 ay</option>')
+    && str_contains($yonetimSayfa, 'uyelikler/reddet') && str_contains($yonetimSayfa, 'uyelikler/kaldir') && str_contains($yonetimSayfa, 'Uzat')
+    && str_contains($yonetimSayfa, '447,50 ₺') && str_contains($yonetimSayfa, 'gün kaldı'));
+$hesapKodu = (string) file_get_contents(MODUL_YOLU . '/src/Services/HesapTemizligi.php');
+dogrula('Silinen hesabın talepleri gece temizlenir; Pro dönemleri (ödeme kaydı) kalır',
+    in_array('transkript_uyelik_talepleri', HesapTemizligi::TABLOLAR, true) && !in_array('transkript_uyelikler', HesapTemizligi::TABLOLAR, true));
 
 Setting::flush();
 Ayarlar::forget();
