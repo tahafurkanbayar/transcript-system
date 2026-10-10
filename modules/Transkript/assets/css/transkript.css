@@ -433,3 +433,84 @@ a.tk-hak:hover, a.tk-hak:focus-visible { text-decoration: none; box-shadow: inse
     .tk-kaydet-cubugu > span { display: none; }
     .tk-kaydet-cubugu .btn { width: 100%; }
 }
+
+/* =====================================================================
+ *  TELEFON DÜZENİ (768px altı): analiz listesi, sayaçlar, süzgeçler
+ * ---------------------------------------------------------------------
+ *  Çekirdeğin "tablo kart olur" düzeni her hücreyi etiketli ayrı satıra
+ *  koyuyordu; bir kayıt bir ekran boyu tutuyordu. Liste kartı sıkı:
+ *    1. satır  küçük resim + başlık + kanal
+ *    2. satır  (yönetici) başlatan · kütüphanesindekiler
+ *    3. satır  durum (ilerleme ya da hata metni)
+ *    son satır süre · tarih ............................ düğmeler
+ * ===================================================================== */
+@media (min-width: 768px) {
+    .tk-filtre-ac { display: none !important; }
+    /* Dar sütunlarda "Rapor hazır" ve "13 saat önce" iki satıra bölünmesin. */
+    .tk-liste .tk-durum-hucre > a.cy-link,
+    .tk-liste .tk-hucre-tarih small { white-space: nowrap; }
+}
+
+@media (max-width: 767.98px) {
+    /* Süzgeçler: arama + "Filtreler" yan yana; seçimler düğmeyle açılır. */
+    .tk-araclar { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+    .tk-araclar .cy-toolbar__search { flex: 1 1 0; min-width: 0; }
+    .tk-araclar .tk-filtre-ac { flex: 0 0 auto; min-height: 40px; }
+    .tk-araclar .tk-filtre,
+    .tk-araclar .tk-uygula { flex: 1 1 100%; }
+    .tk-araclar.js-hazir:not(.is-acik) .tk-filtre,
+    .tk-araclar.js-hazir:not(.is-acik) .tk-uygula { display: none; }
+    .tk-filtre-ac__sayi {
+        min-width: 1.15rem; padding: 0 .3rem; border-radius: var(--cy-radius-pill);
+        background: var(--cy-brand); color: #fff; font-size: .7rem; font-weight: 700; line-height: 1.15rem; text-align: center;
+    }
+
+    /* Sayaçlar: küçük ikon, küçük sayı; açıklama iki satırda kesilir. */
+    .tk-istatistik { gap: .5rem; }
+    .tk-istatistik .cy-stat { padding: .65rem .75rem; gap: .55rem; align-items: flex-start; }
+    .tk-istatistik .cy-stat__icon { width: 30px; height: 30px; }
+    .tk-istatistik .cy-stat__icon .cy-icon { width: 16px; height: 16px; }
+    .tk-istatistik .cy-stat__label { font-size: .72rem; }
+    .tk-istatistik .cy-stat__value { font-size: 1.2rem; }
+    .tk-istatistik .cy-stat__hint {
+        display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+        font-size: .7rem; line-height: 1.3;
+    }
+
+    /* Liste kartı */
+    .cy-table--cards.tk-liste > tbody > tr {
+        display: flex; flex-wrap: wrap; align-items: center; gap: .35rem .75rem;
+        padding: .75rem .85rem;
+    }
+    /* justify-items: çekirdek "end" verir; yeni tarayıcılar bunu blok düzende de uygular. */
+    .cy-table--cards.tk-liste > tbody > tr > td { display: block; padding: 0; text-align: left; justify-items: start; }
+    .cy-table--cards.tk-liste > tbody > tr > td::before { content: none !important; }
+    .cy-table--cards.tk-liste > tbody > tr > td[data-kart="ana"] { order: 0; flex: 1 1 100%; padding: 0 0 .15rem; }
+    .cy-table--cards.tk-liste > tbody > tr > td.tk-kim { order: 1; flex: 1 1 100%; font-size: .8rem; }
+    /* Durum rozeti süre ve tarihle aynı satırda; ilerleme çubuğu ya da hata metni varsa kendi satırında. */
+    .cy-table--cards.tk-liste > tbody > tr > td.js-tk-analiz { order: 2; flex: 0 1 auto; max-width: 100%; }
+    .cy-table--cards.tk-liste > tbody > tr > td.js-tk-analiz:has(.tk-mini-ilerleme, small) { flex-basis: 100%; }
+    .cy-table--cards.tk-liste > tbody > tr > td.tk-hucre-sure { order: 3; font-size: .8rem; color: var(--cy-text-soft); }
+    .cy-table--cards.tk-liste > tbody > tr > td.tk-hucre-tarih { order: 4; color: var(--cy-text-muted); }
+    .cy-table--cards.tk-liste > tbody > tr > td[data-kart="islem"] {
+        order: 5; margin: 0 0 0 auto; padding: 0; border: 0;
+    }
+    .tk-liste .tk-kaynak { align-items: flex-start; gap: .65rem; }
+    .tk-liste .tk-kaynak__resim { width: 88px; height: 50px; }
+    .tk-liste .tk-kaynak__metin strong { font-size: .95rem; }
+    .tk-liste .tk-kim__baslatan,
+    .tk-liste .tk-kim__kutuphane { display: inline; }
+    .tk-liste .tk-kim__baslatan::before { content: "Başlatan: "; color: var(--cy-text-muted); font-weight: 400; }
+    .tk-liste .tk-kim__kutuphane::before { content: " · "; }
+    .tk-liste .tk-durum-hucre { flex-direction: row; flex-wrap: wrap; align-items: center; gap: .3rem .6rem; }
+    .tk-liste .tk-durum-hucre .tk-mini-ilerleme { flex: 1 1 8rem; width: auto; min-width: 0; }
+    /* Başlık zaten rapora gider; "Rapor hazır" bağlantısı telefonda tekrar olurdu. */
+    .tk-liste .tk-durum-hucre > a.cy-link { display: none; }
+    .tk-liste .tk-durum-hucre small { font-size: .78rem; }
+    .tk-liste__alt { flex-direction: column; align-items: stretch; text-align: center; }
+}
+
+/* Açılır bölüm (Üyelikler: plan kartları) */
+.tk-acilir > summary { list-style: none; cursor: pointer; }
+.tk-acilir > summary::-webkit-details-marker { display: none; }
+.tk-acilir[open] > summary { margin-bottom: .25rem; }
