@@ -1990,7 +1990,11 @@ a.cy-stat--link:focus-visible { outline: 2px solid var(--cy-brand); outline-offs
 
 @media (max-width: 575.98px) {
     .cy-notice { flex-wrap: wrap; }
-    .cy-notice__action { margin-left: calc(16px + .65rem); }
+    /* Metin ilk satırın tamamını alır (yanındaki bağlantı onu "Doğrulama…"ya
+       kadar kısaltıyordu); kapatma düğmesi aynı satırda, bağlantı altta. */
+    .cy-notice__text { flex-basis: calc(100% - 16px - 26px - 1.3rem); }
+    .cy-notice__close { order: 1; }
+    .cy-notice__action { order: 2; margin-left: calc(16px + .65rem); }
 }
 
 /* --- Yan yana kartlar: kısa olan boş kutu bırakmasın --- */
