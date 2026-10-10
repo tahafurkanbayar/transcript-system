@@ -133,7 +133,7 @@ $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format(
 <?php endif; ?>
 
 <?php $analizci = $policy->canAnalyze(); ?>
-<div class="cy-stats mb-3" style="--cy-stats-lg: <?= $hepsi ? 4 : 2 ?>; --cy-stats-md: 2">
+<div class="cy-stats mb-3 tk-istatistik" style="--cy-stats-lg: <?= $hepsi ? 4 : 2 ?>; --cy-stats-md: 2">
     <div class="cy-stat">
         <span class="cy-stat__icon cy-stat__icon--success"><?= icon('files') ?></span>
         <span>
@@ -193,7 +193,12 @@ $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format(
 </div>
 
 <section class="cy-card">
-    <form class="cy-toolbar" method="get" action="<?= e(url('panel/transkript')) ?>" role="search">
+    <?php
+    /* Telefonda süzgeçler "Filtreler" düğmesinin arkasında (JS); arama kutusu
+     * hep görünür. Etkin süzgeç varsa açık gelir. JS yoksa hepsi görünür. */
+    $etkinSuzgec = (int) ($filtre['durum'] !== $varsayilanDurum) + (int) ($filtre['kapsam'] !== '') + (int) ($filtre['kullanici'] !== '');
+    ?>
+    <form class="cy-toolbar tk-araclar js-tk-araclar<?= $etkinSuzgec > 0 ? ' is-acik' : '' ?>" method="get" action="<?= e(url('panel/transkript')) ?>" role="search">
         <div class="cy-toolbar__search">
             <div class="cy-input-icon">
                 <?= icon('search', 'cy-icon cy-icon--sm') ?>
@@ -201,6 +206,9 @@ $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format(
                        placeholder="Başlık, kanal ya da video kimliği…" aria-label="Analizlerde ara" maxlength="100">
             </div>
         </div>
+        <button type="button" class="btn cy-btn cy-btn--ghost cy-btn--sm tk-filtre-ac js-tk-filtre-ac" aria-expanded="<?= $etkinSuzgec > 0 ? 'true' : 'false' ?>" hidden>
+            <?= icon('filter', 'cy-icon cy-icon--sm') ?> Filtreler<?php if ($etkinSuzgec > 0): ?> <span class="tk-filtre-ac__sayi"><?= $etkinSuzgec ?></span><?php endif; ?>
+        </button>
         <select class="form-select tk-filtre" name="durum" aria-label="Duruma göre filtrele">
             <option value="<?= $varsayilanDurum !== '' ? 'hepsi' : '' ?>"<?= $filtre['durum'] === '' ? ' selected' : '' ?>>Tüm durumlar</option>
             <option value="hazir"<?= $filtre['durum'] === 'hazir' ? ' selected' : '' ?>>Raporu hazır</option>
@@ -230,7 +238,7 @@ $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format(
                 <option value="paylasilan"<?= $filtre['kapsam'] === 'paylasilan' ? ' selected' : '' ?>>Paylaşılanlar<?= $paylasilan > 0 ? ' (' . $sayi($paylasilan) . ')' : '' ?></option>
             </select>
         <?php endif; ?>
-        <button type="submit" class="btn cy-btn cy-btn--ghost cy-btn--sm"><?= icon('filter', 'cy-icon cy-icon--sm') ?> Uygula</button>
+        <button type="submit" class="btn cy-btn cy-btn--ghost cy-btn--sm tk-uygula"><?= icon('filter', 'cy-icon cy-icon--sm') ?> Uygula</button>
         <?php if ($filtreli): ?>
             <a class="cy-link small" href="<?= e(url('panel/transkript')) ?>">Temizle</a>
         <?php endif; ?>
@@ -324,7 +332,7 @@ $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format(
                                     <?php endif; ?>
                                 </td>
                             <?php endif; ?>
-                            <td><span class="cy-mono"><?= e(RaporVerisi::sure($satir['sure_sn'] !== null ? (int) $satir['sure_sn'] : null)) ?></span></td>
+                            <td class="tk-hucre-sure"><span class="cy-mono" title="Video süresi"><?= e(RaporVerisi::sure($satir['sure_sn'] !== null ? (int) $satir['sure_sn'] : null)) ?></span></td>
                             <td class="js-tk-analiz">
                                 <span class="tk-durum-hucre">
                                     <span class="cy-pill <?= e($durumRengi) ?> js-tk-durum"><?= e($durumMetni) ?></span>
@@ -350,7 +358,7 @@ $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format(
                                     <?php endif; ?>
                                 </span>
                             </td>
-                            <td><small title="<?= e((string) $satir['created_at']) ?>"><?= e(human_date((string) $satir['created_at'])) ?></small></td>
+                            <td class="tk-hucre-tarih"><small title="<?= e((string) $satir['created_at']) ?>"><?= e(human_date((string) $satir['created_at'])) ?></small></td>
                             <td class="text-end">
                                 <div class="cy-row-actions">
                                     <?php /* Başkasının duran analizine dokunulmaz (TranskriptPolicy::canRetry). */ ?>

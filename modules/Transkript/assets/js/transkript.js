@@ -790,4 +790,26 @@
             yeni.focus();
         });
     }());
+
+    /* =================================================================
+     *  12) LİSTE: telefonda süzgeçler "Filtreler" düğmesinin arkasında
+     * =================================================================
+     *  Arama kutusu hep görünür; durum / kapsam / kişi seçimleri ve
+     *  "Uygula" düğmeyle açılır (CSS yalnız dar ekranda gizler). Etkin
+     *  süzgeç varsa sunucu formu açık çizer. JS yoksa hepsi görünür. */
+    (function () {
+        var form  = document.querySelector('.js-tk-araclar');
+        var dugme = form ? form.querySelector('.js-tk-filtre-ac') : null;
+
+        if (!form || !dugme) { return; }
+
+        form.classList.add('js-hazir');
+        dugme.hidden = false;
+        dugme.addEventListener('click', function () {
+            var acik = !form.classList.contains('is-acik');
+
+            form.classList.toggle('is-acik', acik);
+            dugme.setAttribute('aria-expanded', acik ? 'true' : 'false');
+        });
+    }());
 }(window.jQuery));

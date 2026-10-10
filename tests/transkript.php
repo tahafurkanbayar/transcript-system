@@ -2532,6 +2532,11 @@ $uyeAcik = $listeCiz($prU, '');
 dogrula('Ücretsiz plan varsayılan (analiz açık): üye analiz kutusunu ve sekme menüsünü görür, "Bugün eklediğiniz" kartı',
     str_contains($uyeAcik, 'id="tk_analiz_form"') && str_contains($uyeAcik, 'tk-altmenu') && str_contains($uyeAcik, 'Bugün eklediğiniz')
     && str_contains($uyeAcik, 'Üyeliğim') && !str_contains($uyeAcik, 'panel/transkript/ayarlar"'));
+$suzgecli = $listeCiz($prU, 'hata');
+dogrula('Telefon düzeni: süzgeçler "Filtreler" düğmesinin arkasında; etkin süzgeç varsa açık ve sayılı gelir; süre / tarih hücreleri sınıflı',
+    str_contains($uyeAcik, 'js-tk-filtre-ac') && !str_contains($uyeAcik, 'js-tk-araclar is-acik')
+    && str_contains($suzgecli, 'js-tk-araclar is-acik') && str_contains($suzgecli, 'tk-filtre-ac__sayi">1<')
+    && str_contains($uyeAcik, 'class="tk-hucre-sure"') && str_contains($uyeAcik, 'class="tk-hucre-tarih"') && str_contains($uyeAcik, 'tk-istatistik'));
 
 $vaatCiz = static fn (bool $girisli, bool $analiz, bool $api): string => App\Core\View::capture('Transkript::anasayfa', [
     'girisli' => $girisli, 'analizEdebilir' => $girisli && $analiz, 'analizVaadi' => $analiz, 'apiAcik' => $api, 'kayitAcik' => true,

@@ -21,7 +21,6 @@ use App\Core\Auth;
 use App\Core\View;
 use Modules\Transkript\TranskriptPolicy;
 use Modules\Transkript\Uyelik\Planlar;
-use Modules\Transkript\Uyelik\UyelikYonetimi;
 use Modules\Transkript\Varliklar;
 
 $tarih = static fn (?string $t): string => $t === null ? '—' : date('d.m.Y', (int) strtotime($t));
@@ -279,7 +278,10 @@ $aylik = Planlar::tanim(Planlar::PRO)['fiyat_aylik'];
         <p class="cy-muted small mb-0">Üyelerin gördüğü kartlar. Sınırları, fiyatı ve ödeme talimatını
             <a class="cy-link" href="<?= e(url('panel/transkript/ayarlar#uyelik')) ?>">Ayarlar → Üyelik planları</a>'ndan değiştirin.</p>
     </div>
-    <?php View::partial('Transkript::_parcalar/plan-tablosu', ['karsilastirma' => $karsilastirma]); ?>
+    <details class="tk-acilir">
+        <summary class="btn cy-btn cy-btn--ghost cy-btn--sm"><?= icon('eye', 'cy-icon cy-icon--sm') ?> Üyelerin gördüğü plan kartlarını göster</summary>
+        <div class="mt-3"><?php View::partial('Transkript::_parcalar/plan-tablosu', ['karsilastirma' => $karsilastirma]); ?></div>
+    </details>
 </section>
 
 <?php View::partial('Transkript::_parcalar/onay-penceresi'); ?>
