@@ -432,4 +432,23 @@ final class AnalizRepository
             'gecen_sn'  => max(0, time() - (int) strtotime((string) $analiz['created_at'])),
         ];
     }
+
+    /**
+     * Süren analiz sayısı (sol menüdeki "Analizler" sayacı). $kullaniciId
+     * verilirse yalnız onun başlattıkları; null ise herkesinki (yönetici).
+     * Tek, indeksli sayım; her panel sayfasında çalışır.
+     */
+    public function surenSayisi(?int $kullaniciId = null): int
+    {
+        $sql = "SELECT COUNT(*) FROM transkript_analizler WHERE durum NOT IN ('tamamlandi', 'hata')";
+
+        if ($kullaniciId === null) {
+            return (int) $this->db->query($sql)->fetchColumn();
+        }
+
+        $sorgu = $this->db->prepare($sql . ' AND kullanici_id = :k');
+        $sorgu->execute([':k' => $kullaniciId]);
+
+        return (int) $sorgu->fetchColumn();
+    }
 }

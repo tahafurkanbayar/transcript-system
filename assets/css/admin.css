@@ -187,6 +187,30 @@ body.is-collapsed .cy-main { margin-left: var(--cy-sidebar-w-collapsed); }
 }
 .cy-nav-link.is-active .cy-nav-link__badge { background: var(--cy-brand-200); color: var(--cy-brand-text-strong); }
 
+/* Sayaç türleri (SidebarMenu badge_tur): uyari = yanıt bekleyen (sarı),
+   bilgi = süren iş (mavi). Aktif bağlantıda da rengini korur. */
+.cy-nav-link__badge--uyari,
+.cy-nav-link.is-active .cy-nav-link__badge--uyari { background: var(--cy-warning-soft); color: var(--cy-warning-text); }
+.cy-nav-link__badge--bilgi,
+.cy-nav-link.is-active .cy-nav-link__badge--bilgi { background: var(--cy-info-soft); color: var(--cy-info-text); }
+
+/* Bölümün ana eylemi (SidebarMenu vurgu; ör. "Yeni analiz"): ince marka çerçevesi */
+.cy-nav-link--vurgu { border: 1px dashed var(--cy-brand-200); color: var(--cy-brand-text); font-weight: 600; }
+.cy-nav-link--vurgu .cy-icon { color: var(--cy-brand-text); }
+.cy-nav-link--vurgu:hover { border-style: solid; background: var(--cy-brand-50); color: var(--cy-brand-text-strong); }
+
+/* Kısa etiket (ör. modülün plan adı "Ücretsiz" / "Pro") */
+.cy-nav-link__tag {
+    padding: .05rem .45rem;
+    border-radius: var(--cy-radius-pill);
+    border: 1px solid var(--cy-border);
+    color: var(--cy-text-muted);
+    font-size: .6875rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
+.cy-nav-link.is-active .cy-nav-link__tag { border-color: var(--cy-brand-200); color: var(--cy-brand-text); }
+
 /* --- Alt menüsü olan öğeler (ör. Site Ayarları) ---
    Düğme normal bağlantı gibi görünür; "chevron" simgesi açık/kapalı
    durumu gösterir ve döner. Alt sayfalardan birindeyken grup otomatik
@@ -227,10 +251,50 @@ body.is-collapsed .cy-nav-submenu { display: none; }
 
 /* --- Menü altı: kullanıcı kartı --- */
 .cy-sidebar__footer {
+    display: flex;
+    align-items: center;
+    gap: .4rem;
     padding: .65rem;
     border-top: 1px solid var(--cy-border);
     flex-shrink: 0;
 }
+.cy-sidebar__footer > .cy-side-user { flex: 1; min-width: 0; }
+
+/* Kullanıcı kartının yanında: siteyi aç · çıkış */
+.cy-side-actions { display: flex; flex-direction: column; gap: .25rem; flex-shrink: 0; }
+.cy-side-action {
+    display: inline-grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border: 1px solid var(--cy-border);
+    border-radius: var(--cy-radius-sm);
+    background: var(--cy-surface);
+    color: var(--cy-text-muted);
+    cursor: pointer;
+    transition: background-color var(--cy-transition), color var(--cy-transition), border-color var(--cy-transition);
+}
+.cy-side-action:hover { background: var(--cy-surface-hover); color: var(--cy-text); }
+.cy-side-actions form .cy-side-action:hover { color: var(--cy-danger); border-color: var(--cy-danger-soft); }
+
+/* Çekmece kapatma düğmesi: yalnız 992px altında görünür (aşağıda). */
+.cy-sidebar__close {
+    display: none;
+    position: absolute;
+    top: calc((var(--cy-topbar-h) - 36px) / 2);
+    right: .75rem;
+    width: 36px;
+    height: 36px;
+    place-items: center;
+    padding: 0;
+    border: 1px solid var(--cy-border);
+    border-radius: var(--cy-radius-sm);
+    background: var(--cy-surface);
+    color: var(--cy-text-soft);
+    cursor: pointer;
+}
+.cy-sidebar__close:hover { background: var(--cy-surface-hover); color: var(--cy-text); }
 
 .cy-side-user {
     display: flex;
@@ -263,6 +327,29 @@ body.is-collapsed .cy-nav-group__label,
 body.is-collapsed .cy-nav-link__text,
 body.is-collapsed .cy-nav-link__badge,
 body.is-collapsed .cy-side-user__info { display: none; }
+
+body.is-collapsed .cy-side-actions { display: none; }
+/* Başlıklar gizliyken bölümler ince çizgiyle ayrılır. */
+body.is-collapsed .cy-nav-group + .cy-nav-group { padding-top: .6rem; border-top: 1px solid var(--cy-border); }
+body.is-collapsed .cy-sidebar__footer { justify-content: center; }
+body.is-collapsed .cy-sidebar__footer > .cy-side-user { flex: 0 0 auto; }
+
+/* Daraltılmış menüde sayaç ikonun köşesinde nokta olur (sayı ipucunda). */
+@media (min-width: 992px) {
+    body.is-collapsed .cy-nav-link.has-badge .cy-nav-link__badge {
+        display: block;
+        position: absolute;
+        top: .45rem;
+        right: .45rem;
+        width: 8px;
+        height: 8px;
+        padding: 0;
+        overflow: hidden;
+        font-size: 0;
+        background: var(--cy-warning);
+    }
+    body.is-collapsed .cy-nav-link.has-badge .cy-nav-link__badge--bilgi { background: var(--cy-info); }
+}
 
 body.is-collapsed .cy-sidebar__brand { justify-content: center; padding: 0; }
 body.is-collapsed .cy-nav-link { justify-content: center; padding: .65rem; }
@@ -894,6 +981,14 @@ body.is-sidebar-open .cy-backdrop { opacity: 1; visibility: visible; }
 
     /* Menüdeki bağlantılar parmakla rahat seçilsin */
     .cy-nav-link { padding: .75rem .7rem; font-size: .9375rem; }
+
+    /* Çekmecede sağ üstte kapatma düğmesi; marka adı onun altına girmesin. */
+    .cy-sidebar__close { display: inline-grid; }
+    .cy-sidebar__brand { padding-right: 3.5rem; }
+    body.is-collapsed .cy-side-actions { display: flex; }
+    body.is-collapsed .cy-nav-group + .cy-nav-group { padding-top: 0; border-top: 0; }
+    body.is-collapsed .cy-sidebar__footer { justify-content: flex-start; }
+    body.is-collapsed .cy-sidebar__footer > .cy-side-user { flex: 1; }
 
     .cy-profile-grid { grid-template-columns: minmax(0, 1fr); }
 

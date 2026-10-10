@@ -307,6 +307,11 @@ YouTube açıklamasına yapıştırılacak bölüm listesi (ilk 0:00, en az 3, 1
 kuralı); kısa özeti kopyala; "~N dk okuma"; `panel/transkript?url=…` ile dolu
 açılış ve masaüstü yer imi. Hepsi kayıtlı rapordan üretilir, AI çağrısı yok.
 
+**Sol menü** (çekirdeğin `SidebarMenu` kancası, `events.php`): "Transkript"
+bölümünde Yeni analiz (liste sayfasındaki kutuya odaklanır), Analizler (süren
+analiz sayacı), Üyeliğim (plan etiketi) ya da yöneticiye Üyelikler (bekleyen
+talep sayacı) ve Transkript ayarları.
+
 **Bölüm menüsü:** Transkript sayfalarının üstünde sekmeler: Analizler · Üyeliğim
 (yönetici olmayan; yanında plan çipi "Ücretsiz plan · Pro'ya geç →") ·
 Üyelikler (yönetici; bekleyen talep rozeti) · Ayarlar (yönetici). Telefonda yatay kayar.

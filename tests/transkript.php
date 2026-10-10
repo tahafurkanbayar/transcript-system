@@ -2957,6 +2957,34 @@ dogrula('Üyelikler (yönetici): talep adı ve notu kaçışlanır; onay formu t
     && str_contains($yonetimSayfa, 'name="talep_id" value="7"') && str_contains($yonetimSayfa, '<option value="3" selected>3 ay</option>')
     && str_contains($yonetimSayfa, 'uyelikler/reddet') && str_contains($yonetimSayfa, 'uyelikler/kaldir') && str_contains($yonetimSayfa, 'Uzat')
     && str_contains($yonetimSayfa, '447,50 ₺') && str_contains($yonetimSayfa, 'gün kaldı'));
+/* ---------------------------------------------------------------- */
+echo "
+Sol menü (çekirdeğin SidebarMenu kancası)
+";
+
+$normal = App\Core\SidebarMenu::normalize(['label' => 'Stok', 'items' => [
+    ['route' => '/panel/stok/', 'icon' => 'database', 'label' => 'Ürünler', 'badge' => -3, 'badge_tur' => 'kirmizi', 'hash' => 'x"><script>'],
+    ['route' => 'panel/stok/a', 'label' => 'Ayar', 'badge' => 7, 'badge_tur' => 'uyari', 'hash' => 'yeni_kayit', 'vurgu' => 1, 'aktif' => 0],
+    ['label' => 'Rotasız'],
+    ['route' => 'panel/x', 'label' => '   '],
+    'bozuk',
+]]);
+dogrula('SidebarMenu::normalize: rota kırpılır, eksik simge "box", eksi sayaç 0, bilinmeyen renk boş, zararlı hash atılır; rotasız / adsız öğe düşer',
+    $normal !== null && count($normal['items']) === 2 && $normal['items'][0]['route'] === 'panel/stok' && $normal['items'][1]['icon'] === 'box'
+    && $normal['items'][0]['badge'] === 0 && $normal['items'][0]['badge_tur'] === '' && $normal['items'][0]['hash'] === ''
+    && $normal['items'][1]['badge'] === 7 && $normal['items'][1]['badge_tur'] === 'uyari' && $normal['items'][1]['hash'] === 'yeni_kayit'
+    && $normal['items'][1]['vurgu'] === true && $normal['items'][1]['aktif'] === false && $normal['items'][0]['aktif'] === null
+    && App\Core\SidebarMenu::normalize(['label' => 'Boş', 'items' => [['label' => 'x']]]) === null);
+App\Core\SidebarMenu::add('TestModul', static function (): array { throw new RuntimeException('bozuk sağlayıcı'); });
+dogrula('Hata veren menü sağlayıcısı atlanır, menü çökmez; kaydeden modül "Modüller" altında tekrar edilmez',
+    App\Core\SidebarMenu::has('TestModul') && array_filter(App\Core\SidebarMenu::collect(null), static fn (array $g): bool => $g['label'] === 'TestModul') === []
+    && App\Core\SidebarMenu::has('Transkript'));
+$menuSablonu = (string) file_get_contents(CY_BASE . '/views/partials/sidebar.php');
+dogrula('Menü şablonu: modül bölümleri Genel\'in hemen altında, SidebarMenu::has olan modül tekrar etmez, İçerik + İletişim tek başlık; kapatma ve çıkış düğmeleri',
+    str_contains($menuSablonu, '...$modulBolumleri') && str_contains($menuSablonu, '!SidebarMenu::has($modul->ad)')
+    && str_contains($menuSablonu, "'label' => 'Site ve iletişim'") && !str_contains($menuSablonu, "'label' => 'İçerik'")
+    && str_contains($menuSablonu, 'id="cy_sidebar_close"') && str_contains($menuSablonu, "url('cikis')") && str_contains($menuSablonu, 'csrf_field()'));
+
 $hesapKodu = (string) file_get_contents(MODUL_YOLU . '/src/Services/HesapTemizligi.php');
 dogrula('Silinen hesabın talepleri gece temizlenir; Pro dönemleri (ödeme kaydı) kalır',
     in_array('transkript_uyelik_talepleri', HesapTemizligi::TABLOLAR, true) && !in_array('transkript_uyelikler', HesapTemizligi::TABLOLAR, true));

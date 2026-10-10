@@ -3,6 +3,30 @@
 Starter'ın sürüm geçmişi kökteki `CHANGELOG.md`'dedir; bu dosya yalnız
 `modules/Transkript/` içindir. Biçim [Keep a Changelog](https://keepachangelog.com/tr/1.1.0/).
 
+## 0.8.1 (2026-10-10): sol menü
+
+Kullanıcı isteği: "Soldaki sidebar alanını düzenleyip geliştir."
+
+### Çekirdek
+- Yeni kanca `App\Core\SidebarMenu`: modül kendi menü bölümünü kaydeder
+  (birden çok sayfa, sayaç, etiket, etkin sayfa, sayfa içi bölüm, vurgu);
+  bölüm "Genel"in altına girer, modül "Modüller" altında tekrar edilmez.
+  Hatalı sağlayıcı atlanır (`views/partials/sidebar.php`).
+- Menü düzeni: İçerik + İletişim → **Site ve iletişim**; okunmamış mesaj sayacı
+  sarı; telefonda çekmecenin sağ üstünde **kapatma** düğmesi; altta kullanıcı
+  kartının yanında **Siteyi yeni sekmede aç** ve **Çıkış**; daraltılmış menüde
+  sayaç ikonun köşesinde nokta, bölümler arasında ince çizgi
+  (`assets/css/admin.css`, `assets/js/app.js`).
+
+### Modül
+- Sol menüde **Transkript** bölümü: Yeni analiz (vurgulu; liste sayfasındaki
+  bağlantı kutusuna odaklanır), Analizler (süren analiz sayacı: yöneticide
+  herkesinki, ötekinde kendi başlattıkları), Üyeliğim (plan etiketi "Ücretsiz" /
+  "Pro") ya da yöneticiye Üyelikler (onay bekleyen talep sayacı) ve Transkript
+  ayarları. `AnalizRepository::surenSayisi`.
+- Testler: `tests/transkript.php` 408 (kanca girdi temizliği, hatalı sağlayıcı,
+  şablon), `tests/transkript-yetki.php` 31 (rol başına menü ve sayaçlar).
+
 ## 0.8.0 (2026-10-10): üyelik planları (Ücretsiz · Pro)
 
 Kullanıcı isteği: "Üye normal giriş yapan, günlük limitli kullanıcı; editör

@@ -43,6 +43,7 @@ use App\Core\Log\Logger;
 use App\Core\Modules\Modules;
 use App\Core\Request;
 use App\Core\Setting;
+use App\Core\SidebarMenu;
 use App\Core\Throttle;
 use App\Core\Api\ApiToken;
 use App\Models\Role;
@@ -494,6 +495,39 @@ try {
         in_array('Yapay zekâ sağlayıcıları', $yonetimKartlari, true) && !in_array('Yapay zekâ sağlayıcıları', $analistKartlari, true)
         && str_contains($yonetimBolumu, 'Son analizler') && str_contains($yonetimBolumu, 'Yetki testi K5')
         && DashboardPanels::collect(kullanici('A')) === [] && DashboardPanels::collect(kullanici('U')) === []);
+
+    /* Sol menü: modülün "Transkript" bölümü (SidebarMenu). Her rol kendi
+     * sayfalarını görür; sayaçlar yetkiye bağlıdır. */
+    $menuOgeleri = static function (string $rol): array {
+        foreach (SidebarMenu::collect(kullanici($rol)) as $grup) {
+            if ($grup['label'] === 'Transkript') {
+                return array_column($grup['items'], null, 'label');
+            }
+        }
+
+        return [];
+    };
+    $mY = $menuOgeleri('Y');
+    $mA = $menuOgeleri('A');
+    // U: Ücretsiz planda analiz kapalı (istek dışında ayar elle kurulur); P: varsayılan (açık).
+    Ayarlar::set('uyelik.planlar.uye.analiz', false);
+    $mU = $menuOgeleri('U');
+    Ayarlar::set('uyelik.planlar.uye.analiz', true);
+    $mP = $menuOgeleri('P');
+    dogrula('Sol menü: yönetici Yeni analiz · Analizler · Üyelikler · Transkript ayarları; Pro Üyeliğim (Pro); planında analiz kapalı üye Yeni analiz görmez',
+        array_keys($mY) === ['Yeni analiz', 'Analizler', 'Üyelikler', 'Transkript ayarları']
+        && array_keys($mA) === ['Yeni analiz', 'Analizler', 'Üyeliğim'] && ($mA['Üyeliğim']['etiket'] ?? '') === 'Pro'
+        && array_keys($mU) === ['Analizler', 'Üyeliğim'] && ($mU['Üyeliğim']['etiket'] ?? '') === 'Ücretsiz'
+        && array_keys($mP) === ['Yeni analiz', 'Analizler', 'Üyeliğim']
+        && SidebarMenu::collect(null) === []
+        && ($mY['Yeni analiz']['hash'] ?? '') === 'tk_analiz' && ($mY['Yeni analiz']['vurgu'] ?? false) === true
+        && ($mY['Analizler']['badge_tur'] ?? '') === 'bilgi' && ($mY['Üyelikler']['badge_tur'] ?? '') === 'uyari',
+        json_encode([array_keys($mY), array_keys($mA), array_keys($mU), array_keys($mP)], JSON_UNESCAPED_UNICODE));
+    $surenHerkes = (int) satir($db, "SELECT COUNT(*) FROM transkript_analizler WHERE durum NOT IN ('tamamlandi', 'hata')");
+    $surenA      = (int) satir($db, "SELECT COUNT(*) FROM transkript_analizler WHERE durum NOT IN ('tamamlandi', 'hata') AND kullanici_id = :k", [':k' => ROLLER['A'][0]]);
+    dogrula('Sol menü "Analizler" sayacı: yöneticide herkesin süren analizi, ötekinde yalnız kendi başlattıkları',
+        (int) ($mY['Analizler']['badge'] ?? -1) === $surenHerkes && (int) ($mA['Analizler']['badge'] ?? -1) === $surenA,
+        json_encode([$mY['Analizler']['badge'] ?? null, $surenHerkes, $mA['Analizler']['badge'] ?? null, $surenA]));
 
     /* Kullanıcı kararı (2026-10-09): üye ve analist varsayılan olarak yalnız
      * kendi kayıtlarını görür; paylaşılanlar "paylasilan" kapsamında. Yönetici
