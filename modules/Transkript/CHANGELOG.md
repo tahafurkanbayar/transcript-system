@@ -3,6 +3,55 @@
 Starter'ın sürüm geçmişi kökteki `CHANGELOG.md`'dedir; bu dosya yalnız
 `modules/Transkript/` içindir. Biçim [Keep a Changelog](https://keepachangelog.com/tr/1.1.0/).
 
+## 0.9.0 (2026-10-11): EVREN yapay zekâ sağlayıcısı (varsayılan ilk sırada)
+
+Kullanıcı isteği: "Yerli EVREN modelini yapay zekâ ayarlarına ekle; varsayılan
+ilk model bu olsun."
+
+### Eklendi
+- `Ai\EvrenProvider` (EVREN LLM API, SSYZ; `OpenAiCompatibleProvider`'dan
+  kalıtım). Hata ve kota davranışı:
+  - 403 `terms_not_accepted` → `sartlar_onaylanmadi`, 1 saat devre dışı. Kod
+    şartları onaylamaz.
+  - 401 → `yetkisiz`.
+  - 429 günlük kota (`x-evren-daily-remaining-tokens: 0`) → 03:00'e (İstanbul)
+    kadar dinlenir; dakikalık sınır → `Retry-After` ya da 60 sn.
+  - 503 → 2 dk dinlenir, sıradakine geçilir.
+  - İçerik boş ve `length` ise `dusunme_butcesi`.
+  - JSON modu 400 alırsa bir kez parametresiz denenir.
+  - Bütçe ve süre: en az 2048 token ve 180 sn; bağlantı 10 sn.
+  - Maliyet 0 (1 Kasım 2026'ya kadar ücretsiz).
+  - Anahtar mesajda geçerse maskelenir.
+- Zincir: varsayılan `evren,gemini,openrouter,groq`, `AI_PROVIDER` varsayılanı
+  `evren`. `.env`'de `EVREN_API_KEY`, isteğe bağlı `EVREN_BASE_URL` ve
+  `EVREN_MODEL`.
+- Transkript ayarları → Yapay zekâ:
+  - En üstte **EVREN modeli**: liste glm-5.3, deepseek-v4.1-flash,
+    mimo-v2.6-pro, qwen3.8-flash-next, gemma-4-31b ve auto; sunucu yalnız
+    listedekini kabul eder.
+  - Her model alanında zincirdeki yeri ("Asıl sağlayıcı · 1. sırada",
+    "Yedek · 2. sırada"). Anahtar yoksa "Anahtar yok · atlanır".
+- Durum sekmesi:
+  - Zincirdeki her sağlayıcının anahtarı (yalnız adı ve tanımlı mı).
+  - EVREN'in kalan günlük kotası, son yanıtın başlığından (panel API'ye gitmez).
+  - Şartların onaylanması notu.
+
+### Değişti
+- "Asıl sağlayıcının modeli" (`ai_model`) artık **Google Gemini modeli**.
+  Kayıtlı değer `ai.modeller.gemini`'ye gider, EVREN'e gitmez. Ayrı
+  `model_gemini` alanı kaldırıldı.
+- Her sağlayıcı kendi modelini kullanır, asıl olan dahil:
+  `Ai::varsayilanModel` → panel, `<AD>_MODEL`, varsayılan. `AI_MODEL`,
+  `AI_PROVIDER`'ındır; yazılmamışsa Gemini'nin.
+- `HttpProvider`:
+  - Bağlantı süresi sınırı (`BAGLANTI_ZAMAN_ASIMI`).
+  - Yanıt başlıkları sağlayıcıya iletilir (`basliklariIsle`).
+  - Günlük kotada sağlayıcının bildirdiği yenilenme süresi (`hataBeklemesi`).
+    Zincir ve iş ertelemesi bunu kullanır.
+  - Testler için sahte HTTP (`tasiyici`).
+- Testler: `tests/transkript.php` 429 (sahte HTTP ile EVREN hataları, yedeğe
+  geçiş, beyaz liste, maliyet, ekran).
+
 ## 0.8.1 (2026-10-10): sol menü
 
 Kullanıcı isteği: "Soldaki sidebar alanını düzenleyip geliştir."

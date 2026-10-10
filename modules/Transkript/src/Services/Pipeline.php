@@ -29,7 +29,6 @@ declare(strict_types=1);
 
 namespace Modules\Transkript\Services;
 
-use App\Core\Env;
 use Closure;
 use Modules\Transkript\Ai\Ai;
 use Modules\Transkript\Ai\AiHatasi;
@@ -357,19 +356,30 @@ final class Pipeline
             'model'       => $model,
             'giris_token' => (int) ($yanit['usage']['input_tokens'] ?? 0),
             'cikis_token' => (int) ($yanit['usage']['output_tokens'] ?? 0),
-            'maliyet_usd' => self::maliyet($yanit),
+            'maliyet_usd' => self::maliyet($yanit, $saglayici),
             'sure_ms'     => (int) ((hrtime(true) - $baslangic) / 1_000_000),
         ], 'analiz', $this->analizId, $durum, $hataKodu ?? ($durum === 'basarili' ? null : $durum));
     }
 
     /**
-     * Tahmini maliyet: panelde / config'te 1M token fiyatı girildiyse
-     * onunla, yoksa sağlayıcının fiyat tablosundan (yanıttaki "cost").
+     * Tahmini maliyet: sağlayıcının sabit fiyatı varsa onunla (EVREN: 0,
+     * 1 Kasım 2026'ya kadar ücretsiz), yoksa panelde / config'te 1M token
+     * fiyatı girildiyse onunla, yoksa sağlayıcının fiyat tablosundan
+     * (yanıttaki "cost").
      *
      * @param array<string,mixed>|null $yanit
      */
-    public static function maliyet(?array $yanit): float
+    public static function maliyet(?array $yanit, string $saglayici = ''): float
     {
+        $sabit = Ai::sabitFiyat($saglayici);
+
+        if ($sabit !== null) {
+            $giris = $sabit['giris'];
+            $cikis = $sabit['cikis'];
+
+            return round(((int) ($yanit['usage']['input_tokens'] ?? 0) * $giris + (int) ($yanit['usage']['output_tokens'] ?? 0) * $cikis) / 1_000_000, 8);
+        }
+
         $giris = (float) Ayarlar::get('ai.fiyat.giris', 0.0);
         $cikis = (float) Ayarlar::get('ai.fiyat.cikis', 0.0);
 
@@ -401,8 +411,10 @@ final class Pipeline
         $adlar    = array_values(array_unique([$birincil, ...$zincir]));
 
         $model = trim((string) ($ayar['model'] ?? ''));
-        // AI_MODEL ve paneldeki model .env'deki sağlayıcıya aittir; birincil başkaysa onun varsayılanı.
-        $model = $birincil === Ai::provider() ? ($model !== '' ? $model : trim(Env::get('AI_MODEL'))) : '';
+        /* config'teki aşama modeli .env'deki asıl sağlayıcıya aittir; boşsa (ve
+         * öteki halkalarda) Ai::varsayilanModel: panel (EVREN modeli, Gemini
+         * modeli …), <AD>_MODEL, AI_MODEL (yalnız sahibinde), varsayılan. */
+        $model = $birincil === Ai::provider() ? $model : '';
 
         $maxToken  = (int) ($ayar['max_token'] ?? 8192);
         $zamanAsim = (int) ($ayar['zaman_asimi'] ?? 120);

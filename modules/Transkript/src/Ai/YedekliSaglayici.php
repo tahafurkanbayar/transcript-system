@@ -15,8 +15,9 @@
  *  temizlenince kaybolmaz): hata veren sağlayıcı bir süre denenmez. Süre
  *  hatanın türüne göre:
  *
- *      kota_doldu        günlük kota: bir sonraki sıfırlamaya kadar
- *                        (Pasifik gece yarısı; ai.yedek.kota_saat_dilimi)
+ *      kota_doldu        günlük kota: bir sonraki sıfırlamaya kadar. Sağlayıcı
+ *                        saati bildirirse o (EVREN: 03:00 İstanbul), yoksa
+ *                        Pasifik gece yarısı (ai.yedek.kota_saat_dilimi)
  *      rate_limit        sağlayıcının dediği kadar (Retry-After), yoksa 60 sn
  *      sunucu, baglanti,
  *      zaman_asimi       kısa (120 sn)
@@ -24,7 +25,10 @@
  *      model_bulunamadi  DEVRE DIŞI (6 saat ya da yönetici sıfırlayana dek);
  *                        model hatası o modele bağlıdır, .env'de model
  *                        değişince sağlayıcı yeniden denenir
+ *      sartlar_onaylanmadi  DEVRE DIŞI 1 saat (EVREN kullanım şartları;
+ *                        kod onaylamaz, yönetici onaylar)
  *      cok_buyuk (413),
+ *      dusunme_butcesi,
  *      istek_hatasi …    dinletmez: isteğe özgüdür, sıradakine geçilir
  *
  *  Dinlenen sağlayıcı DENENMEZ (süreler artık gerçek açılışı izliyor).
@@ -62,13 +66,14 @@ final class YedekliSaglayici implements Provider
         'rate_limit'       => 60,       // sağlayıcı süre söylemediyse
         'yetkisiz'         => 21600,
         'model_bulunamadi' => 21600,
+        'sartlar_onaylanmadi' => 3600,
         'sunucu'           => 120,
         'baglanti'         => 120,
         'zaman_asimi'      => 120,
     ];
 
     /** Ayar hatası: erteleme sebebi değil; süre dolana ya da yönetici sıfırlayana dek devre dışı. */
-    public const DEVRE_DISI = ['yetkisiz', 'model_bulunamadi'];
+    public const DEVRE_DISI = ['yetkisiz', 'model_bulunamadi', 'sartlar_onaylanmadi'];
 
     private const GECICI = ['rate_limit', 'sunucu', 'baglanti', 'zaman_asimi'];
 
@@ -78,6 +83,8 @@ final class YedekliSaglayici implements Provider
         'rate_limit'        => 'hız sınırı (429)',
         'yetkisiz'          => 'anahtar geçersiz (401/403)',
         'model_bulunamadi'  => 'model yok (404)',
+        'sartlar_onaylanmadi' => 'kullanım şartları onaylanmadı (403)',
+        'dusunme_butcesi'   => 'düşünme bütçesi yetmedi',
         'sunucu'            => 'sunucu hatası (5xx)',
         'baglanti'          => 'bağlantı hatası',
         'zaman_asimi'       => 'zaman aşımı',
@@ -202,13 +209,15 @@ final class YedekliSaglayici implements Provider
     /**
      * Hata koduna göre dinlendirir.
      *
-     * @param ?int $bekleme sağlayıcının önerdiği süre (Retry-After)
+     * @param ?int $bekleme sağlayıcının önerdiği süre (Retry-After; günlük
+     *                      kotada yenilenmeye kalan süre, bkz. HttpProvider::hataBeklemesi)
      * @return int dinlenme süresi (sn); 0 → dinlenmez
      */
     public static function dinlendir(string $ad, string $kod, ?int $simdi = null, ?int $bekleme = null, string $model = ''): int
     {
         $simdi ??= time();
         $sure  = match (true) {
+            $kod === 'kota_doldu' && (int) $bekleme > 0 => min((int) $bekleme, 2 * 86400),
             $kod === 'kota_doldu'                       => self::kotaSifirlanmasinaKadar($simdi),
             $kod === 'rate_limit' && (int) $bekleme > 0 => min((int) $bekleme, 6 * 3600),
             default                                     => self::dinlenmeSuresi($kod),

@@ -51,6 +51,7 @@ use App\Models\User;
 use Modules\Transkript\Ai\Ai;
 use Modules\Transkript\Ai\AiHatasi;
 use Modules\Transkript\Ai\ClaudeProvider;
+use Modules\Transkript\Ai\EvrenProvider;
 use Modules\Transkript\Ai\GeminiProvider;
 use Modules\Transkript\Ai\HttpProvider;
 use Modules\Transkript\Ai\OpenAiCompatibleProvider;
@@ -635,7 +636,8 @@ dogrula('OpenAI uyumlu: length → max_tokens, fiyat tablosu yok (maliyet 0)',
 $envDegerleri = new ReflectionProperty(Env::class, 'values');
 $oncekiEnv = $envDegerleri->getValue();
 $bosAnahtarlar = array_fill_keys(['GEMINI_API_KEY', 'GOOGLE_API_KEY', 'GROQ_API_KEY', 'CLAUDE_API_KEY', 'ANTHROPIC_API_KEY', 'AI_API_KEY',
-    'XAI_API_KEY', 'OPENROUTER_API_KEY', 'AI_PROVIDER', 'AI_MODEL', 'AI_BASE_URL', 'AI_MAX_TOKENS', 'AI_EFFORT'], '');
+    'XAI_API_KEY', 'OPENROUTER_API_KEY', 'AI_PROVIDER', 'AI_PROVIDERS', 'AI_MODEL', 'AI_BASE_URL', 'AI_MAX_TOKENS', 'AI_EFFORT',
+    'EVREN_API_KEY', 'EVREN_BASE_URL', 'EVREN_MODEL', 'GEMINI_MODEL'], '');
 
 /** @return string AiHatasi kodu ya da '' */
 function aiHataKodu(callable $fn): string
@@ -657,7 +659,10 @@ $envDegerleri->setValue(null, ['GEMINI_API_KEY' => 'g-test', 'CLAUDE_API_KEY' =>
 dogrula('make(): sağlayıcı ve model açıkça seçilir (aşama başı model)',
     Ai::make('gemini') instanceof GeminiProvider && Ai::make('gemini')->model() === 'gemini-2.5-flash'
     && Ai::make('claude', 'claude-sonnet-5') instanceof ClaudeProvider && Ai::make('claude', 'claude-sonnet-5')->model() === 'claude-sonnet-5');
-dogrula('CLAUDE_API_KEY okunur; varsayılan sağlayıcı Gemini', Ai::isConfigured('claude') && Ai::provider() === 'gemini' && Ai::fromEnv() instanceof GeminiProvider);
+// Kullanıcı isteği (2026-10-11): varsayılan EVREN, zincir evren,gemini,openrouter,groq.
+dogrula('CLAUDE_API_KEY okunur; varsayılan sağlayıcı EVREN, varsayılan zincir EVREN başta; EVREN anahtarı yoksa "anahtar_yok"',
+    Ai::isConfigured('claude') && Ai::provider() === 'evren' && Ai::zincir() === ['evren', 'gemini', 'openrouter', 'groq']
+    && aiHataKodu(static fn () => Ai::fromEnv()) === 'anahtar_yok' && !Ai::zincirdeKullanilabilir('evren', true));
 $bosAyarli = Ai::make('claude', 'claude-sonnet-5');
 dogrula('Boş AI_MAX_TOKENS= / AI_EFFORT= satırı varsayılana düşer (256\'ya ya da boş effort\'a değil)',
     (new ReflectionProperty($bosAyarli, 'maxTokens'))->getValue($bosAyarli) === 4096
@@ -2032,11 +2037,14 @@ $ayarYaz([]);
 $varsayilanMap = Ayarlar::get('ai.map');
 dogrula('Panel değeri yoksa config.php aynen', Ayarlar::get('analiz.en_uzun_dk') === 180 && Ayarlar::get('transcript.tercih_diller') === ['tr'] && ($varsayilanMap['model'] ?? null) === '');
 $ayarYaz(['transkript_en_uzun_dk' => '90', 'transkript_ai_model' => 'gemini-2.5-flash-lite', 'transkript_altyazi_dili' => 'orijinal',
-    'transkript_gunluk_maliyet_tavani' => '2.5', 'transkript_uye_gunluk' => '']);
-dogrula('Panel değeri üstüne yazılır: tam yol, dizinin içi ("ai.map" → model), altyazı seçimi, ondalık',
-    Ayarlar::get('analiz.en_uzun_dk') === 90 && Ayarlar::get('ai.map.model') === 'gemini-2.5-flash-lite'
-    && (Ayarlar::get('ai.reduce')['model'] ?? null) === 'gemini-2.5-flash-lite' && (Ayarlar::get('ai.map')['max_token'] ?? null) === 8192
+    'transkript_gunluk_maliyet_tavani' => '2.5', 'transkript_uye_gunluk' => '', 'transkript_model_evren' => 'deepseek-v4.1-flash']);
+dogrula('Panel değeri üstüne yazılır: tam yol, dizinin içi ("ai.modeller" → gemini), altyazı seçimi, ondalık',
+    Ayarlar::get('analiz.en_uzun_dk') === 90 && Ayarlar::get('ai.modeller.gemini') === 'gemini-2.5-flash-lite'
+    && (Ayarlar::get('ai.modeller')['evren'] ?? null) === 'deepseek-v4.1-flash' && (Ayarlar::get('ai.map')['max_token'] ?? null) === 8192
     && Ayarlar::get('transcript.tercih_diller') === [] && Ayarlar::get('analiz.gunluk_maliyet_tavani') === 2.5);
+dogrula('Gemini modeli ("ai_model") artık aşama modeli değil: EVREN asıl olunca Gemini modeli EVREN\'e gitmez',
+    (Ayarlar::get('ai.map')['model'] ?? null) === '' && (Ayarlar::get('ai.reduce')['model'] ?? null) === ''
+    && Ai::varsayilanModel('gemini') === 'gemini-2.5-flash-lite' && Ai::varsayilanModel('evren') === 'deepseek-v4.1-flash');
 dogrula('Boş panel değeri config varsayılanına döner; varsayilan() paneli yok sayar',
     Ayarlar::get('uyelik.planlar.uye.gunluk_sinir') === 2 && Ayarlar::varsayilan('analiz.en_uzun_dk') === 180 && Ayarlar::get('analiz.en_uzun_dk') === 90);
 dogrula('Plan süre sınırı sistem tavanını aşamaz (sistem panelde 90: Pro 180 → 90, Ücretsiz 30 kalır)',
@@ -2063,8 +2071,7 @@ dogrula('Doğrulama: tam sayı, aralık, ondalık virgül, seçenek listesi',
     && PanelAyarlari::dogrula('altyazi_dili', 'fr') === 'Listeden bir seçenek seçin.' && PanelAyarlari::dogrula('altyazi_dili', 'orijinal') === null
     && PanelAyarlari::dogrula('yok', '1') === 'Bilinmeyen ayar.');
 dogrula('Model listesi: Gemini\'de yalnız Flash ailesi (map\'te thinkingBudget 0 Pro\'da geçersiz)',
-    Ai::provider() !== 'gemini'
-    || (array_keys(PanelAyarlari::secenekler('ai_model')) !== [] && !array_filter(array_keys(PanelAyarlari::secenekler('ai_model')), static fn (string $m): bool => $m !== '' && !str_contains($m, 'flash'))));
+    count(PanelAyarlari::secenekler('ai_model')) > 1 && !array_filter(array_keys(PanelAyarlari::secenekler('ai_model')), static fn (string $m): bool => $m !== '' && !str_contains($m, 'flash')));
 dogrula('Panel ayarlarında API anahtarı alanı yok (anahtar yalnız .env)',
     !array_filter(array_keys(PanelAyarlari::ALANLAR), static fn (string $a): bool => str_contains($a, 'anahtar') || str_contains($a, 'key')));
 $ayarYaz([]);
@@ -2260,7 +2267,7 @@ $geri = $ortamDegistir(['AI_PROVIDERS' => 'gemini,openrouter,groq', 'AI_PROVIDER
 $ayarYaz(['transkript_model_groq' => 'qwen/qwen3-32b', 'transkript_model_openrouter' => '']);
 [$zPanel] = Pipeline::saglayiciUret('map');
 $panelDurum   = array_column(Ai::zincirDurumu(), 'model', 'ad');
-$modelAlanlar = PanelAyarlari::yedekModelAlanlari();
+$modelAlanlar = PanelAyarlari::modelAlanlari();
 $ortamGroq    = Ai::ortamModeli('groq');
 $groqOneri    = Ai::modelOnerileri('groq');
 $ayarYaz([]);
@@ -2269,7 +2276,7 @@ $halkaPanel = $zPanel instanceof YedekliSaglayici ? (new ReflectionProperty(Yede
 dogrula('Yedek modeli panelden (yoksa <AD>_MODEL, yoksa varsayılan); ekranda zincirdeki yedeklerin alanı, durum tablosu aynı modeli gösterir',
     ($halkaPanel[2]['saglayici'] ?? null)?->model() === 'qwen/qwen3-32b' && ($halkaPanel[1]['saglayici'] ?? null)?->model() === 'google/gemma-4-31b-it:free'
     && $panelDurum === ['gemini' => 'gemini-2.5-flash', 'openrouter' => 'google/gemma-4-31b-it:free', 'groq' => 'qwen/qwen3-32b']
-    && $modelAlanlar === ['model_openrouter', 'model_groq'] && $ortamGroq === 'llama-test' && $groqOneri === ['llama-test', 'openai/gpt-oss-120b']);
+    && $modelAlanlar === ['ai_model', 'model_openrouter', 'model_groq'] && $ortamGroq === 'llama-test' && $groqOneri === ['llama-test', 'openai/gpt-oss-120b']);
 dogrula('Model kimliği doğrulanır: sağlayıcı/ad:etiket olur; boşluk, Türkçe harf, tırnak olmaz',
     PanelAyarlari::dogrula('model_groq', 'openai/gpt-oss-120b') === null && PanelAyarlari::dogrula('model_openrouter', 'google/gemma-4-31b-it:free') === null
     && PanelAyarlari::dogrula('model_groq', 'gpt oss') !== null && PanelAyarlari::dogrula('model_groq', 'modelı') !== null
@@ -2277,6 +2284,204 @@ dogrula('Model kimliği doğrulanır: sağlayıcı/ad:etiket olur; boşluk, Tür
 dogrula('Ayarlar ekranı için durum: sıra, tanımlı, model; anahtar değeri yok',
     array_column($durum, 'ad') === ['gemini', 'openrouter', 'groq'] && array_column($durum, 'tanimli') === [true, true, true]
     && !str_contains((string) json_encode($durum), 'test-o') && !str_contains((string) json_encode($durum), 'test-q'));
+
+/* ---------------------------------------------------------------- */
+echo "\nEVREN sağlayıcısı (sahte HTTP; API'ye gidilmez)\n";
+
+// Sahte yanıtların kota başlığı önbelleğe yazılır; bölüm sonunda eski değer geri konur (Durum ekranı etkilenmesin).
+$oncekiEvrenKota = \App\Core\Cache\Cache::get(EvrenProvider::KOTA_ONBELLEK);
+
+/**
+ * Sahte HTTP: sırayla [durum, gövde, başlıklar] döndürür, giden gövdeleri saklar.
+ *
+ * @param list<array{0:int,1:string,2?:array<string,string>}> $yanitlar
+ */
+$sahteHttp = static function (array $yanitlar, array &$gidenler): Closure {
+    return static function (string $govde) use (&$yanitlar, &$gidenler): array {
+        $gidenler[] = json_decode($govde, true);
+        [$durum, $yanit, $basliklar] = array_shift($yanitlar) + [2 => []];
+
+        return [$durum, $yanit, $basliklar, '', 0];
+    };
+};
+$evrenYaniti = static fn (string $icerik, string $bitis = 'stop', string $dusunce = ''): string => (string) json_encode([
+    'choices' => [['message' => ['role' => 'assistant', 'content' => $icerik, 'reasoning_content' => $dusunce], 'finish_reason' => $bitis]],
+    'usage'   => ['prompt_tokens' => 120, 'completion_tokens' => 30],
+]);
+// Gerçek API'nin 403 gövdesi (2026-10-11, anahtar onaysızken; anahtar değeri yok).
+$sartlarGovdesi = '{"error":{"message":"kullanım şartlarının güncel sürümünü (v1) kabul etmeniz gerekiyor - metni GET /v1/terms/text ile okuyup POST /v1/terms/accept {\"version\": 1} ile onaylayın","type":"permission_error","param":null,"code":"terms_not_accepted","evren":{"required_terms_version":1}}}';
+$evrenSahte = static fn (array $yanitlar, array &$gidenler): EvrenProvider => (new EvrenProvider('evren_llm_testanahtar123', 'glm-5.3'))->tasiyici($sahteHttp($yanitlar, $gidenler));
+
+$geri = $ortamDegistir(['AI_PROVIDERS' => '', 'AI_PROVIDER' => '', 'AI_MODEL' => '', 'EVREN_API_KEY' => 'evren_llm_test', 'EVREN_MODEL' => '', 'EVREN_BASE_URL' => '']);
+$ev = Ai::make('evren', '', 256, 30);
+$evOzellik = static fn (object $p, string $ad): mixed => (new ReflectionProperty($p, $ad))->getValue($p);
+$evMakeDogru = $ev instanceof EvrenProvider && $ev->model() === 'glm-5.3' && $evOzellik($ev, 'maxTokens') === 2048 && $evOzellik($ev, 'timeout') === 180
+    && korumali($ev, 'endpoint') === 'https://evren-llmapi.ssyz.org.tr/v1/chat/completions' && in_array('authorization: Bearer evren_llm_test', korumali($ev, 'headers'), true);
+$geri();
+$geri = $ortamDegistir(['AI_PROVIDERS' => '', 'AI_PROVIDER' => '', 'EVREN_API_KEY' => 'evren_llm_test', 'EVREN_MODEL' => 'mimo-v2.6-pro', 'EVREN_BASE_URL' => 'https://ornek.test/v1/']);
+$evOrtam = Ai::make('evren');
+$geri();
+dogrula('make(): EVREN varsayılanı glm-5.3; bütçe en az 2048, süre en az 180 sn, Bearer anahtar, taban adres',
+    $evMakeDogru && EvrenProvider::EN_AZ_TOKEN === 2048 && (new ReflectionClassConstant(EvrenProvider::class, 'BAGLANTI_ZAMAN_ASIMI'))->getValue() === 10);
+dogrula('EVREN_MODEL ve EVREN_BASE_URL .env\'den okunur', $evOrtam->model() === 'mimo-v2.6-pro' && korumali($evOrtam, 'endpoint') === 'https://ornek.test/v1/chat/completions');
+
+$giden = [];
+$y = $evrenSahte([[200, $evrenYaniti('{"cevap":"Ankara"}', 'stop', 'uzun bir düşünce')]], $giden)->sendJson([['role' => 'user', 'content' => 'x']], 'JSON yaz', ['type' => 'object']);
+dogrula('JSON modu: response_format json_object, stream yok; yalnız content okunur (reasoning yok sayılır), token sayılır, maliyet 0',
+    ($giden[0]['response_format'] ?? null) === ['type' => 'json_object'] && !isset($giden[0]['stream']) && $giden[0]['model'] === 'glm-5.3'
+    && $y['text'] === '{"cevap":"Ankara"}' && $y['thinking'] === '' && $y['usage']['input_tokens'] === 120 && $y['usage']['output_tokens'] === 30 && $y['cost'] === 0.0);
+
+$giden = [];
+$y = $evrenSahte([[400, '{"error":{"message":"response_format desteklenmiyor"}}'], [200, $evrenYaniti("```json\n{\"cevap\":\"Ankara\"}\n```")]], $giden)
+    ->sendJson([['role' => 'user', 'content' => 'x']], 'JSON yaz', ['type' => 'object']);
+dogrula('JSON modu 400 alırsa bir kez parametresiz denenir; JSON ``` çitinden ayıklanır',
+    count($giden) === 2 && isset($giden[0]['response_format']) && !isset($giden[1]['response_format'])
+    && ResultValidator::ayikla($y['text']) === ['cevap' => 'Ankara']);
+
+$giden = [];
+dogrula('İçerik boş + finish_reason length → "dusunme_butcesi" (sıradakine geçilir, dinletmez)',
+    aiHataKodu(static fn () => $evrenSahte([[200, $evrenYaniti('', 'length', 'çok uzun düşünce')]], $giden)->send([['role' => 'user', 'content' => 'x']])) === 'dusunme_butcesi'
+    && YedekliSaglayici::dinlenmeSuresi('dusunme_butcesi') === 0);
+
+$giden = [];
+$e403 = null;
+try {
+    $evrenSahte([[403, $sartlarGovdesi]], $giden)->send([['role' => 'user', 'content' => 'x']]);
+} catch (AiHatasi $e) {
+    $e403 = $e;
+}
+dogrula('403 terms_not_accepted → "sartlar_onaylanmadi", Türkçe yönlendirme; şartlar otomatik onaylanmaz (tek istek, kodda terms/accept yok)',
+    $e403?->kod === 'sartlar_onaylanmadi' && str_contains($e403->getMessage(), 'Test Alanı') && str_contains($e403->getMessage(), 'required_terms_version')
+    && count($giden) === 1 && !str_contains((string) file_get_contents(MODUL_YOLU . '/src/Ai/EvrenProvider.php'), "'/terms/accept'")
+    && YedekliSaglayici::dinlenmeSuresi('sartlar_onaylanmadi') === 3600 && in_array('sartlar_onaylanmadi', YedekliSaglayici::DEVRE_DISI, true)
+    && TranskriptIsi::kaliciKod(new AiHatasi('', 'sartlar_onaylanmadi', 403)) === 'ai_ayar_eksik');
+
+$giden = [];
+$e401 = null;
+try {
+    $evrenSahte([[401, '{"error":{"message":"geçersiz anahtar evren_llm_testanahtar123 (evren_llm_baskaanahtar99)"}}']], $giden)->send([['role' => 'user', 'content' => 'x']]);
+} catch (AiHatasi $e) {
+    $e401 = $e;
+}
+dogrula('401 → "yetkisiz" (uzun dinlenme); mesaj EVREN_API_KEY\'i söyler, anahtar maskelenir',
+    $e401?->kod === 'yetkisiz' && str_contains($e401->getMessage(), 'EVREN_API_KEY') && str_contains($e401->getMessage(), 'evren_llm_****')
+    && !str_contains($e401->getMessage(), 'testanahtar123') && !str_contains($e401->getMessage(), 'baskaanahtar99'));
+
+$giden = [];
+$kotaHatasi = null;
+try {
+    $evrenSahte([[429, '{"error":{"message":"günlük kota"}}', ['x-evren-daily-remaining-tokens' => '0', 'x-evren-daily-limit-tokens' => '15000000']]], $giden)->send([['role' => 'user', 'content' => 'x']]);
+} catch (AiHatasi $e) {
+    $kotaHatasi = $e;
+}
+$giden = [];
+$tpmHatasi = null;
+try {
+    $evrenSahte([[429, '{"error":{"message":"dakikalık sınır"}}', ['x-evren-daily-remaining-tokens' => '9000000', 'retry-after' => '20']]], $giden)->yenidenDenemeSiniri(0)->send([['role' => 'user', 'content' => 'x']]);
+} catch (AiHatasi $e) {
+    $tpmHatasi = $e;
+}
+$govdeKota = korumali(new EvrenProvider('k', 'glm-5.3'), 'errorCode', 429, '{"error":{"message":"x","evren":{"daily_remaining_tokens":0}}}');
+dogrula('429: kalan günlük token 0 → "kota_doldu" (yeniden denenmez, bekleme = 03:00\'e kadar); değilse dakikalık sınır → "rate_limit" (Retry-After)',
+    $kotaHatasi?->kod === 'kota_doldu' && count($giden) === 1 && $kotaHatasi->bekleme > 60 && $kotaHatasi->bekleme <= 86460
+    && $tpmHatasi?->kod === 'rate_limit' && $tpmHatasi->bekleme === 20 && $govdeKota === 'kota_doldu');
+
+// 2026-10-11 01:00 İstanbul (UTC+3) → 03:00'e 2 saat; 04:00 → ertesi gün 03:00'e 23 saat.
+$saat0100 = (new DateTimeImmutable('2026-10-11 01:00:00', new DateTimeZone('Europe/Istanbul')))->getTimestamp();
+$saat0400 = $saat0100 + 3 * 3600;
+dogrula('Günlük kota 03:00 (Europe/Istanbul) yenilenir; x-evren-daily-reset varsa o',
+    EvrenProvider::sonrakiYenilenme($saat0100) === $saat0100 + 7200 && EvrenProvider::sonrakiYenilenme($saat0400) === $saat0100 + 26 * 3600
+    && (new EvrenProvider('k', 'glm-5.3'))->kotaYenilenmesineKadar($saat0100) === 7260
+    && EvrenProvider::kotaBasligi(['x-evren-daily-remaining-tokens' => '1200', 'x-evren-daily-limit-tokens' => '15000000']) === ['kalan' => 1200, 'limit' => 15000000]
+    && EvrenProvider::kotaBasligi([]) === null);
+dogrula('Zincir: günlük kotası dolan sağlayıcı bildirdiği yenilenmeye kadar dinlenir (Gemini gibi Pasifik gece yarısına değil)',
+    YedekliSaglayici::dinlendir('test-a', 'kota_doldu', $saat0100, 7260) === 7260 && YedekliSaglayici::dinlenmeKalan('test-a', $saat0100) === 7260
+    && TranskriptIsi::erteleme(new AiHatasi('', 'kota_doldu', 429, null, 7260)) === 7260
+    && TranskriptIsi::erteleme(new AiHatasi('', 'kota_doldu', 429), $saat0100) === YedekliSaglayici::kotaSifirlanmasinaKadar($saat0100));
+$dinlenmeyiSil();
+
+/* Yedeğe düşme (kullanıcının 5. test adımı): EVREN 503 / 429 → Gemini yanıtlar. */
+$giden = [];
+$evren503 = $evrenSahte([[503, '{"error":{"message":"meşgul"}}']], $giden);
+$gemYedek = new SahteAi([SahteAi::yanit('{"tamam":1}')]);
+$zincir503 = new YedekliSaglayici([['ad' => 'test-a', 'saglayici' => $evren503], ['ad' => 'test-b', 'saglayici' => $gemYedek]]);
+$y503 = $zincir503->sendJson([['role' => 'user', 'content' => 'x']], 's', ['type' => 'object']);
+$evren503Kalan = YedekliSaglayici::dinlenmeKalan('test-a');
+$dinlenmeyiSil();
+$giden = [];
+$evrenKota = $evrenSahte([[429, '{"error":{"message":"kota"}}', ['x-evren-daily-remaining-tokens' => '0']]], $giden);
+$zincirKota = new YedekliSaglayici([['ad' => 'test-a', 'saglayici' => $evrenKota], ['ad' => 'test-b', 'saglayici' => new SahteAi([SahteAi::yanit('{"tamam":2}')])]]);
+$yKota = $zincirKota->sendJson([['role' => 'user', 'content' => 'x']], 's', ['type' => 'object']);
+$evrenKotaKayit = YedekliSaglayici::dinlenmeKaydi('test-a');
+$dinlenmeyiSil();
+dogrula('EVREN 503 → sıradaki (Gemini) yanıtlar, EVREN "sunucu" ile ~120 sn dinlenir; 429 günlük kota → Gemini, EVREN 03:00\'e kadar',
+    $y503['text'] === '{"tamam":1}' && $zincir503->sonAd() === 'test-b' && ($zincir503->denemeler()[0]['kod'] ?? '') === 'sunucu'
+    && $evren503Kalan > 100 && $evren503Kalan <= 120
+    && $yKota['text'] === '{"tamam":2}' && ($evrenKotaKayit['kod'] ?? '') === 'kota_doldu'
+    && ($evrenKotaKayit['bitis'] ?? 0) - time() > 60 && ($evrenKotaKayit['bitis'] ?? 0) - time() <= 86460);
+
+// Panel: EVREN modeli beyaz listeden; maliyet 0; zincir ve model seçimi.
+dogrula('EVREN modeli yalnız listeden (beyaz liste): glm-5.3, auto geçer; kaldırılan deepseek-v4-flash ve serbest metin geçmez',
+    PanelAyarlari::dogrula('model_evren', 'glm-5.3') === null && PanelAyarlari::dogrula('model_evren', 'auto') === null
+    && PanelAyarlari::dogrula('model_evren', 'deepseek-v4-flash') === 'Listeden bir seçenek seçin.'
+    && PanelAyarlari::dogrula('model_evren', '"><script>') !== null && !isset(EvrenProvider::MODELLER['deepseek-v4-flash'])
+    && array_slice(array_keys(PanelAyarlari::secenekler('model_evren')), 0, 2) === ['', 'glm-5.3']
+    && str_starts_with(PanelAyarlari::secenekler('model_evren')[''], 'Varsayılan (')
+    && array_key_first(PanelAyarlari::ALANLAR) === 'model_evren' && PanelAyarlari::modelAlani('gemini') === 'ai_model');
+$ayarYaz(['transkript_fiyat_giris' => '1', 'transkript_fiyat_cikis' => '10']);
+$evrenMaliyet = Pipeline::maliyet(['usage' => ['input_tokens' => 1_000_000, 'output_tokens' => 100_000], 'cost' => 0.0], 'evren');
+$geminiMaliyet = Pipeline::maliyet(['usage' => ['input_tokens' => 1_000_000, 'output_tokens' => 100_000], 'cost' => 9.9], 'gemini');
+$ayarYaz([]);
+dogrula('EVREN maliyeti 0 (panelde USD fiyatı girilmiş olsa da); öteki sağlayıcıya panel fiyatı uygulanır',
+    $evrenMaliyet === 0.0 && $geminiMaliyet === 2.0 && Ai::sabitFiyat('evren') === ['giris' => 0.0, 'cikis' => 0.0] && Ai::sabitFiyat('gemini') === null);
+
+$geri = $ortamDegistir(['AI_PROVIDERS' => 'evren,gemini,openrouter,groq', 'AI_PROVIDER' => 'evren', 'AI_MODEL' => '', 'EVREN_MODEL' => '', 'GEMINI_MODEL' => '',
+    'EVREN_API_KEY' => 'evren_llm_test', 'GEMINI_API_KEY' => 'test-g', 'OPENROUTER_API_KEY' => 'test-o', 'GROQ_API_KEY' => 'test-q', 'OPENROUTER_MODEL' => '', 'GROQ_MODEL' => '']);
+$ayarYaz(['transkript_ai_model' => 'gemini-2.5-flash-lite']);
+[$zEvren, $zEvrenAd] = Pipeline::saglayiciUret('map');
+[$zReduce] = Pipeline::saglayiciUret('reduce');
+$evrenDurum = Ai::zincirDurumu();
+$evrenAlanlar = PanelAyarlari::modelAlanlari();
+$ayarYaz(['transkript_model_evren' => 'qwen3.8-flash-next']);
+[$zPanelEvren] = Pipeline::saglayiciUret('map');
+$ayarYaz([]);
+$geri();
+$hE = $zEvren instanceof YedekliSaglayici ? (new ReflectionProperty(YedekliSaglayici::class, 'halkalar'))->getValue($zEvren) : [];
+$hR = $zReduce instanceof YedekliSaglayici ? (new ReflectionProperty(YedekliSaglayici::class, 'halkalar'))->getValue($zReduce) : [];
+$hP = $zPanelEvren instanceof YedekliSaglayici ? (new ReflectionProperty(YedekliSaglayici::class, 'halkalar'))->getValue($zPanelEvren) : [];
+dogrula('Zincir evren,gemini,openrouter,groq: EVREN başta glm-5.3; kayıtlı Gemini modeli yalnız Gemini\'ye; thinkingConfig yalnız Gemini\'ye',
+    $zEvrenAd === 'zincir' && $zEvren->adlar() === ['evren', 'gemini', 'openrouter', 'groq']
+    && $hE[0]['saglayici'] instanceof EvrenProvider && $hE[0]['saglayici']->model() === 'glm-5.3' && $hE[0]['ek'] === []
+    && $hE[1]['saglayici']->model() === 'gemini-2.5-flash-lite' && $hE[1]['ek'] !== []
+    && $evOzellik($hE[0]['saglayici'], 'maxTokens') === 8192 && $evOzellik($hR[0]['saglayici'], 'maxTokens') === 24000
+    && $evOzellik($hE[0]['saglayici'], 'timeout') === 180 && $evOzellik($hR[0]['saglayici'], 'timeout') === 240
+    && ($hP[0]['saglayici'] ?? null)?->model() === 'qwen3.8-flash-next');
+dogrula('Ayarlar: model alanları zincir sırasıyla (EVREN en üstte); Durum\'da anahtarın yalnız adı',
+    $evrenAlanlar === ['model_evren', 'ai_model', 'model_openrouter', 'model_groq']
+    && array_column($evrenDurum, 'anahtar_adi') === ['EVREN_API_KEY', 'GEMINI_API_KEY', 'OPENROUTER_API_KEY', 'GROQ_API_KEY']
+    && $evrenDurum[0]['etiket'] === 'EVREN (SSYZ)' && $evrenDurum[0]['model'] === 'glm-5.3' && !str_contains((string) json_encode($evrenDurum), 'evren_llm_test'));
+
+$geri = $ortamDegistir(['AI_PROVIDERS' => '', 'AI_PROVIDER' => '', 'AI_MODEL' => 'gemini-2.5-flash-lite', 'EVREN_MODEL' => '', 'GEMINI_MODEL' => '']);
+$eskiAiModel = [Ai::ortamModeli('evren'), Ai::ortamModeli('gemini'), Ai::zincir()];
+$geri();
+$geri = $ortamDegistir(['AI_PROVIDERS' => '', 'AI_PROVIDER' => 'gemini', 'AI_MODEL' => '']);
+$tekZincir = Ai::zincir();
+$geri();
+dogrula('Eski düzen: AI_PROVIDER yazılmamışsa AI_MODEL Gemini\'nindir (EVREN\'e Gemini modeli gitmez); yalnız AI_PROVIDER varsa tek halka',
+    $eskiAiModel === ['glm-5.3', 'gemini-2.5-flash-lite', ['evren', 'gemini', 'openrouter', 'groq']] && $tekZincir === ['gemini']);
+
+YedekliSaglayici::dinlendir('test-a', 'sartlar_onaylanmadi');
+$sartTablo = AyarController::zincirTablosu([['ad' => 'test-a', 'etiket' => 'EVREN (SSYZ)', 'tanimli' => true, 'model' => 'glm-5.3', 'ucretsiz' => true, 'konsol' => '']], []);
+$dinlenmeyiSil();
+dogrula('Durum tablosu: şartları onaylanmamış EVREN "Devre dışı", sebebi Türkçe',
+    $sartTablo[0]['hal'] === 'devre_disi' && $sartTablo[0]['sebep'] === 'kullanım şartları onaylanmadı (403)' && $sartTablo[0]['kalan_dk'] === 60);
+
+$sonEvrenKota = EvrenProvider::sonKota();
+dogrula('Yanıttaki kalan günlük token Durum için saklanır (panel isteğinde API\'ye gidilmez)',
+    is_array($sonEvrenKota) && $sonEvrenKota['kalan'] === 0 && abs($sonEvrenKota['zaman'] - time()) < 120);
+$oncekiEvrenKota === null
+    ? \App\Core\Cache\Cache::forget(EvrenProvider::KOTA_ONBELLEK)
+    : \App\Core\Cache\Cache::put(EvrenProvider::KOTA_ONBELLEK, $oncekiEvrenKota, 2 * 86400);
 
 /* ---------------------------------------------------------------- */
 echo "\nAna sayfa (çekirdeğin HomePage kancası, tanıtım sayfası)\n";
@@ -2580,6 +2785,8 @@ dogrula('Sağlayıcı tablosu: dinleniyor (açılış saati, kalan dk), devre d�
     && $tablo[1]['sebep'] === 'anahtar geçersiz (401/403)' && $tablo[2]['bugun_cagri'] === 3 && $tablo[3]['bugun_token'] === 0);
 
 $ayarDegerleri = array_fill_keys(array_keys(PanelAyarlari::ALANLAR), '');
+// Model alanları .env zincirinden çizilir: EVREN anahtarsız, Gemini anahtarlı.
+$geriAyar = $ortamDegistir(['AI_PROVIDERS' => 'evren,gemini', 'AI_PROVIDER' => 'evren', 'EVREN_API_KEY' => '', 'GEMINI_API_KEY' => 'test-g', 'EVREN_MODEL' => '']);
 $ayarSayfasi = App\Core\View::capture('Transkript::ayarlar', [
     'degerler' => $ayarDegerleri, 'varsayilanlar' => array_fill_keys(array_keys(PanelAyarlari::ALANLAR), 'x'), 'hatalar' => [],
     'cagrilar' => [
@@ -2591,6 +2798,25 @@ $ayarSayfasi = App\Core\View::capture('Transkript::ayarlar', [
     'durum' => ['saglayici' => 'Google Gemini', 'zincir' => $tablo, 'ai_anahtar' => true, 'yt_anahtar' => true, 'transcript' => 'youtube', 'istem' => 'v3',
                 'kuyruk' => ['takildi' => false, 'son_gorulme_sn' => 5, 'calisan' => 0]],
 ]);
+$tabloEvren = array_merge([['ad' => 'evren', 'etiket' => 'EVREN (SSYZ)', 'tanimli' => true, 'model' => 'glm-5.3', 'ucretsiz' => true, 'konsol' => '', 'anahtar_adi' => 'EVREN_API_KEY',
+    'hal' => 'hazir', 'sebep' => '', 'kod' => '', 'acilis' => null, 'kalan_dk' => 0, 'son_basari' => null, 'son_hata' => null, 'son_hata_kodu' => null, 'bugun_cagri' => 2, 'bugun_token' => 900]], $tablo);
+$ayarSayfasiEvren = App\Core\View::capture('Transkript::ayarlar', [
+    'degerler' => $ayarDegerleri, 'varsayilanlar' => array_fill_keys(array_keys(PanelAyarlari::ALANLAR), 'x'), 'hatalar' => [], 'cagrilar' => [],
+    'durum' => ['saglayici' => 'EVREN (SSYZ)', 'zincir' => $tabloEvren, 'ai_anahtar' => true, 'yt_anahtar' => true, 'transcript' => 'youtube', 'istem' => 'v3',
+                'kuyruk' => ['takildi' => false, 'son_gorulme_sn' => 5, 'calisan' => 0], 'evren_kota' => ['kalan' => 14_250_000, 'limit' => 15_000_000, 'zaman' => time()]],
+]);
+$geriAyar();
+$evrenAlanYeri = strpos($ayarSayfasi, 'name="model_evren"');
+dogrula('Ayarlar: "EVREN modeli" Yapay zekâ sekmesinde en üstte (Gemini\'nin önünde), "Asıl sağlayıcı · 1. sırada", anahtarsızsa uyarı; seçenek glm-5.3',
+    $evrenAlanYeri !== false && $evrenAlanYeri < (int) strpos($ayarSayfasi, 'name="ai_model"')
+    && str_contains($ayarSayfasi, 'EVREN modeli') && str_contains($ayarSayfasi, 'Google Gemini modeli')
+    && str_contains($ayarSayfasi, 'Asıl sağlayıcı · 1. sırada') && str_contains($ayarSayfasi, 'Yedek · 2. sırada')
+    && str_contains($ayarSayfasi, 'Anahtar yok · atlanır') && str_contains($ayarSayfasi, 'id="tk_ayar_model_evren"')
+    && str_contains($ayarSayfasi, '<option value="glm-5.3">') && !str_contains($ayarSayfasi, 'value="deepseek-v4-flash"')
+    && str_contains($ayarSayfasi, 'günlük 15M token') && !str_contains($ayarSayfasi, 'ilk sıradaki'));
+dogrula('Durum: "1. EVREN (SSYZ)" ilk satır, anahtar listesinde EVREN_API_KEY (değer yok), kalan günlük kota',
+    str_contains($ayarSayfasiEvren, '1. EVREN (SSYZ)') && str_contains($ayarSayfasiEvren, 'EVREN_API_KEY')
+    && str_contains($ayarSayfasiEvren, 'Kalan günlük kota: 14.250.000 / 15.000.000 token') && str_contains($ayarSayfasiEvren, 'Test Alanı'));
 dogrula('Ayarlar: sağlayıcı tablosu, "Dinlenmeleri sıfırla" (CSRF\'li), son 50 çağrı günlüğü; anahtarsız "Atlandı", hata Türkçe',
     str_contains($ayarSayfasi, 'Yapay zekâ sağlayıcıları') && str_contains($ayarSayfasi, 'Dinlenmeleri sıfırla')
     && preg_match('#action="[^"]*ayarlar/dinlenme-sifirla"[^>]*>\s*<input type="hidden" name="csrf_token"#', $ayarSayfasi) === 1
@@ -2603,9 +2829,9 @@ dogrula('Ayarlar: "Dinlenmeleri sıfırla" onay ister; günlük kotası dolan sa
     $tablo[0]['kod'] === 'kota_doldu' && str_contains($ayarSayfasi, 'js-tk-form-onay')
     && str_contains($ayarSayfasi, 'Google Gemini günlük kotası ' . $tablo[0]['acilis'] . ' civarında açılır;')
     && str_contains($ayarSayfasi, 'id="tk_onay"') && str_contains($ayarSayfasi, 'transkript.js'));
-dogrula('Ayarlar: AI_PROVIDERS örneği gerçek sıradan üretilir (sabit metin yok); model etiketi asıl sağlayıcının adıyla',
+dogrula('Ayarlar: AI_PROVIDERS örneği gerçek sıradan üretilir (sabit metin yok); üyelik alanları aynı formda',
     str_contains($ayarSayfasi, 'AI_PROVIDERS=test-a,test-b,test-c,test-d') && !str_contains($ayarSayfasi, 'gemini,openrouter,mistral,groq')
-    && str_contains($ayarSayfasi, Ai::label() . ' modeli') && str_contains($ayarSayfasi, 'name="uye_analiz"'));
+    && str_contains($ayarSayfasi, 'name="uye_analiz"'));
 
 $filtrePdo = new KayitPdo();
 (new KaynakRepository($filtrePdo))->liste(['durum' => 'hata'], 1, 10, null, true);

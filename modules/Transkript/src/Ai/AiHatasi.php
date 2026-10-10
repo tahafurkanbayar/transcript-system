@@ -11,7 +11,9 @@
  *      rate_limit, sunucu, baglanti, zaman_asimi  → geçici: yeniden dene
  *      yetkisiz, anahtar_yok, model_bulunamadi,
  *      istek_hatasi, cok_buyuk, yanit_cozulemedi,
- *      ayar_eksik                                 → kalıcı: yeniden deneme
+ *      ayar_eksik, sartlar_onaylanmadi (EVREN 403),
+ *      dusunme_butcesi (EVREN: yanıt boş, bütçe
+ *      düşünmeye gitti)                           → kalıcı: yeniden deneme
  *
  *  getMessage() TEKNİK ayrıntıdır (sağlayıcının kendi mesajı dahil);
  *  yalnızca log'a yazılır. Kullanıcıya gösterilecek Türkçe metin

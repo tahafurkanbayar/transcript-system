@@ -155,23 +155,32 @@ Anahtarlar **yalnız `.env`'de** durur; koda, veritabanına, günlüğe ya da sa
 yazılmaz. Panel yalnız "tanımlı / tanımsız" gösterir.
 
 ```ini
-AI_PROVIDER=gemini
-AI_PROVIDERS=gemini,openrouter,groq   # deneme sırası; anahtarı olmayan atlanır
+AI_PROVIDER=evren
+AI_PROVIDERS=evren,gemini,openrouter,groq   # deneme sırası; anahtarı olmayan atlanır
+EVREN_API_KEY=                        # evren.ssyz.org.tr (yerli; 1 Kasım 2026'ya kadar ücretsiz)
 GEMINI_API_KEY=                       # aistudio.google.com/apikey (ücretsiz katman)
 OPENROUTER_API_KEY=                   # openrouter.ai/keys (":free" modeller)
 GROQ_API_KEY=                         # console.groq.com/keys
 YOUTUBE_API_KEY=                      # isteğe bağlı; yoksa oEmbed
 ```
 
-Her sağlayıcının modeli Transkript ayarlarından seçilir; boşsa `.env`'deki
-`<AD>_MODEL`, o da boşsa koddaki varsayılan kullanılır. Mistral, Cerebras,
-Anthropic Claude ve OpenAI uyumlu servisler de desteklenir.
+**EVREN** (SSYZ, yurt içi H200 kümesi) varsayılan ilk sağlayıcıdır: OpenAI
+uyumlu, günlük 15M token, varsayılan model `glm-5.3`. LLM anahtarı
+`evren_llm_` ile başlar. Kullanım şartları ilk çağrıdan önce bir kez
+evren.ssyz.org.tr → Test Alanı'ndan onaylanmalıdır (kod onaylamaz);
+onaylanmamışsa EVREN bir saat atlanır, sıradaki çalışır.
+
+Her sağlayıcının modeli Transkript ayarlarından seçilir (EVREN modeli en
+üstte); boşsa `.env`'deki `<AD>_MODEL`, o da boşsa koddaki varsayılan
+kullanılır. Mistral, Cerebras, Anthropic Claude ve OpenAI uyumlu servisler de
+desteklenir.
 
 | Hata | Sağlayıcı ne kadar dinlenir? |
 |---|---|
-| Günlük kota doldu | Bir sonraki sıfırlamaya kadar (Gemini: Pasifik gece yarısı, Türkiye'de 10:00) |
-| Hız sınırı (429) | Sağlayıcının söylediği kadar (`Retry-After`) |
+| Günlük kota doldu | Bir sonraki sıfırlamaya kadar (EVREN: 03:00; Gemini: Pasifik gece yarısı, Türkiye'de 10:00) |
+| Hız sınırı (429) | Sağlayıcının söylediği kadar (`Retry-After`), yoksa 60 sn |
 | Anahtar geçersiz, model kaldırılmış | 6 saat devre dışı (model hatası yalnız o modele) |
+| EVREN kullanım şartları onaylanmamış (403) | 1 saat devre dışı |
 | Sunucu, bağlantı, zaman aşımı | 2 dakika |
 
 Dinlenmeler kalıcı bir dosyada tutulur; önbellek temizlenince kaybolmaz.

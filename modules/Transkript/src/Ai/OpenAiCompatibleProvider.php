@@ -26,6 +26,9 @@
  *    · Model adı GÖVDEDE gider (Gemini'de adreste).
  *  Üç fark da küçük, üçü de sessizce yanlış davranışa yol açar —
  *  bu yüzden her sağlayıcı kendi çeviri katmanını taşır.
+ *
+ *  Kendine özgü hata ve kota davranışı olan servis bu sınıfı genişletir
+ *  (EvrenProvider); tel biçimi yine buradan gelir.
  * ---------------------------------------------------------------------
  *  Kaynak: CilginYazilim/ai-integration-system @338353d (MIT),
  *  app/Core/Ai/OpenAiCompatibleProvider.php. Transkript modülüne uyarlandı.
@@ -36,7 +39,7 @@ declare(strict_types=1);
 
 namespace Modules\Transkript\Ai;
 
-final class OpenAiCompatibleProvider extends HttpProvider
+class OpenAiCompatibleProvider extends HttpProvider
 {
     public function __construct(
         string $apiKey,

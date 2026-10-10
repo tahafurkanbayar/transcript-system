@@ -445,17 +445,22 @@ günlük kota dolunca boşuna yeniden denememe (`kota_doldu`).
 kota ya da hata verirse sıradakine geçilir:
 
 ```
-AI_PROVIDERS=gemini,openrouter,mistral,groq
+AI_PROVIDERS=evren,gemini,openrouter,mistral,groq
+EVREN_API_KEY=…
 GEMINI_API_KEY=…
 OPENROUTER_API_KEY=…
 MISTRAL_API_KEY=…
 GROQ_API_KEY=…
-# isteğe bağlı: OPENROUTER_MODEL=…, GROQ_MODEL=… (boşsa varsayılan)
+# isteğe bağlı: EVREN_MODEL=…, OPENROUTER_MODEL=…, GROQ_MODEL=… (boşsa varsayılan)
 ```
+
+`AI_PROVIDERS` ve `AI_PROVIDER` ikisi de boşsa sıra `evren,gemini,openrouter,groq`
+(`Ai::VARSAYILAN_ZINCIR`).
 
 | Sağlayıcı | Varsayılan model | Anahtar |
 |---|---|---|
-| `gemini` | `gemini-2.5-flash` (panel / `AI_MODEL`) | aistudio.google.com/apikey |
+| `evren` | `glm-5.3` (panelde listeden: deepseek-v4.1-flash, mimo-v2.6-pro, qwen3.8-flash-next, gemma-4-31b, auto) | evren.ssyz.org.tr (`evren_llm_…`) |
+| `gemini` | `gemini-2.5-flash` (panel "Google Gemini modeli" / `GEMINI_MODEL`) | aistudio.google.com/apikey |
 | `openrouter` | `google/gemma-4-31b-it:free` | openrouter.ai/keys |
 | `mistral` | `mistral-small-latest` | console.mistral.ai/api-keys |
 | `groq` | `openai/gpt-oss-120b` | console.groq.com/keys |
@@ -473,8 +478,11 @@ varsayılan (`Ai::varsayilanModel`).
   (anahtar yok)"); tek sağlayıcı kalırsa davranış eskisiyle aynıdır. Ortak
   `AI_API_KEY` yalnız ilk sağlayıcıya gider (bir servisin anahtarı başka
   servise gönderilmez). Anahtarlar veritabanında değil, yalnız `.env`'de.
-- Aşamanın modeli (panel / config / `AI_MODEL`) yalnız ilk sağlayıcıya
-  uygulanır; Gemini'nin `thinkingConfig` eki yalnız Gemini'ye gider.
+- Her sağlayıcı kendi modelini kullanır, asıl olan dahil (panel →
+  `<AD>_MODEL` → varsayılan). config'teki aşama modeli (`ai.map.model`) yalnız
+  `AI_PROVIDER`'a uygulanır; `AI_MODEL` `AI_PROVIDER`'ındır (yazılmamışsa eski
+  varsayılan Gemini'nin: EVREN'e Gemini modeli gitmez). Gemini'nin
+  `thinkingConfig` eki yalnız Gemini'ye gider.
 - **Dinlenme** (kalıcı dosya `storage/files/transkript-dinlenme.json`, `DinlenmeDeposu`;
   bütün işçiler görür, önbellek temizlenince kaybolmaz; dinlenen sağlayıcı denenmez.
   "Dinlenmeleri sıfırla" günlük kotası dolanları kutu işaretlenmedikçe korur):
@@ -482,10 +490,23 @@ varsayılan (`Ai::varsayilanModel`).
   | Hata | Süre |
   |---|---|
   | Günlük kota (Gemini `…PerDay`) | bir sonraki sıfırlamaya: Pasifik gece yarısı (`ai.yedek.kota_saat_dilimi`) |
+  | Günlük kota (EVREN, `x-evren-daily-remaining-tokens: 0`) | bir sonraki 03:00'e (Europe/Istanbul; `x-evren-daily-reset` okunabilirse o) |
   | 429 hız sınırı | sağlayıcının `Retry-After` / `X-RateLimit-Reset` süresi, yoksa 60 sn |
   | 401/403 anahtar, 404 model | **devre dışı** 6 saat ya da "Dinlenmeleri sıfırla"; model hatası yalnız o modele bağlı |
+  | EVREN 403 `terms_not_accepted` | **devre dışı** 1 saat (`sartlar_onaylanmadi`); şartları kullanıcı onaylar, kod onaylamaz |
   | 5xx, ağ, zaman aşımı | 2 dk |
-  | 413 (çok büyük), 400 | dinletmez, sıradakine geçilir |
+  | 413 (çok büyük), 400, EVREN boş yanıt (`dusunme_butcesi`) | dinletmez, sıradakine geçilir |
+
+- **EVREN (`Ai\EvrenProvider`, `OpenAiCompatibleProvider`'dan):** düşünme ve
+  yanıt aynı `max_tokens` havuzundan harcanır; bütçe en az 2048 (map 8192,
+  reduce 24000), istek süresi en az 180 sn, bağlantı 10 sn. İçerik boş ve
+  `finish_reason=length` ise `dusunme_butcesi`; `reasoning` alanları
+  kullanılmaz. JSON modu 400 alırsa bir kez parametresiz denenir. Maliyet 0
+  (1 Kasım 2026'ya kadar ücretsiz; panelde girilen USD fiyatı EVREN'e
+  uygulanmaz, `Ai::sabitFiyat`). Sonrası CR cinsinden, `GET /v1/models`
+  `pricing` alanından. Kalan günlük token her yanıtın başlığından okunup Durum
+  ekranında gösterilir (panel isteğinde API'ye gidilmez). Anahtar hata
+  mesajında geçerse `evren_llm_****` olarak maskelenir.
 
 - **Hepsi düşerse HATA DEĞİL:** geçici olarak dinlenen biri varsa iş en erken
   açılışa ertelenir (`zincir_dinleniyor` → `Queue::later`, deneme hakkı yeni,

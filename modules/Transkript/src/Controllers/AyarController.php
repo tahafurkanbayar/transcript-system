@@ -22,6 +22,7 @@ use App\Core\Request;
 use App\Core\Response;
 use App\Http\Controller;
 use Modules\Transkript\Ai\Ai;
+use Modules\Transkript\Ai\EvrenProvider;
 use Modules\Transkript\Ai\YedekliSaglayici;
 use Modules\Transkript\Ayarlar;
 use Modules\Transkript\PanelAyarlari;
@@ -50,7 +51,7 @@ final class AyarController extends Controller
             /* Ekranda olmayan model alanı (sağlayıcı şu an zincirde değil)
              * formla gelmez; kayıtlı değeri silinmesin. */
             $girdi[$alan] = match (true) {
-                $tanim['tur'] === 'model' && $request->raw($alan) === null => PanelAyarlari::ham($alan) ?? '',
+                isset($tanim['saglayici']) && $request->raw($alan) === null => PanelAyarlari::ham($alan) ?? '',
                 // Çok satırlı metin: sınırın bir fazlası alınır ki uzunluk hatası görünsün.
                 $tanim['tur'] === 'metin' => mb_substr(str_replace("\r\n", "\n", $request->input($alan)), 0, (int) ($tanim['en_cok_karakter'] ?? 1000) + 1),
                 default => mb_substr($request->input($alan), 0, 100),
@@ -105,6 +106,8 @@ final class AyarController extends Controller
                 'saglayici'   => Ai::label(),
                 'zincir'      => self::zincirTablosu(Ai::zincirDurumu(), $kullanim->saglayiciOzeti()),
                 'ai_anahtar'  => Ai::isConfigured(),
+                // Son EVREN yanıtının bildirdiği kalan günlük token (API'ye gidilmez).
+                'evren_kota'  => EvrenProvider::sonKota(),
                 'yt_anahtar'  => trim(Env::get('YOUTUBE_API_KEY')) !== '',
                 'transcript'  => implode(' → ', (array) Ayarlar::get('transcript.saglayicilar', [])),
                 'istem'       => (string) Ayarlar::get('ai.istem_surumu', 'v1'),
@@ -166,7 +169,7 @@ final class AyarController extends Controller
 
     private static function varsayilanMetni(string $alan, mixed $deger): string
     {
-        if ((PanelAyarlari::ALANLAR[$alan]['tur'] ?? '') === 'model') {
+        if (isset(PanelAyarlari::ALANLAR[$alan]['saglayici'])) {
             return Ai::ortamModeli((string) PanelAyarlari::ALANLAR[$alan]['saglayici']);
         }
 
@@ -181,7 +184,6 @@ final class AyarController extends Controller
         }
 
         return match ($alan) {
-            'ai_model'     => (string) ($deger ?: Ai::model()),
             'para_birimi'  => (string) ($deger ?: 'TL'),
             'pro_fiyat_aylik', 'pro_fiyat_yillik' => (float) $deger > 0 ? str_replace('.', ',', (string) $deger) : '0 (fiyat gösterilmez)',
             'uye_gunluk', 'pro_gunluk', 'uye_saatlik', 'pro_saatlik', 'uye_en_uzun_dk', 'pro_en_uzun_dk'

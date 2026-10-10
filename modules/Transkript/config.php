@@ -92,10 +92,12 @@ return [
      *  map     her parça ayrı (paralel); hızlı ve ucuz model yeter
      *  reduce  parça sonuçlarını tek rapora birleştirir; daha uzun çıktı
      *
-     *  saglayici / model boşsa .env'deki AI_PROVIDER / AI_MODEL, o da
-     *  boşsa sağlayıcının varsayılanı (Gemini: gemini-2.5-flash).
-     *  Aşamaya ayrı model vermek için buraya yazın, ör.
-     *      'model' => 'gemini-2.5-flash-lite'
+     *  saglayici boşsa zincirin ilki (.env AI_PROVIDERS; varsayılan EVREN).
+     *  model boşsa sağlayıcının Transkript ayarlarındaki modeli (EVREN
+     *  modeli, Gemini modeli …), yoksa .env <AD>_MODEL, yoksa varsayılanı
+     *  (EVREN: glm-5.3, Gemini: gemini-2.5-flash). Asıl sağlayıcıya aşama
+     *  başı ayrı model vermek için buraya yazın, ör.
+     *      'model' => 'deepseek-v4.1-flash'
      *
      *  ÜCRETSİZ KATMAN: Gemini anahtarının projesinde faturalandırma
      *  kapalıysa istekler ücretsizdir ama dakikalık / günlük kotası
@@ -112,15 +114,18 @@ return [
      *  istem_surumu: prompts/<ad>.<surum>.txt; analizle birlikte saklanır.
      *
      *  YEDEK ZİNCİRİ (Ai\YedekliSaglayici): .env'de
-     *      AI_PROVIDERS=gemini,openrouter,mistral,groq
+     *      AI_PROVIDERS=evren,gemini,openrouter,groq
      *  verilirse sağlayıcılar bu sırayla denenir; biri kota / hata verirse
-     *  sıradakine geçilir. Anahtarı (GEMINI_API_KEY, OPENROUTER_API_KEY,
+     *  sıradakine geçilir (boşsa aynı sıra, Ai::VARSAYILAN_ZINCIR).
+     *  Anahtarı (EVREN_API_KEY, GEMINI_API_KEY, OPENROUTER_API_KEY,
      *  MISTRAL_API_KEY, GROQ_API_KEY, CEREBRAS_API_KEY) tanımlı olmayan
-     *  atlanır. Aşamanın modeli yalnız ilkine uygulanır; diğerleri
-     *  <AD>_MODEL (ör. GROQ_MODEL) ya da varsayılanını kullanır.
+     *  atlanır. Her sağlayıcı kendi modelini kullanır (yukarıda).
+     *  EVREN akıl yürüten modellerde max_token düşünmeyle paylaşılır; en
+     *  az 2048 verilir, süre en az 180 sn (Ai\EvrenProvider).
      *  yedek.dinlenme_sn: hata veren sağlayıcı bu kadar saniye denenmez
      *  (bütün işçiler için); 0 ya da listede yoksa dinlenmez. Günlük
-     *  kota bu listeye bakmaz: kota_saat_dilimi'nde gece yarısına kadar.
+     *  kota bu listeye bakmaz: sağlayıcının bildirdiği yenilenmeye
+     *  (EVREN 03:00 İstanbul), yoksa kota_saat_dilimi'nde gece yarısına.
      *  Hepsi dinlenirken iş hata vermez, en erken açılışa ertelenir.
      *  Anahtar ve model hatası "devre dışı"dır; Transkript ayarları →
      *  Durum'daki "Dinlenmeleri sıfırla" ile hemen yeniden denenir.
@@ -132,6 +137,7 @@ return [
                 'rate_limit'       => 60,     // sağlayıcı Retry-After vermediyse
                 'yetkisiz'         => 21600,  // anahtar geçersiz / faturalandırma kapalı: devre dışı
                 'model_bulunamadi' => 21600,  // model kaldırılmış: devre dışı (yalnız o model)
+                'sartlar_onaylanmadi' => 3600, // EVREN kullanım şartları onaylanmamış: devre dışı
                 'sunucu'           => 120,
                 'baglanti'         => 120,
                 'zaman_asimi'      => 120,
@@ -143,6 +149,12 @@ return [
         ],
 
         'istem_surumu' => 'v3',
+
+        /* Sağlayıcı başına model (Ai::varsayilanModel), ör. 'evren' =>
+         * 'deepseek-v4.1-flash'. Boşsa .env <AD>_MODEL, o da yoksa
+         * sağlayıcının varsayılanı. Panelden: Transkript ayarları → Yapay
+         * zekâ (EVREN modeli, Google Gemini modeli …). */
+        'modeller' => [],
 
         'map' => [
             'saglayici'   => '',

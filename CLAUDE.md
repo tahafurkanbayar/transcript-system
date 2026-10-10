@@ -88,6 +88,12 @@ SQL'de `KaynakRepository::gorunurluk()`).
 `Uyelik\Planlar::haklar()`, süre / talep `Uyelik\UyelikYonetimi`. Çevrim içi
 ödeme yok: talep → ödeme talimatı → yönetici onayı.
 
+**Yapay zekâ zinciri** (`Ai\YedekliSaglayici`, sıra `.env` `AI_PROVIDERS`): varsayılan
+`evren,gemini,openrouter,groq` (2026-10-11, kullanıcı isteği: yerli EVREN başta).
+`Ai\EvrenProvider` OpenAI uyumludur. Kullanım şartlarını kod ONAYLAMAZ; 403
+gelirse 1 saat atlanır. Maliyet 0 (1 Kasım 2026'ya kadar). Her sağlayıcının
+modeli panelden (`model_evren`, Gemini için `ai_model`).
+
 **Transcript zinciri** (`TranscriptProviderInterface`, sıra `.env` / config'ten):
 1. `YouTubeTranscriptProvider`: YouTube altyazısı.
 2. `GeminiVideoProvider`: Gemini API'ye YouTube URL'si (MVP'de yedek).
