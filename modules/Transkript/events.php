@@ -40,6 +40,7 @@ use App\Core\Log\Logger;
 use App\Core\Request;
 use App\Core\Queue\Queue;
 use App\Core\Schedule\Schedule;
+use App\Core\SidebarMenu;
 use App\Core\View;
 use App\Models\User;
 use Modules\Transkript\Ai\Ai;
@@ -47,6 +48,7 @@ use Modules\Transkript\Ayarlar;
 use Modules\Transkript\Controllers\AnasayfaController;
 use Modules\Transkript\Controllers\AyarController;
 use Modules\Transkript\Repositories\AiKullanimRepository;
+use Modules\Transkript\Repositories\AnalizRepository;
 use Modules\Transkript\Repositories\KaynakRepository;
 use Modules\Transkript\Repositories\UyelikRepository;
 use Modules\Transkript\Services\AnalizBaslatici;
@@ -132,6 +134,58 @@ DashboardCards::add('transkript-raporlar', static function (?User $user): ?array
         'ipucu'  => $alt !== [] ? implode(' · ', $alt) : ($policy->isAdmin() ? 'raporu hazır video' : 'kütüphanenizdeki'),
         'yol'    => 'panel/transkript',
     ];
+});
+
+/* ---------------------------------------------------------------------
+ *  SOL MENÜ: "Transkript" bölümü (çekirdeğin SidebarMenu kancası)
+ * ---------------------------------------------------------------------
+ *  module.json'daki tek bağlantı yerine modülün sayfaları doğrudan
+ *  menüde: Yeni analiz (analiz başlatabilene; liste sayfasındaki kutuya
+ *  gider), Analizler (süren analiz sayısı: yöneticiye herkesinki,
+ *  ötekine kendi başlattıkları), Üyeliğim (plan adı etiketiyle) ya da
+ *  yöneticiye Üyelikler (onay bekleyen talep) ve Ayarlar. Sayfa içindeki
+ *  sekmeler (views/_parcalar/alt-menu.php) aynı sayfaları gösterir.
+ *  Her panel sayfasında en çok iki sayım sorgusu.
+ * ------------------------------------------------------------------ */
+SidebarMenu::add('Transkript', static function (?User $user): ?array {
+    if ($user === null || !$user->can('transkript.view')) {
+        return null;
+    }
+
+    $db       = Database::connection();
+    $policy   = new TranskriptPolicy($user);
+    $yonetici = $policy->isAdmin();
+    $plan     = Planlar::plan($user);
+    // panel/transkript/{kaynak_id} raporları da "Analizler"dir; alt sayfalar değil.
+    $altSayfa = is_route('panel/transkript/uyelik') || is_route('panel/transkript/uyelikler') || is_route('panel/transkript/ayarlar');
+    $suren    = (new AnalizRepository($db))->surenSayisi($yonetici ? null : $user->id);
+
+    try {
+        $bekleyen = $yonetici ? (new UyelikRepository($db))->bekleyenSayisi() : 0;
+    } catch (Throwable) {
+        $bekleyen = 0; // tablo henüz yok (migration bekliyor)
+    }
+
+    $ogeler = [];
+
+    if ($policy->canAnalyze()) {
+        $ogeler[] = ['route' => 'panel/transkript', 'hash' => 'tk_analiz', 'icon' => 'zap', 'label' => 'Yeni analiz', 'aktif' => false, 'vurgu' => true,
+            'title' => 'YouTube bağlantısı yapıştırıp analiz başlatın'];
+    }
+
+    $ogeler[] = ['route' => 'panel/transkript', 'icon' => 'files', 'label' => 'Analizler', 'aktif' => is_route('panel/transkript') && !$altSayfa,
+        'badge' => $suren, 'badge_tur' => 'bilgi', 'title' => $suren > 0 ? $suren . ' analiz sürüyor' : 'Raporlar ve kütüphane'];
+
+    if ($yonetici) {
+        $ogeler[] = ['route' => 'panel/transkript/uyelikler', 'icon' => 'users', 'label' => 'Üyelikler', 'can' => 'transkript.admin',
+            'badge' => $bekleyen, 'badge_tur' => 'uyari', 'title' => $bekleyen > 0 ? $bekleyen . ' Pro talebi onay bekliyor' : 'Pro üyeler ve talepler'];
+        $ogeler[] = ['route' => 'panel/transkript/ayarlar', 'icon' => 'settings', 'label' => 'Transkript ayarları', 'can' => 'transkript.admin'];
+    } elseif ($plan !== null) {
+        $ogeler[] = ['route' => 'panel/transkript/uyelik', 'icon' => 'star', 'label' => 'Üyeliğim', 'etiket' => Planlar::ad($plan),
+            'title' => 'Planınız, bugünkü hakkınız ve Pro üyelik'];
+    }
+
+    return ['label' => 'Transkript', 'items' => $ogeler];
 });
 
 /* ---------------------------------------------------------------------

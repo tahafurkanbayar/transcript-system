@@ -792,6 +792,26 @@
     }());
 
     /* =================================================================
+     *  11b) Sol menüdeki "Yeni analiz" (adres#tk_analiz): bağlantı
+     *  kutusuna odaklanır. Aynı sayfadayken yalnız adres parçası
+     *  değişir; hashchange de dinlenir.
+     * ================================================================= */
+    (function () {
+        var kutu = document.getElementById('tk_url');
+
+        if (!kutu) { return; }
+
+        function odaklan() {
+            if (window.location.hash === '#tk_analiz') {
+                kutu.focus({ preventScroll: false });
+            }
+        }
+
+        odaklan();
+        window.addEventListener('hashchange', odaklan);
+    }());
+
+    /* =================================================================
      *  12) LİSTE: telefonda süzgeçler "Filtreler" düğmesinin arkasında
      * =================================================================
      *  Arama kutusu hep görünür; durum / kapsam / kişi seçimleri ve
