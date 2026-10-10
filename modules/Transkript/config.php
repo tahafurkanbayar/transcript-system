@@ -169,36 +169,89 @@ return [
     ],
 
     /* -----------------------------------------------------------------
-     *  ANALİZ BAŞLATMA VE KOTALAR (Services\AnalizBaslatici)
+     *  ANALİZ BAŞLATMA VE GENEL TAVANLAR (Services\AnalizBaslatici)
      * -----------------------------------------------------------------
-     *  Yalnız YENİ AI işi açan istek sayılır; önbellekten dönen ya da
-     *  sürmekte olan analize düşen istek sayılmaz (ikinci AI çağrısı yok).
-     *  Aşılınca 429 + Retry-After ve Türkçe mesaj. 0 → sınır yok.
+     *  Kişi başına sınırlar ÜYELİK PLANINDADIR (aşağıda "uyelik"). Burada
+     *  herkes için geçerli tavanlar durur. Yalnız YENİ AI işi açan istek
+     *  sayılır; önbellekten dönen ya da sürmekte olan analize düşen istek
+     *  sayılmaz (ikinci AI çağrısı yok). Aşılınca 429 + Retry-After ve
+     *  Türkçe mesaj. 0 → sınır yok.
      *
-     *  saatlik_sinir        kullanıcı başına saatte (panel ve API ortak)
-     *  gunluk_sinir         kullanıcı başına günde (bugün başlattığı analiz)
-     *  yonetici_muaf        transkript.admin kişisel sınırlara takılmaz
+     *  yonetici_muaf        transkript.admin plan sınırlarına takılmaz
      *  gunluk_token_tavani  bütün kullanıcılar, bugün harcanan token
      *  gunluk_maliyet_tavani bütün kullanıcılar, bugünkü tahmini maliyet
      *                       (USD, ücretli katman fiyatıyla). Genel tavan
      *                       bütçedir: yöneticiye de uygulanır.
-     *  uye_baslatabilir     üye rolü de analiz başlatır (analistle aynı
-     *                       kurallar ve kotalar). Rol yetkisi değil ayar:
-     *                       TranskriptPolicy::canAnalyze okur.
+     *  en_uzun_dk           SİSTEMİN en uzun videosu (yönetici dahil);
+     *                       planın süre sınırı bunu aşamaz.
      * -------------------------------------------------------------- */
     'analiz' => [
-        // Günlük sınırdan küçük olmalı; büyükse hiç devreye girmez (cowork 6. tur K3).
-        'saatlik_sinir'         => 5,
-        'gunluk_sinir'          => 10,
         'yonetici_muaf'         => true,
         'gunluk_token_tavani'   => 0,
         'gunluk_maliyet_tavani' => 5.0,
-        'uye_baslatabilir'      => false,
 
         // Bundan uzun video analiz edilmez (dakika; 0 = sınırsız). Süre
         // biliniyorsa istekte, bilinmiyorsa video bilgisi ya da transcript
         // gelince, yapay zekâya gitmeden önce denetlenir.
         'en_uzun_dk' => 180,
+    ],
+
+    /* -----------------------------------------------------------------
+     *  ÜYELİK PLANLARI (Uyelik\Planlar; kullanıcı isteği 2026-10-10)
+     * -----------------------------------------------------------------
+     *  Plan ROLDEN gelir; ayrı bir "plan" sütunu yoktur:
+     *      uye     Ücretsiz plan: kayıt olan herkes. Kısıtlı analiz hakkı.
+     *      editor  Pro plan (ücretli): daha yüksek sınırlar ve ek özellikler.
+     *      admin   plan yok; yonetici_muaf açıksa kişisel sınırı yoktur.
+     *
+     *  Pro üyelik yönetici panelinden verilir (Transkript → Üyelikler):
+     *  ödeme alınınca (havale / EFT …) yönetici süreyi girer, rol "editor"
+     *  olur; süre bitince rol kendiliğinden "uye"ye döner
+     *  (Uyelik\UyelikYonetimi). Üye "Üyeliğim" sayfasından talep gönderir.
+     *  Çevrim içi ödeme (iyzico, PayTR, Stripe…) henüz yok.
+     *
+     *  analiz          bu plan analiz başlatır mı (Pro'da her zaman açık)
+     *  gunluk_sinir    günde başlatılan analiz (bugün başlattığı)
+     *  saatlik_sinir   saatte (panel ve API ortak); günlükten küçük olmalı
+     *  en_uzun_dk      planın en uzun videosu; sistemin tavanını aşamaz
+     *  yeniden_analiz  kendi raporunu yeniden yapay zekâya gönderebilir
+     *  altyazi_indir   SRT / VTT altyazı indirme (rapor ve metin herkese)
+     *  fiyat_aylik     görünen fiyat; 0 → "fiyat için iletişime geçin"
+     *  fiyat_yillik    0 → yıllık seçenek gösterilmez
+     *
+     *  para_birimi     fiyatların yanında yazar (TL, USD, EUR)
+     *  odeme_bilgisi   "Pro'ya geç" talebinden sonra üyeye gösterilen
+     *                  ödeme talimatı (IBAN, alıcı adı…); yönetici panelden
+     *                  yazar. Gizli bilgi değildir ama KİŞİSEL veri
+     *                  olabilir; yalnız giriş yapmış kullanıcıya görünür.
+     *  hatirlatma_gun  Pro süresinin bitmesine bu kadar gün kala e-posta
+     * -------------------------------------------------------------- */
+    'uyelik' => [
+        'planlar' => [
+            'uye' => [
+                'analiz'         => true,
+                'gunluk_sinir'   => 2,
+                'saatlik_sinir'  => 1,
+                'en_uzun_dk'     => 30,
+                'yeniden_analiz' => false,
+                'altyazi_indir'  => false,
+                'fiyat_aylik'    => 0,
+                'fiyat_yillik'   => 0,
+            ],
+            'editor' => [
+                'analiz'         => true,
+                'gunluk_sinir'   => 20,
+                'saatlik_sinir'  => 5,
+                'en_uzun_dk'     => 180,
+                'yeniden_analiz' => true,
+                'altyazi_indir'  => true,
+                'fiyat_aylik'    => 0,
+                'fiyat_yillik'   => 0,
+            ],
+        ],
+        'para_birimi'    => 'TL',
+        'odeme_bilgisi'  => '',
+        'hatirlatma_gun' => 3,
     ],
 
     /* -----------------------------------------------------------------

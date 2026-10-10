@@ -435,8 +435,15 @@ $indir = static fn (string $bicim): string => url('panel/transkript/' . $kaynakI
                         <?php endif; ?>
                         <?php if ($veri['transcript'] !== null): ?>
                             <a class="btn cy-btn cy-btn--ghost cy-btn--sm" href="<?= e($indir('transkript.txt')) ?>" download><?= icon('file', 'cy-icon cy-icon--sm') ?> Transcript (TXT)</a>
-                            <a class="btn cy-btn cy-btn--ghost cy-btn--sm" href="<?= e($indir('transkript.srt')) ?>" download>Altyazı (SRT)</a>
-                            <a class="btn cy-btn cy-btn--ghost cy-btn--sm" href="<?= e($indir('transkript.vtt')) ?>" download>Altyazı (VTT)</a>
+                            <?php if ($policy->canDownload('transkript.srt')): ?>
+                                <a class="btn cy-btn cy-btn--ghost cy-btn--sm" href="<?= e($indir('transkript.srt')) ?>" download>Altyazı (SRT)</a>
+                                <a class="btn cy-btn cy-btn--ghost cy-btn--sm" href="<?= e($indir('transkript.vtt')) ?>" download>Altyazı (VTT)</a>
+                            <?php else: ?>
+                                <?php /* Altyazı indirme Pro özelliği (Uyelik\Planlar); düğme yerine nereden açılacağı. */ ?>
+                                <a class="btn cy-btn cy-btn--ghost cy-btn--sm tk-pro-kilit" href="<?= e(url('panel/transkript/uyelik')) ?>" title="Altyazı indirme Pro planında">
+                                    <?= icon('lock', 'cy-icon cy-icon--sm') ?> Altyazı (SRT / VTT) <span class="tk-pro-rozet">Pro</span>
+                                </a>
+                            <?php endif; ?>
                         <?php endif; ?>
                         <?php if ($bolumListesi !== ''): ?>
                             <button type="button" class="btn cy-btn cy-btn--ghost cy-btn--sm" data-copy-target="#tk_bolum_listesi" data-copy-label="YouTube bölüm listesi">

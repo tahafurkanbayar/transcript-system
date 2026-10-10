@@ -20,6 +20,7 @@ declare(strict_types=1);
 namespace Modules\Transkript;
 
 use Modules\Transkript\Kaynak\KaynakHatasi;
+use Modules\Transkript\Uyelik\Planlar;
 
 final class HataKodlari
 {
@@ -109,6 +110,14 @@ final class HataKodlari
 
         if ($kod === 'video_cok_uzun' && ($dakika = (int) Ayarlar::get('analiz.en_uzun_dk', 180)) > 0) {
             return sprintf('Bu video çok uzun; en çok %d dakikalık videolar analiz edilebiliyor.', $dakika);
+        }
+
+        // Planın süre sınırı: kişiye özeldir (herkese açık değil), Pro'da analiz edilebilir.
+        if ($kod === 'plan_video_uzun') {
+            $sistem = (int) Ayarlar::get('analiz.en_uzun_dk', 180);
+            $sinir  = static fn (string $plan): string => Planlar::sureMetni(Planlar::etkinEnUzunDk(Planlar::tanim($plan)['en_uzun_dk'], $sistem));
+
+            return sprintf('Bu video üyelik planınızın süre sınırını aşıyor (Ücretsiz: en çok %s, Pro: %s). Üyeliğim sayfasından Pro\'ya geçebilirsiniz.', $sinir(Planlar::UCRETSIZ), $sinir(Planlar::PRO));
         }
 
         return KaynakHatasi::MESAJLAR[$kod] ?? self::MESAJLAR[$kod] ?? self::MESAJLAR['beklenmeyen_hata'];

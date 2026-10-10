@@ -34,6 +34,7 @@ final class KaynakHatasi extends RuntimeException
         'oynatma_listesi'  => 'Oynatma listeleri henüz desteklenmiyor; listedeki tek bir videonun bağlantısını yapıştırın.',
         'kanal_baglantisi' => 'Kanal bağlantıları desteklenmiyor; kanaldaki tek bir videonun bağlantısını yapıştırın.',
         'video_cok_uzun'   => 'Video, analiz için izin verilen en uzun süreyi aşıyor.',
+        'plan_video_uzun'  => 'Video, analizi başlatan kişinin üyelik planındaki süre sınırını aşıyor.',
     ];
 
     public function __construct(

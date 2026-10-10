@@ -36,6 +36,7 @@ use App\Models\Role;
 use App\Models\User;
 use Modules\Transkript\Ayarlar;
 use Modules\Transkript\TranskriptPolicy;
+use Modules\Transkript\Uyelik\Planlar;
 use Modules\Transkript\Varliklar;
 
 final class AnasayfaController extends Controller
@@ -48,11 +49,14 @@ final class AnasayfaController extends Controller
         $kullanici = Auth::user();
         $analiz    = self::analizEdebilir($kullanici);
         $enUzunDk  = max(0, (int) Ayarlar::get('analiz.en_uzun_dk', 180));
+        // SSS'teki sınırlar Ücretsiz planınkidir (yeni gelen ziyaretçi onunla başlar); Pro ayrıca anılır.
+        $ucretsiz  = Planlar::tanim(Planlar::UCRETSIZ);
         $sss       = self::sss(
-            $enUzunDk,
-            max(0, (int) Ayarlar::get('analiz.gunluk_sinir', 10)),
+            Planlar::etkinEnUzunDk($ucretsiz['en_uzun_dk'], $enUzunDk),
+            $ucretsiz['gunluk_sinir'],
             in_array('tr', (array) Ayarlar::get('transcript.tercih_diller', ['tr']), true),
             $analiz,
+            'Bunlar Ücretsiz planın sınırları; Pro üyelikte günlük hak ve video süresi daha yüksektir (aşağıdaki Planlar bölümü).',
         );
 
         $this->view('Transkript::anasayfa', [
@@ -66,6 +70,9 @@ final class AnasayfaController extends Controller
             'kayitAcik'      => Registration::isOpen(),
             'sure'           => self::sureMetni($enUzunDk),
             'sss'            => $sss,
+            'planlar'        => Planlar::karsilastirma(),
+            'planim'         => Planlar::plan($kullanici),
+            'yonetici'       => $kullanici !== null && Planlar::plan($kullanici) === null,
             'jsonLd'         => array_merge(HomeController::structuredData(), [self::sssVerisi($sss)]),
         ], 'layouts/site');
     }
@@ -108,9 +115,9 @@ final class AnasayfaController extends Controller
     }
 
     /**
-     * Analiz başlatabilir mi? Rol yetkisi ya da "Üyeler analiz
+     * Analiz başlatabilir mi? Rol yetkisi ya da Ücretsiz planın "Analiz
      * başlatabilir" ayarı (TranskriptPolicy::canAnalyze); girişsizse
-     * yeni üye hesabının hakkı.
+     * yeni üye hesabının (Ücretsiz plan) hakkı.
      */
     public static function analizEdebilir(?User $kullanici): bool
     {
@@ -143,7 +150,7 @@ final class AnasayfaController extends Controller
      *
      * @return list<array{soru:string,cevap:string}>
      */
-    public static function sss(int $enUzunDk, int $gunlukSinir, bool $turkceAltyazi = true, bool $analiz = true): array
+    public static function sss(int $enUzunDk, int $gunlukSinir, bool $turkceAltyazi = true, bool $analiz = true, string $sinirEki = ''): array
     {
         $sinir = [];
 
@@ -190,7 +197,7 @@ final class AnasayfaController extends Controller
         }
 
         if ($sinir !== []) {
-            $liste[] = ['soru' => 'Bir sınır var mı?', 'cevap' => implode(' ', $sinir)];
+            $liste[] = ['soru' => 'Bir sınır var mı?', 'cevap' => implode(' ', $sinir) . ($sinirEki !== '' ? ' ' . $sinirEki : '')];
         }
 
         return $liste;

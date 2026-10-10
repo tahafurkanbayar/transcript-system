@@ -66,8 +66,8 @@ final class TranskriptAl extends TranskriptIsi
             $this->kaynaklar()->sureYoksaYaz($kaynakId, $sureSn);
 
             // Süre sınırı yapay zekâya gitmeden önce (meta veri süre vermediyse ilk fırsat).
-            if (AnalizBaslatici::cokUzun($sureSn)) {
-                throw new KaynakHatasi('video_cok_uzun', sprintf('Transcript %d sn; sınır analiz.en_uzun_dk', $sureSn));
+            if (($uzun = AnalizBaslatici::uzunlukHatasi($sureSn, $this->planDakikasi($analiz))) !== null) {
+                throw new KaynakHatasi($uzun, sprintf('Transcript %d sn; sınır %d dk', $sureSn, $this->planDakikasi($analiz)));
             }
         }
 

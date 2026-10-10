@@ -717,4 +717,77 @@
             }, 300);
         });
     }
+
+    /* =================================================================
+     *  11) AYARLAR: sekmeler (Üyelik · Yapay zekâ · Bütçe · Site · Durum)
+     * =================================================================
+     *  JS yoksa bütün bölümler alt alta görünür (sekmeler çapadır).
+     *  Seçili sekme adreste durur (#uyelik) ve formla gönderilir; kayıttan
+     *  sonra aynı sekme açılır. Sunucu hatalı alanın sekmesini data-ilk
+     *  ile söyler, o önce açılır. Ok tuşlarıyla sekmeler arasında gezilir. */
+    (function () {
+        var nav = document.querySelector('.js-tk-sekmeler');
+
+        if (!nav) { return; }
+
+        var sekmeler = Array.prototype.slice.call(nav.querySelectorAll('[role="tab"]'));
+        var gizli    = document.querySelector('.js-tk-sekme-girdi');
+        var kaydet   = document.querySelector('.js-tk-kaydet');
+
+        function sec(ad) {
+            var bulundu = sekmeler.some(function (s) { return s.getAttribute('aria-controls') === ad; });
+
+            if (!bulundu) { return false; }
+
+            sekmeler.forEach(function (s) {
+                var etkin = s.getAttribute('aria-controls') === ad;
+                var panel = document.getElementById(s.getAttribute('aria-controls'));
+
+                s.setAttribute('aria-selected', etkin ? 'true' : 'false');
+                s.tabIndex = etkin ? 0 : -1;
+                s.classList.toggle('is-etkin', etkin);
+
+                if (panel) { panel.hidden = !etkin; }
+            });
+
+            if (gizli) { gizli.value = ad; }
+            // "Durum" sekmesinde kaydedilecek ayar yok.
+            if (kaydet) { kaydet.hidden = ad === 'durum'; }
+
+            return true;
+        }
+
+        nav.classList.add('is-hazir');
+
+        var ilk  = nav.getAttribute('data-ilk') || '';
+        var adres = (window.location.hash || '').slice(1);
+
+        if (!(ilk && sec(ilk)) && !(adres && sec(adres))) {
+            sec(sekmeler[0].getAttribute('aria-controls'));
+        }
+
+        nav.addEventListener('click', function (e) {
+            var s = e.target.closest('[role="tab"]');
+
+            if (!s) { return; }
+
+            e.preventDefault();
+            sec(s.getAttribute('aria-controls'));
+
+            if (window.history && window.history.replaceState) {
+                window.history.replaceState(null, '', '#' + s.getAttribute('aria-controls'));
+            }
+        });
+
+        nav.addEventListener('keydown', function (e) {
+            var i = sekmeler.indexOf(document.activeElement);
+
+            if (i < 0 || (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft')) { return; }
+
+            e.preventDefault();
+            var yeni = sekmeler[(i + (e.key === 'ArrowRight' ? 1 : sekmeler.length - 1)) % sekmeler.length];
+            yeni.click();
+            yeni.focus();
+        });
+    }());
 }(window.jQuery));

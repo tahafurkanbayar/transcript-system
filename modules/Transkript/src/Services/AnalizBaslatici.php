@@ -7,7 +7,7 @@
  *  (KaynakBilgisiAl) kuyruğa bırakılır. İstek milisaniyeler sürer.
  *
  *  SIRA (önce yetki, sonra girdi, sonra sahiplik, en son durum)
- *    1) yetki: TranskriptPolicy::canAnalyze (analist, yönetici; ayar
+ *    1) yetki: TranskriptPolicy::canAnalyze (Pro üye, yönetici; planında
  *       açıksa üye) → 403, veritabanına gidilmez
  *    2) URL → 11 karakterlik video kimliği (UrlParser); geçersizse 422
  *    3) yeniden=1: yönetici her raporu, öteki yalnız KENDİ başlattığı
@@ -15,14 +15,16 @@
  *    4) kaynak varsa
  *         analizi sürüyorsa          → SURUYOR (ikinci iş açılmaz)
  *         güncel tamamlanmış analizi → ONBELLEKTEN (AI'a gidilmez)
- *    4) yeni AI işi maliyetlidir: kullanıcı başına saatlik (Throttle)
- *       ve günlük sınır, bütün kullanıcılar için günlük token / maliyet
- *       tavanı (kotaKontrolu; önbellekten dönen istek sayılmaz)
+ *    4) yeni AI işi maliyetlidir: kullanıcının ÜYELİK PLANINA göre
+ *       saatlik (Throttle) ve günlük sınır (Uyelik\Planlar::haklar),
+ *       bütün kullanıcılar için günlük token / maliyet tavanı
+ *       (kotaKontrolu; önbellekten dönen istek sayılmaz)
  *    5) video doğrulanmamışsa (kaynak yok ya da başlıksız) oEmbed ön
  *       kontrolü: yok / gizli video 422 ile reddedilir, KAYIT AÇILMAZ;
  *       varsa başlık, kanal ve küçük resim hemen yazılır. oEmbed'e
  *       ulaşılamazsa (en çok 4 sn) kontrol atlanır, iş kendisi denetler.
- *       Süresi bilinen ve analiz.en_uzun_dk'yı aşan video da reddedilir.
+ *       Süresi bilinen ve planın (ya da sistemin) en uzun video
+ *       sınırını aşan video da reddedilir (uzunlukHatasi).
  *    6) kaynak satırı kilitlenir, sürmekte olan analiz yeniden
  *       kontrol edilir; analiz kaydı ve ilk iş aynı işlemde açılır
  *       → BASLATILDI
@@ -73,6 +75,7 @@ use Modules\Transkript\Repositories\AnalizRepository;
 use Modules\Transkript\Repositories\KaynakRepository;
 use Modules\Transkript\Repositories\KutuphaneRepository;
 use Modules\Transkript\TranskriptPolicy;
+use Modules\Transkript\Uyelik\Planlar;
 use PDO;
 use Throwable;
 
@@ -162,8 +165,12 @@ final class AnalizBaslatici
             return $devam;
         }
 
-        if ($kaynak !== null && self::cokUzun($kaynak['sure_sn'] !== null ? (int) $kaynak['sure_sn'] : null)) {
-            throw new AnalizReddedildi('video_cok_uzun', HataKodlari::mesaj('video_cok_uzun'), 422);
+        $planDk = Planlar::haklar($this->user)['en_uzun_dk'];
+
+        if ($kaynak !== null && ($uzun = self::uzunlukHatasi($kaynak['sure_sn'] !== null ? (int) $kaynak['sure_sn'] : null, $planDk)) !== null) {
+            throw new AnalizReddedildi($uzun, $uzun === 'plan_video_uzun'
+                ? sprintf('Bu video planınızın süre sınırını aşıyor (%s planında en çok %s). Daha uzun videolar için Üyeliğim sayfasından Pro\'ya geçebilirsiniz.', Planlar::haklar($this->user)['ad'], Planlar::sureMetni($planDk))
+                : HataKodlari::mesaj('video_cok_uzun'), 422);
         }
 
         $this->kotaKontrolu();
@@ -183,14 +190,30 @@ final class AnalizBaslatici
     }
 
     /**
-     * analiz.en_uzun_dk'yı aşıyor mu? Süre bilinmiyorsa (null) hayır;
-     * iş, süre öğrenilince yeniden sorar (KaynakBilgisiAl, TranskriptAl).
+     * Sınırı aşıyor mu? $dakika verilmezse sistemin tavanı
+     * (analiz.en_uzun_dk). Süre bilinmiyorsa (null) hayır; iş, süre
+     * öğrenilince yeniden sorar (KaynakBilgisiAl, TranskriptAl).
      */
-    public static function cokUzun(?int $sureSn): bool
+    public static function cokUzun(?int $sureSn, ?int $dakika = null): bool
     {
-        $dakika = (int) Ayarlar::get('analiz.en_uzun_dk', 180);
+        $dakika ??= (int) Ayarlar::get('analiz.en_uzun_dk', 180);
 
         return $dakika > 0 && $sureSn !== null && $sureSn > $dakika * 60;
+    }
+
+    /**
+     * Hangi sınır aşıldı? Sistemin tavanı → video_cok_uzun (herkese
+     * söylenir), yalnız planın sınırı → plan_video_uzun (Pro'da analiz
+     * edilebilir). $planDk: Planlar::haklar()['en_uzun_dk'] (sistem
+     * tavanı zaten içinde). Aşılmadıysa null.
+     */
+    public static function uzunlukHatasi(?int $sureSn, int $planDk): ?string
+    {
+        return match (true) {
+            self::cokUzun($sureSn)          => 'video_cok_uzun',
+            self::cokUzun($sureSn, $planDk) => 'plan_video_uzun',
+            default                         => null,
+        };
     }
 
     /**
@@ -246,8 +269,7 @@ final class AnalizBaslatici
      */
     private function kotaKontrolu(): void
     {
-        $muaf  = (bool) Ayarlar::get('analiz.yonetici_muaf', true) && (new TranskriptPolicy($this->user))->isAdmin();
-        $sinir = $muaf ? 0 : (int) Ayarlar::get('analiz.gunluk_sinir', 10);
+        $sinir = Planlar::haklar($this->user)['gunluk_sinir'];
 
         $bugunku = 0;
 
@@ -295,7 +317,7 @@ final class AnalizBaslatici
         if ($sinir > 0 && $bugunku >= $sinir) {
             return [
                 'kod'   => 'gunluk_sinir',
-                'mesaj' => sprintf('Bugünkü analiz hakkınız doldu (%d / %d). Yarın yeniden deneyebilirsiniz; önceden analiz edilmiş videoları açmak hakkınızdan düşmez.', $bugunku, $sinir),
+                'mesaj' => sprintf('Bugünkü analiz hakkınız doldu (%d / %d). Yarın yeniden deneyebilirsiniz; önceden analiz edilmiş videoları açmak hakkınızdan düşmez. Daha yüksek sınır için: Üyeliğim.', $bugunku, $sinir),
             ];
         }
 
@@ -304,9 +326,9 @@ final class AnalizBaslatici
 
     private function sinirKontrolu(): void
     {
-        $sinir = (int) Ayarlar::get('analiz.saatlik_sinir', 5);
+        $sinir = Planlar::haklar($this->user)['saatlik_sinir'];
 
-        if ($sinir <= 0 || ((bool) Ayarlar::get('analiz.yonetici_muaf', true) && (new TranskriptPolicy($this->user))->isAdmin())) {
+        if ($sinir <= 0) {
             return;
         }
 
@@ -385,16 +407,17 @@ final class AnalizBaslatici
      * "Bugünkü hakkınız 3 / 10 · saatlik 1 / 20"). Sayaçlar kotaKontrolu
      * ve sinirKontrolu ile aynıdır; sayaç artırılmaz.
      *
-     * @return array{muaf: bool, gunluk: int, gunluk_sinir: int, saatlik: int, saatlik_sinir: int, bekleme_sn: int, yenilenme: string}
-     *   bekleme_sn > 0 → hak dolu; yenilenme "HH:MM" (saatlik) ya da "yarın 00:00" (günlük)
+     * @return array{muaf: bool, gunluk: int, gunluk_sinir: int, saatlik: int, saatlik_sinir: int, bekleme_sn: int, yenilenme: string, plan: ?string, plan_adi: string, en_uzun_dk: int}
+     *   bekleme_sn > 0 → hak dolu; yenilenme "HH:MM" (saatlik) ya da "yarın 00:00" (günlük);
+     *   plan / plan_adi / en_uzun_dk: Uyelik\Planlar::haklar()
      */
     public function hakDurumu(?int $simdi = null): array
     {
         $simdi ??= time();
-        $policy  = new TranskriptPolicy($this->user);
-        $muaf    = (bool) Ayarlar::get('analiz.yonetici_muaf', true) && $policy->isAdmin();
-        $gunlukSinir  = $muaf ? 0 : max(0, (int) Ayarlar::get('analiz.gunluk_sinir', 10));
-        $saatlikSinir = $muaf ? 0 : max(0, (int) Ayarlar::get('analiz.saatlik_sinir', 5));
+        $haklar  = Planlar::haklar($this->user);
+        $muaf    = $haklar['muaf'];
+        $gunlukSinir  = $haklar['gunluk_sinir'];
+        $saatlikSinir = $haklar['saatlik_sinir'];
         $gunluk  = 0;
         $saatlik = 0;
 
@@ -408,7 +431,8 @@ final class AnalizBaslatici
             $saatlik = $saatlikSinir - Throttle::remaining('transkript-analiz:' . ($this->user?->id ?? 0), $saatlikSinir, 3600);
         }
 
-        return self::hakKarari($muaf, $gunluk, $gunlukSinir, $saatlik, $saatlikSinir, $simdi);
+        return self::hakKarari($muaf, $gunluk, $gunlukSinir, $saatlik, $saatlikSinir, $simdi)
+            + ['plan' => $haklar['plan'], 'plan_adi' => $haklar['ad'], 'en_uzun_dk' => $haklar['en_uzun_dk']];
     }
 
     /**

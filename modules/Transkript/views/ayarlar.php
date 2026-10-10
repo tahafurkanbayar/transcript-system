@@ -3,38 +3,130 @@
  * =====================================================================
  *  GÖRÜNÜM: Transkript ayarları (panel/transkript/ayarlar, yönetici)
  * ---------------------------------------------------------------------
- *  Form PanelAyarlari::ALANLAR'dan çizilir. Boş alan config.php'deki
- *  varsayılana döner (yer tutucuda yazar). Sağda salt okunur durum:
- *  sağlayıcı, anahtarlar (yalnız tanımlı / tanımsız), kuyruk.
+ *  Beş sekme (JS yoksa alt alta bölümler):
+ *    Üyelik planları  Ücretsiz / Pro sınırları iki sütunlu tabloda,
+ *                     fiyat, para birimi, ödeme talimatı
+ *    Yapay zekâ       modeller, altyazı tercihi, sistemin en uzun videosu
+ *    Bütçe ve maliyet herkes için günlük tavanlar, fiyat tahmini
+ *    Site ve kuyruk   ana sayfa, tarayıcıdan kuyruk
+ *    Durum            salt okunur: sağlayıcılar, anahtarlar (yalnız
+ *                     tanımlı / tanımsız), kuyruk, son 50 çağrı
+ *
+ *  İlk dört sekme TEK formdur (bir "Kaydet"). Form PanelAyarlari::ALANLAR'dan
+ *  çizilir; boş alan config.php'deki varsayılana döner (yer tutucuda
+ *  yazar). Sağlayıcının kendi hata mesajı gösterilmez; yalnız kod ve
+ *  Türkçe karşılığı.
  *
  *  @var array<string,string>  $degerler
  *  @var array<string,string>  $varsayilanlar
  *  @var array<string,string>  $hatalar
  *  @var array<string,mixed>   $durum     zincir: AyarController::zincirTablosu
  *  @var list<array<string,mixed>> $cagrilar son 50 yapay zekâ çağrısı
- *
- *  Altta iki tablo: yapay zekâ sağlayıcıları (durum, açılış saati, son
- *  başarı / hata, bugünkü çağrı) ve son 50 çağrının günlüğü. Sağlayıcının
- *  kendi hata mesajı gösterilmez; yalnız kod ve Türkçe karşılığı.
  * =====================================================================
  */
 
+use App\Core\Auth;
 use App\Core\View;
 use Modules\Transkript\Ai\Ai;
 use Modules\Transkript\Ai\YedekliSaglayici;
-
 use Modules\Transkript\PanelAyarlari;
 use Modules\Transkript\Services\KuyrukDurumu;
+use Modules\Transkript\TranskriptPolicy;
 use Modules\Transkript\Varliklar;
 
-$gruplar = [
-    // Zincirdeki her sağlayıcının modeli (asıl: ai_model; yedekler: model_<ad>).
-    'Yapay zekâ ve transcript' => ['ai_model', ...PanelAyarlari::yedekModelAlanlari(), 'altyazi_dili', 'en_uzun_dk'],
-    'Kim analiz başlatır, ne kadar?' => ['uye_analiz', 'gunluk_sinir', 'saatlik_sinir', 'gunluk_token_tavani', 'gunluk_maliyet_tavani'],
-    'Maliyet tahmini (1M token)' => ['fiyat_giris', 'fiyat_cikis'],
-    'Ana sayfa'                => ['ana_sayfa'],
-    'Kuyruk'                   => ['tarayici_kuyruk'],
+/* Sekmeler: ad => [başlık, simge, ne işe yarar]. */
+$sekmeler = [
+    'uyelik'     => ['Üyelik planları', 'star', 'Kayıt olan herkes Ücretsiz plandadır; Pro ücretli plandır (rolü "Pro Üye"). Buradaki sınırları üyeler Üyeliğim sayfasında ve fiyat tablosunda görür. Pro üyeliği Transkript → Üyelikler\'den verirsiniz.'],
+    'yapay-zeka' => ['Yapay zekâ', 'zap', 'Raporu hangi modelin yazacağı, hangi altyazının kullanılacağı ve sistemin en uzun videosu. Değişiklik yeni analizlere uygulanır; biten raporlar değişmez.'],
+    'butce'      => ['Bütçe ve maliyet', 'activity', 'Herkes için (yönetici dahil) günlük tavanlar ve maliyet tahmininde kullanılan fiyatlar. Ücretsiz katmanda gerçek ödeme yoktur; tahmin ücretli katman fiyatıyla yazılır.'],
+    'site'       => ['Site ve kuyruk', 'globe', 'Sitenin ana sayfası ve kuyruk işçisi çalışmıyorken analizlerin nasıl ilerleyeceği.'],
+    'durum'      => ['Durum', 'server', 'Salt okunur: sağlayıcıların anlık durumu, anahtarların tanımlı olup olmadığı, kuyruk işçisi ve son yapay zekâ çağrıları.'],
 ];
+$alanlar = [
+    // Zincirdeki her sağlayıcının modeli (asıl: ai_model; yedekler: model_<ad>).
+    'yapay-zeka' => ['ai_model', ...PanelAyarlari::yedekModelAlanlari(), 'altyazi_dili', 'en_uzun_dk'],
+    'butce'      => ['gunluk_token_tavani', 'gunluk_maliyet_tavani', 'fiyat_giris', 'fiyat_cikis'],
+    'site'       => ['ana_sayfa', 'tarayici_kuyruk'],
+];
+/* Üyelik tablosu: satır => [Ücretsiz alanı, Pro alanı (null: "her zaman açık")]. */
+$planSatirlari = [
+    ['uye_analiz', null],
+    ['uye_gunluk', 'pro_gunluk'],
+    ['uye_saatlik', 'pro_saatlik'],
+    ['uye_en_uzun_dk', 'pro_en_uzun_dk'],
+    ['uye_yeniden_analiz', 'pro_yeniden_analiz'],
+    ['uye_altyazi', 'pro_altyazi'],
+];
+$uyelikDiger = ['pro_fiyat_aylik', 'pro_fiyat_yillik', 'para_birimi', 'odeme_bilgisi'];
+
+// Hatalı alan hangi sekmede? O sekme önce açılır (JS: data-ilk).
+$ilkHata = '';
+foreach ($hatalar as $alan => $_) {
+    $ilkHata = isset(PanelAyarlari::ALANLAR[$alan]['plan']) || in_array($alan, $uyelikDiger, true)
+        ? 'uyelik'
+        : (string) (array_key_first(array_filter($alanlar, static fn (array $l): bool => in_array($alan, $l, true))) ?? '');
+    break;
+}
+
+/**
+ * Bir ayar alanının girdisi (etiket hariç): seçim, açık/kapalı, metin, model ya da sayı.
+ * $kisa: plan tablosunda (dar sütun) yer tutucu yalnız varsayılan değerdir ("2", "30").
+ */
+$girdi = static function (string $alan, string $erisimEtiketi = '', bool $kisa = false) use ($degerler, $varsayilanlar, $hatalar): void {
+    $tanim = PanelAyarlari::ALANLAR[$alan];
+    $id    = 'tk_ayar_' . $alan;
+    $hata  = $hatalar[$alan] ?? null;
+    $sinif = $hata !== null ? ' is-invalid' : '';
+    $aria  = ' aria-describedby="' . e($id) . '_aciklama"' . ($erisimEtiketi !== '' ? ' aria-label="' . e($erisimEtiketi) . '"' : '');
+
+    if ($tanim['tur'] === 'secim' || $tanim['tur'] === 'acik_kapali') { ?>
+        <select class="form-select<?= $sinif ?>" id="<?= e($id) ?>" name="<?= e($alan) ?>"<?= $aria ?>>
+            <?php foreach (PanelAyarlari::secenekler($alan) as $deger => $etiket): ?>
+                <option value="<?= e((string) $deger) ?>"<?= (string) $deger === $degerler[$alan] ? ' selected' : '' ?>><?= e($etiket) ?></option>
+            <?php endforeach; ?>
+        </select>
+    <?php } elseif ($tanim['tur'] === 'metin') { ?>
+        <textarea class="form-control<?= $sinif ?>" id="<?= e($id) ?>" name="<?= e($alan) ?>" rows="4" maxlength="<?= (int) ($tanim['en_cok_karakter'] ?? 1000) ?>"
+                  placeholder="Ör. Banka: … · IBAN: TR.. · Alıcı: … · Açıklama: kullanıcı adınız"<?= $aria ?>><?= e($degerler[$alan]) ?></textarea>
+    <?php } elseif ($tanim['tur'] === 'model') { ?>
+        <?php /* Serbest model kimliği; öneriler datalist'te (ücretsiz modeller sık değişir). */ ?>
+        <input type="text" maxlength="100" spellcheck="false" autocomplete="off" list="<?= e($id) ?>_oneriler"
+               class="form-control cy-mono<?= $sinif ?>" id="<?= e($id) ?>" name="<?= e($alan) ?>"
+               value="<?= e($degerler[$alan]) ?>" placeholder="<?= e('Varsayılan: ' . $varsayilanlar[$alan]) ?>"<?= $aria ?>>
+        <datalist id="<?= e($id) ?>_oneriler">
+            <?php foreach (Ai::modelOnerileri((string) $tanim['saglayici']) as $oneri): ?>
+                <option value="<?= e($oneri) ?>"></option>
+            <?php endforeach; ?>
+        </datalist>
+    <?php } else { ?>
+        <div class="tk-girdi-birim">
+            <input type="text" inputmode="<?= $tanim['tur'] === 'tamsayi' ? 'numeric' : 'decimal' ?>" maxlength="20"
+                   class="form-control<?= $sinif ?>" id="<?= e($id) ?>" name="<?= e($alan) ?>"
+                   value="<?= e($degerler[$alan]) ?>" placeholder="<?= e(($kisa ? '' : 'Varsayılan: ') . $varsayilanlar[$alan]) ?>"<?= $aria ?>>
+            <?php if (isset($tanim['birim'])): ?><span class="tk-girdi-birim__ek"><?= e($tanim['birim']) ?></span><?php endif; ?>
+        </div>
+    <?php }
+};
+
+/** Etiketli tam alan (sekmelerdeki iki sütunlu ızgara için). */
+$alanCiz = static function (string $alan) use ($girdi, $hatalar): void {
+    $tanim = PanelAyarlari::ALANLAR[$alan];
+    $id    = 'tk_ayar_' . $alan;
+    $hata  = $hatalar[$alan] ?? null; ?>
+    <div class="col-12<?= $tanim['tur'] === 'metin' ? '' : ' col-md-6' ?>">
+        <label class="form-label" for="<?= e($id) ?>">
+            <?php /* Model listesi asıl sağlayıcınındır: etiket onun adıyla ("Gemini modeli"). */ ?>
+            <?= e($alan === 'ai_model' ? Ai::label() . ' modeli' : $tanim['etiket']) ?>
+        </label>
+        <?php $girdi($alan); ?>
+        <?php if ($hata !== null): ?>
+            <div class="invalid-feedback d-block" id="<?= e($id) ?>_aciklama"><?= e($hata) ?></div>
+        <?php else: ?>
+            <div class="form-text" id="<?= e($id) ?>_aciklama"><?= e($tanim['aciklama']) ?></div>
+        <?php endif; ?>
+    </div>
+<?php };
+
 $tanimli = static fn (bool $var): string => $var
     ? '<span class="cy-pill is-ok">Tanımlı</span>'
     : '<span class="cy-pill is-danger">Tanımsız</span>';
@@ -52,76 +144,92 @@ $sayi     = static fn (int $n): string => number_format($n, 0, ',', '.');
 ?>
 <link rel="stylesheet" href="<?= e(Varliklar::adres('transkript.css')) ?>">
 
-<div class="tk-ust mb-3">
-    <a href="<?= e(url('panel/transkript')) ?>" class="cy-link small"><?= icon('chevron', 'cy-icon cy-icon--sm tk-geri') ?> Analizler</a>
-</div>
+<?php View::partial('Transkript::_parcalar/alt-menu', ['policy' => new TranskriptPolicy(Auth::user()), 'etkin' => 'ayarlar']); ?>
 
-<div class="row g-3">
-    <div class="col-12 col-xl-8">
-        <form method="post" action="<?= e(url('panel/transkript/ayarlar')) ?>" novalidate>
-            <?= csrf_field() ?>
+<nav class="tk-sekmeler js-tk-sekmeler" role="tablist" aria-label="Ayar bölümleri"<?= $ilkHata !== '' ? ' data-ilk="' . e($ilkHata) . '"' : '' ?>>
+    <?php foreach ($sekmeler as $ad => [$baslik, $ikon]): ?>
+        <a class="tk-sekme" href="#<?= e($ad) ?>" role="tab" id="tk-sekme-<?= e($ad) ?>" aria-controls="<?= e($ad) ?>">
+            <?= icon($ikon, 'cy-icon cy-icon--sm') ?> <span><?= e($baslik) ?></span>
+        </a>
+    <?php endforeach; ?>
+</nav>
 
-            <div class="cy-card">
-                <div class="cy-card__body">
-                    <?php foreach ($gruplar as $baslik => $alanlar): ?>
-                        <h3 class="cy-section-title mt-1 mb-3"><?= e($baslik) ?></h3>
-                        <div class="row g-3 mb-4">
-                            <?php foreach ($alanlar as $alan): ?>
-                                <?php
-                                $tanim = PanelAyarlari::ALANLAR[$alan];
-                                $id    = 'tk_ayar_' . $alan;
-                                $hata  = $hatalar[$alan] ?? null;
-                                ?>
-                                <div class="col-12 col-md-6">
-                                    <label class="form-label" for="<?= e($id) ?>">
-                                        <?php /* Model listesi asıl sağlayıcınındır: etiket onun adıyla ("Gemini modeli"). */ ?>
-                                        <?= e($alan === 'ai_model' ? Ai::label() . ' modeli' : $tanim['etiket']) ?><?php if (isset($tanim['birim'])): ?> <span class="cy-muted small">(<?= e($tanim['birim']) ?>)</span><?php endif; ?>
-                                    </label>
-                                    <?php if ($tanim['tur'] === 'secim'): ?>
-                                        <select class="form-select<?= $hata !== null ? ' is-invalid' : '' ?>" id="<?= e($id) ?>" name="<?= e($alan) ?>" aria-describedby="<?= e($id) ?>_aciklama">
-                                            <?php foreach (PanelAyarlari::secenekler($alan) as $deger => $etiket): ?>
-                                                <option value="<?= e((string) $deger) ?>"<?= (string) $deger === $degerler[$alan] ? ' selected' : '' ?>><?= e($etiket) ?></option>
-                                            <?php endforeach; ?>
-                                        </select>
-                                    <?php elseif ($tanim['tur'] === 'model'): ?>
-                                        <?php /* Serbest model kimliği; öneriler datalist'te (ücretsiz modeller sık değişir). */ ?>
-                                        <input type="text" maxlength="100" spellcheck="false" autocomplete="off" list="<?= e($id) ?>_oneriler"
-                                               class="form-control cy-mono<?= $hata !== null ? ' is-invalid' : '' ?>" id="<?= e($id) ?>" name="<?= e($alan) ?>"
-                                               value="<?= e($degerler[$alan]) ?>" placeholder="<?= e('Varsayılan: ' . $varsayilanlar[$alan]) ?>"
-                                               aria-describedby="<?= e($id) ?>_aciklama">
-                                        <datalist id="<?= e($id) ?>_oneriler">
-                                            <?php foreach (Ai::modelOnerileri((string) $tanim['saglayici']) as $oneri): ?>
-                                                <option value="<?= e($oneri) ?>"></option>
-                                            <?php endforeach; ?>
-                                        </datalist>
-                                    <?php else: ?>
-                                        <input type="text" inputmode="<?= $tanim['tur'] === 'tamsayi' ? 'numeric' : 'decimal' ?>" maxlength="20"
-                                               class="form-control<?= $hata !== null ? ' is-invalid' : '' ?>" id="<?= e($id) ?>" name="<?= e($alan) ?>"
-                                               value="<?= e($degerler[$alan]) ?>" placeholder="<?= e('Varsayılan: ' . $varsayilanlar[$alan]) ?>"
-                                               aria-describedby="<?= e($id) ?>_aciklama">
-                                    <?php endif; ?>
-                                    <?php if ($hata !== null): ?>
-                                        <div class="invalid-feedback d-block" id="<?= e($id) ?>_aciklama"><?= e($hata) ?></div>
-                                    <?php else: ?>
-                                        <div class="form-text" id="<?= e($id) ?>_aciklama"><?= e($tanim['aciklama']) ?></div>
-                                    <?php endif; ?>
-                                </div>
-                            <?php endforeach; ?>
-                        </div>
-                    <?php endforeach; ?>
+<form method="post" action="<?= e(url('panel/transkript/ayarlar')) ?>" novalidate class="tk-ayar-form">
+    <?= csrf_field() ?>
+    <input type="hidden" name="sekme" value="" class="js-tk-sekme-girdi">
+
+    <!-- ÜYELİK PLANLARI -->
+    <section class="cy-card tk-sekme-panel" id="uyelik" role="tabpanel" aria-labelledby="tk-sekme-uyelik">
+        <header class="cy-card__header">
+            <h3 class="cy-section-title mb-1"><?= icon('star', 'cy-icon cy-icon--sm') ?> <?= e($sekmeler['uyelik'][0]) ?></h3>
+            <p class="cy-muted small mb-0"><?= e($sekmeler['uyelik'][2]) ?></p>
+        </header>
+        <div class="cy-card__body">
+            <div class="tk-plan-ayar" role="table" aria-label="Plan sınırları">
+                <div class="tk-plan-ayar__bas" role="row">
+                    <span role="columnheader">Ne?</span>
+                    <span role="columnheader"><?= icon('user', 'cy-icon cy-icon--sm') ?> Ücretsiz</span>
+                    <span role="columnheader"><?= icon('star', 'cy-icon cy-icon--sm') ?> Pro</span>
                 </div>
+                <?php foreach ($planSatirlari as [$uyeAlan, $proAlan]): ?>
+                    <?php $tanim = PanelAyarlari::ALANLAR[$uyeAlan]; ?>
+                    <div class="tk-plan-ayar__satir" role="row">
+                        <div class="tk-plan-ayar__etiket" role="rowheader">
+                            <strong><?= e($tanim['etiket']) ?></strong>
+                            <small id="tk_ayar_<?= e($uyeAlan) ?>_aciklama"><?= e($tanim['aciklama']) ?></small>
+                        </div>
+                        <?php foreach (['Ücretsiz' => $uyeAlan, 'Pro' => $proAlan] as $planAdi => $alan): ?>
+                            <div class="tk-plan-ayar__deger" role="cell" data-plan="<?= e($planAdi) ?>">
+                                <?php if ($alan === null): ?>
+                                    <span class="tk-plan-ayar__sabit"><?= icon('check', 'cy-icon cy-icon--sm') ?> Her zaman açık</span>
+                                <?php else: ?>
+                                    <?php $girdi($alan, $planAdi . ': ' . PanelAyarlari::ALANLAR[$alan]['etiket'], true); ?>
+                                    <?php if (isset($hatalar[$alan])): ?>
+                                        <div class="invalid-feedback d-block"><?= e($hatalar[$alan]) ?></div>
+                                    <?php endif; ?>
+                                <?php endif; ?>
+                            </div>
+                        <?php endforeach; ?>
+                    </div>
+                <?php endforeach; ?>
+            </div>
 
-                <div class="cy-card__footer cy-save-bar d-flex flex-wrap gap-2 justify-content-between align-items-center">
-                    <span class="cy-muted small cy-hide-xs">Boş bırakılan alan varsayılana (config.php) döner. Yeni analizlere uygulanır.</span>
-                    <button type="submit" class="btn cy-btn cy-btn--primary"><?= icon('save', 'cy-icon cy-icon--sm') ?> Kaydet</button>
+            <p class="cy-muted small mt-2 mb-0">Boş kutu varsayılanı kullanır (gri yazan değer). 0 = sınır yok.</p>
+
+            <h4 class="tk-alt-baslik mt-4">Fiyat ve ödeme</h4>
+            <p class="cy-muted small">Çevrim içi ödeme yok: üye talep gönderir, aşağıdaki talimatla öder, siz Üyelikler'den onaylarsınız.</p>
+            <div class="row g-3">
+                <?php foreach ($uyelikDiger as $alan) { $alanCiz($alan); } ?>
+            </div>
+        </div>
+    </section>
+
+    <?php foreach ($alanlar as $ad => $liste): ?>
+        <section class="cy-card tk-sekme-panel" id="<?= e($ad) ?>" role="tabpanel" aria-labelledby="tk-sekme-<?= e($ad) ?>">
+            <header class="cy-card__header">
+                <h3 class="cy-section-title mb-1"><?= icon($sekmeler[$ad][1], 'cy-icon cy-icon--sm') ?> <?= e($sekmeler[$ad][0]) ?></h3>
+                <p class="cy-muted small mb-0"><?= e($sekmeler[$ad][2]) ?></p>
+            </header>
+            <div class="cy-card__body">
+                <div class="row g-3">
+                    <?php foreach ($liste as $alan) { $alanCiz($alan); } ?>
                 </div>
             </div>
-        </form>
-    </div>
+        </section>
+    <?php endforeach; ?>
 
-    <div class="col-12 col-xl-4">
-        <section class="cy-panel">
-            <h3 class="cy-panel__title mb-2"><?= icon('server', 'cy-icon cy-icon--sm') ?> Durum</h3>
+    <div class="tk-kaydet-cubugu js-tk-kaydet">
+        <span class="cy-muted small">Boş bırakılan alan varsayılana döner. Değişiklik yeni analizlere uygulanır.</span>
+        <button type="submit" class="btn cy-btn cy-btn--primary"><?= icon('save', 'cy-icon cy-icon--sm') ?> Kaydet</button>
+    </div>
+</form>
+
+<!-- DURUM (salt okunur) -->
+<div class="tk-sekme-panel" id="durum" role="tabpanel" aria-labelledby="tk-sekme-durum">
+<div class="row g-3">
+    <div class="col-12 col-xl-5">
+        <section class="cy-panel h-100">
+            <h3 class="cy-panel__title mb-2"><?= icon('server', 'cy-icon cy-icon--sm') ?> Genel durum</h3>
             <dl class="tk-bilgi__liste">
                 <dt>Yapay zekâ</dt><dd><?= e($durum['saglayici']) ?></dd>
                 <dt>API anahtarı</dt><dd><?= $tanimli($durum['ai_anahtar']) ?></dd>
@@ -136,7 +244,6 @@ $sayi     = static fn (int $n): string => number_format($n, 0, ',', '.');
                                 </li>
                             <?php endforeach; ?>
                         </ol>
-                        <a class="cy-link small" href="#tk-saglayicilar">Ayrıntı ve çağrı günlüğü</a>
                     <?php else: ?>
                         <span class="cy-muted small">Yok. Kotası dolunca analiz kota yenilenene kadar bekler.</span>
                     <?php endif; ?>
@@ -150,16 +257,21 @@ $sayi     = static fn (int $n): string => number_format($n, 0, ',', '.');
                         ? '<span class="cy-pill is-ok">Görüldü</span>'
                         : '<span class="cy-pill">Henüz görülmedi</span>') ?></dd>
             </dl>
+            <?php if ($durum['kuyruk']['takildi']): ?>
+                <p class="cy-panel__note is-warn mt-2 mb-0">İşçiyi başlatmak için proje klasöründe: <code><?= e(KuyrukDurumu::KOMUT_ELLE) ?></code></p>
+            <?php endif; ?>
+        </section>
+    </div>
+    <div class="col-12 col-xl-7">
+        <section class="cy-panel h-100">
+            <h3 class="cy-panel__title mb-2"><?= icon('lock', 'cy-icon cy-icon--sm') ?> Anahtarlar nerede?</h3>
             <p class="cy-panel__note mb-0">
-                Anahtarlar yalnızca sunucudaki <span class="cy-mono">.env</span> dosyasında durur; burada değeri gösterilmez ve değiştirilemez.
+                API anahtarları yalnızca sunucudaki <span class="cy-mono">.env</span> dosyasında durur; burada değeri gösterilmez ve değiştirilemez.
                 Sağlayıcı <span class="cy-mono">AI_PROVIDER</span>, anahtar <span class="cy-mono">GEMINI_API_KEY</span> / <span class="cy-mono">CLAUDE_API_KEY</span>.
                 Yedek sırası şu an <span class="cy-mono">AI_PROVIDERS=<?= e(implode(',', array_column($durum['zincir'], 'ad'))) ?></span>
                 ve her birinin anahtarı (<span class="cy-mono">OPENROUTER_API_KEY</span> …); biri kota ya da hata verirse sıradaki denenir.
                 Kullanılabilecek adlar: <span class="cy-mono"><?= e(implode(', ', Ai::saglayiciAdlari())) ?></span>.
             </p>
-            <?php if ($durum['kuyruk']['takildi']): ?>
-                <p class="cy-panel__note is-warn mt-2 mb-0">İşçiyi başlatmak için proje klasöründe: <code><?= e(KuyrukDurumu::KOMUT_ELLE) ?></code></p>
-            <?php endif; ?>
         </section>
     </div>
 </div>
@@ -290,6 +402,7 @@ $sayi     = static fn (int $n): string => number_format($n, 0, ',', '.');
         </div>
     <?php endif; ?>
 </section>
+</div>
 
 <?php View::partial('Transkript::_parcalar/onay-penceresi'); ?>
 

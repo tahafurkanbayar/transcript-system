@@ -28,6 +28,7 @@ use Modules\Transkript\Controllers\Api\TranskriptApiController;
 use Modules\Transkript\Controllers\AyarController;
 use Modules\Transkript\Controllers\KaynakController;
 use Modules\Transkript\Controllers\SohbetController;
+use Modules\Transkript\Controllers\UyelikController;
 
 /** @var Router $router */
 
@@ -77,6 +78,31 @@ $router->post('panel/transkript/ayarlar', AyarController::class, 'kaydet',
 
 // Yedek zinciri: devre dışı / dinlenen sağlayıcılar hemen yeniden denensin.
 $router->post('panel/transkript/ayarlar/dinlenme-sifirla', AyarController::class, 'dinlenmeSifirla',
+    ['installed', 'auth', 'csrf', 'can:transkript.admin']);
+
+/* Üyelik planları (Uyelik\Planlar; plan = rol). Üyeliğim herkese,
+ * yönetim yalnız yöneticiye. {kaynak_id} rotalarından ÖNCE; ikinci
+ * parçası "iptal", "sil" … olan adres kullanılmaz (kaynak rotasıyla
+ * karışmasın). */
+$router->get('panel/transkript/uyelik', UyelikController::class, 'benim',
+    ['installed', 'auth', 'can:transkript.view']);
+
+$router->post('panel/transkript/uyelik/talep', UyelikController::class, 'talep',
+    ['installed', 'auth', 'csrf', 'can:transkript.view']);
+
+$router->post('panel/transkript/uyelik/talebi-geri-cek', UyelikController::class, 'talebiGeriCek',
+    ['installed', 'auth', 'csrf', 'can:transkript.view']);
+
+$router->get('panel/transkript/uyelikler', UyelikController::class, 'yonetim',
+    ['installed', 'auth', 'can:transkript.admin']);
+
+$router->post('panel/transkript/uyelikler/ver', UyelikController::class, 'ver',
+    ['installed', 'auth', 'csrf', 'can:transkript.admin']);
+
+$router->post('panel/transkript/uyelikler/kaldir', UyelikController::class, 'kaldir',
+    ['installed', 'auth', 'csrf', 'can:transkript.admin']);
+
+$router->post('panel/transkript/uyelikler/reddet', UyelikController::class, 'reddet',
     ['installed', 'auth', 'csrf', 'can:transkript.admin']);
 
 $router->get('panel/transkript/{kaynak_id}/transkript', KaynakController::class, 'transkript',

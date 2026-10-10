@@ -12,6 +12,10 @@
  *    transkript_sohbetler (+mesajları)  rapor sohbetleri
  *    transkript_ilgi_alanlari     ilgi alanları
  *    transkript_kisisel_ozetler   kişisel özetler
+ *    transkript_uyelik_talepleri  "Pro'ya geç" talepleri (not içerir)
+ *
+ *  Pro dönemleri (transkript_uyelikler) KALIR: ödeme kaydıdır, kişi
+ *  bilgisi taşımaz (yalnız kimlik numarası, tarih ve tutar).
  *
  *  Ortak video raporu (kaynak, transcript, analiz) kalır; başlatanın
  *  kimliği silinmiş bir hesabı gösterir, kişisel veri taşımaz.
@@ -28,7 +32,7 @@ use PDO;
 final class HesapTemizligi
 {
     /** Kişiye ait tablolar (sohbet mesajları sohbetle birlikte gider). */
-    public const TABLOLAR = ['transkript_kutuphane', 'transkript_sohbetler', 'transkript_ilgi_alanlari', 'transkript_kisisel_ozetler'];
+    public const TABLOLAR = ['transkript_kutuphane', 'transkript_sohbetler', 'transkript_ilgi_alanlari', 'transkript_kisisel_ozetler', 'transkript_uyelik_talepleri'];
 
     public function __construct(private readonly PDO $db)
     {

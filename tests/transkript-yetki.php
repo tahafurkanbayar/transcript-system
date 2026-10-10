@@ -54,7 +54,7 @@ use Modules\Transkript\Repositories\KaynakRepository;
 
 const ONEK = 'tkYetki';
 
-/** Bellek içi kullanıcılar: harf => [kimlik, rol, "Üyeler analiz başlatabilir" açık mı] */
+/** Bellek içi kullanıcılar: harf => [kimlik, rol, Ücretsiz planın "Analiz başlatabilir" ayarı açık mı] (A, B: Pro; U, P: Ücretsiz) */
 const ROLLER = [
     'Y' => [990001, Role::ADMIN, false],
     'A' => [990002, Role::EDITOR, false],
@@ -105,7 +105,7 @@ if (($argv[1] ?? '') === '--istek' || ($argv[1] ?? '') === '--api') {
 
     if (($kim = kullanici((string) $istek['rol'])) !== null) {
         Auth::actingAs($kim);
-        Ayarlar::set('analiz.uye_baslatabilir', ROLLER[$istek['rol']][2] ?? false);
+        Ayarlar::set('uyelik.planlar.uye.analiz', ROLLER[$istek['rol']][2] ?? false);
     }
 
     ob_start();
@@ -394,6 +394,11 @@ try {
         ['U', 'paylas', 'K3', ['paylas' => 0], 403],
         ['Y', 'paylas', 'K1', ['paylas' => 1], 200],
         ['U', 'kuyruk/tik', null, [], 403],            // ayar kapalı üye kuyruğu işletemez
+        // Üyelik yönetimi yalnız yöneticide: üye kendini, Pro başkasını değiştiremez.
+        ['U', 'uyelikler/ver', null, ['kullanici_id' => ROLLER['U'][0], 'ay' => 12], 403],
+        ['A', 'uyelikler/kaldir', null, ['kullanici_id' => ROLLER['B'][0]], 403],
+        ['B', 'uyelikler/reddet', null, ['talep_id' => 1, 'yanit' => 'x'], 403],
+        ['M', 'uyelik/talep', null, ['sure_ay' => 1], 401],
     ];
     $fark = [];
 
@@ -432,7 +437,7 @@ try {
     foreach (['Y', 'A', 'B', 'U'] as $rol) {
         $kim    = kullanici($rol);
         $admin  = $kim->can('transkript.admin');
-        Ayarlar::set('analiz.uye_baslatabilir', false);
+        Ayarlar::set('uyelik.planlar.uye.analiz', false);
         $liste  = $repo->liste(['durum' => 'hazir'], 1, 100, $kim->id, $admin)['toplam'];
         $sayac  = $admin ? $repo->istatistik(null)['kaynak'] : $repo->kendiIstatistik($kim->id)['kaynak'];
         $kart   = null;
