@@ -91,7 +91,7 @@ abstract class TranskriptIsi extends Job
 
     public function queue(): string
     {
-        return 'transkript';
+        return KuyrukDurumu::KUYRUK;
     }
 
     public function toPayload(): array

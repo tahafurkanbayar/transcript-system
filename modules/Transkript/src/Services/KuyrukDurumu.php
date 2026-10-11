@@ -33,6 +33,7 @@ namespace Modules\Transkript\Services;
 use App\Core\Cache\Cache;
 use App\Core\Config;
 use App\Core\Log\Logger;
+use App\Core\Queue\Queue;
 use App\Core\Schedule\Schedule;
 use Modules\Transkript\Ayarlar;
 use PDO;
@@ -185,7 +186,7 @@ final class KuyrukDurumu
                 SET durum = IF(deneme >= max_deneme, 'basarisiz', 'bekliyor'),
                     hata  = IF(deneme >= max_deneme, 'İş nabzı kesildi ve deneme hakkı bitti (işçi çöktü ya da kapatıldı).', hata),
                     ayrildi_at = NULL
-              WHERE kuyruk = 'transkript' AND durum = 'calisiyor'
+              WHERE " . self::kuyrukKosulu() . " AND durum = 'calisiyor'
                 AND ayrildi_at IS NOT NULL AND ayrildi_at < NOW() - INTERVAL :esik SECOND"
         );
         $guncelle->bindValue(':esik', $esik, PDO::PARAM_INT);
@@ -197,6 +198,35 @@ final class KuyrukDurumu
         }
 
         return $adet;
+    }
+
+    /* =================================================================
+     *  KUYRUKLAR VE ÖNCELİK
+     * =================================================================
+     *  Çekirdeğin kuyruğu işleri sıra numarasıyla (FIFO) alır. Aynı anda
+     *  birkaç analiz varken başlamış analizin birleştirme / rapor işi, sonra
+     *  gelen analizlerin bölümlerinin arkasında kalıyordu (cowork testi:
+     *  dört raporun dördü de aynı anda bitti). Bu iki iş ayrı kuyruktadır
+     *  (ONCELIKLI); modülün işçisi (events.php, tarayıcı tik'i, "Şimdi
+     *  işle") önce ona bakar: başlamış analiz önce biter.
+     * ============================================================== */
+
+    public const KUYRUK    = 'transkript';
+    public const ONCELIKLI = 'transkript_oncelik';
+
+    /** Modülün kuyrukları, işlenme sırasıyla. */
+    public const KUYRUKLAR = [self::ONCELIKLI, self::KUYRUK];
+
+    /** Sıradaki Transkript işini çalıştırır (önce öncelikli kuyruk); iş yoksa false. */
+    public static function sonrakiniIsle(): bool
+    {
+        return Queue::runNext(self::ONCELIKLI) || Queue::runNext(self::KUYRUK);
+    }
+
+    /** SQL koşulu: modülün bütün kuyrukları ("kuyruk IN (…)"). */
+    public static function kuyrukKosulu(): string
+    {
+        return "kuyruk IN ('" . implode("', '", self::KUYRUKLAR) . "')";
     }
 
     /** Bu iş (sınıf + yük) kuyrukta bekliyor ya da çalışıyor mu? */
@@ -227,8 +257,8 @@ final class KuyrukDurumu
                                       THEN TIMESTAMPDIFF(SECOND, hazir_at, NOW()) END), 0) AS en_eski,
                     COALESCE(SUM(durum = 'calisiyor' AND ayrildi_at > NOW() - INTERVAL :zaman SECOND), 0) AS calisan,
                     COALESCE(SUM(durum = 'calisiyor' AND ayrildi_at <= NOW() - INTERVAL :zaman2 SECOND), 0) AS takili
-               FROM `" . $tablo . "`
-              WHERE kuyruk = 'transkript'"
+               FROM `" . $tablo . '`
+              WHERE ' . self::kuyrukKosulu()
         );
         $sorgu->bindValue(':zaman', self::nabizEsigi(), PDO::PARAM_INT);
         $sorgu->bindValue(':zaman2', self::nabizEsigi(), PDO::PARAM_INT);

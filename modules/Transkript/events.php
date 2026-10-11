@@ -11,13 +11,14 @@
  *    konsol çekirdeği Modules::boot() ile bu dosyayı yükler; görev
  *    çekirdeğe dokunmadan "php cy schedule:run" listesine girer.
  *
- *    Starter'ın "kuyruk-isle" görevi dakikada en çok 10 işi, kuyruk
- *    ayırmadan çalıştırır. Uzun bir video 15–25 iş açar ve her AI işi
- *    10–60 saniye sürer; tek başına yetişmez. Bu görev yalnız
- *    "transkript" kuyruğunu, bütçe dolana kadar (varsayılan 240 sn)
- *    işler. Görevler ada göre kilitli olduğundan önceki çalışma
- *    sürerken yenisi başlamaz; "kuyruk-isle" ile birlikte en çok iki
- *    iş aynı anda yürür. İşler buna hazırdır (aşama ve parça kilidi).
+ *    Uzun bir video 15–25 iş açar ve her AI işi 10–60 saniye sürer.
+ *    Bu görev modülün iki kuyruğunu bütçe dolana kadar (varsayılan
+ *    240 sn) işler: ÖNCE "transkript_oncelik" (başlamış analizin
+ *    birleştirme / rapor işi), sonra "transkript" (KuyrukDurumu::
+ *    sonrakiniIsle). Starter'ın "kuyruk-isle" görevi yalnız çekirdeğin
+ *    "varsayilan" kuyruğunu işler (routes/schedule.php); Transkript
+ *    işlerini FIFO alıp önceliği bozmaz. Görevler ada göre kilitli
+ *    olduğundan önceki çalışma sürerken yenisi başlamaz.
  *
  *    Kalıcı işçi (php cy queue:work, supervisor) kullanan kurulumda
  *    config.php → kuyruk.zamanlanmis_gorev = false.
@@ -38,7 +39,6 @@ use App\Core\Env;
 use App\Core\HomePage;
 use App\Core\Log\Logger;
 use App\Core\Request;
-use App\Core\Queue\Queue;
 use App\Core\Schedule\Schedule;
 use App\Core\SidebarMenu;
 use App\Core\View;
@@ -68,7 +68,8 @@ if (PHP_SAPI === 'cli' && (bool) Ayarlar::get('kuyruk.zamanlanmis_gorev', true))
         KuyrukDurumu::bayatlariBirak();
 
         for ($i = 0; $i < $sinir && time() < $bitis; $i++) {
-            if (!Queue::runNext('transkript')) {
+            // Önce öncelikli kuyruk (başlamış analizin birleştirme / rapor işi), sonra genel.
+            if (!KuyrukDurumu::sonrakiniIsle()) {
                 break;
             }
 

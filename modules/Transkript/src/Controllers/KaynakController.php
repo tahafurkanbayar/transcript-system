@@ -25,7 +25,6 @@ use App\Core\Auth;
 use App\Core\Exceptions\HttpException;
 use App\Core\Flash;
 use App\Core\Log\Logger;
-use App\Core\Queue\Queue;
 use App\Core\Request;
 use App\Core\Response;
 use App\Core\Setting;
@@ -520,7 +519,7 @@ final class KaynakController extends Controller
 
         try {
             KuyrukDurumu::bayatlariBirak($this->db);
-            $islendi = Queue::runNext('transkript');
+            $islendi = KuyrukDurumu::sonrakiniIsle();
         } catch (Throwable $e) {
             Logger::error('Kuyruk tarayıcıdan işlenirken hata', ['ayrinti' => $e->getMessage(), 'kullanici' => Auth::id()], 'transkript');
             $islendi = false;
@@ -565,7 +564,7 @@ final class KaynakController extends Controller
         $islenen = 0;
 
         try {
-            while ($islenen < 25 && microtime(true) < $bitis && Queue::runNext('transkript')) {
+            while ($islenen < 25 && microtime(true) < $bitis && KuyrukDurumu::sonrakiniIsle()) {
                 $islenen++;
             }
         } catch (Throwable $e) {

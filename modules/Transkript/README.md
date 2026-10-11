@@ -688,6 +688,18 @@ işçiler (`php cy queue:work --queue=transkript`, supervisor) çalıştırıp
 `.env`'de `QUEUE_TIMEOUT=900` önerilir (varsayılan 300 sn; daha kısa süren iş
 "takıldı" sanılıp ikinci kez başlatılabilir).
 
+### Kuyruk sırası
+
+İki kuyruk: "transkript" (yeni analizin kaynak, transcript ve bölüm işleri,
+kategori) ve "transkript_oncelik" (başlamış analizin birleştirme ve rapor
+işi). Modülün işçisi (`transkript-kuyrugu` görevi, tarayıcı tik'i, "Şimdi
+işle") önce öncelikli kuyruğa bakar (`KuyrukDurumu::sonrakiniIsle`): aynı
+anda birkaç analiz varken başlamış olan önce biter. Çekirdeğin "kuyruk-isle"
+görevi yalnız "varsayilan" kuyruğu işler (`routes/schedule.php`). Kalıcı
+işçi kullanılıyorsa (`php cy queue:work`) bütün kuyruklar FIFO işlenir;
+önceliği korumak için iki işçi: `--queue=transkript_oncelik` ve
+`--queue=transkript`.
+
 ### Kuyruk işçisi çalışmıyorsa
 
 İşçi yoksa analiz "Sırada bekliyor %0"da kalır. `Services/KuyrukDurumu`

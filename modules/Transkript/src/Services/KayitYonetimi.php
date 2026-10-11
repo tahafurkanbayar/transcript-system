@@ -110,7 +110,7 @@ final class KayitYonetimi
         $tablo = preg_replace('/[^a-zA-Z0-9_]/', '', (string) Config::get('queue.table', 'isler')) ?: 'isler';
 
         $sorgu = $this->db->prepare(
-            "SELECT id, veri FROM `" . $tablo . "` WHERE kuyruk = 'transkript' AND durum IN ('bekliyor', 'basarisiz')"
+            "SELECT id, veri FROM `" . $tablo . '` WHERE ' . KuyrukDurumu::kuyrukKosulu() . " AND durum IN ('bekliyor', 'basarisiz')"
         );
         $sorgu->execute();
 

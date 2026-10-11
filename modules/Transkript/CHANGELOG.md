@@ -3,6 +3,21 @@
 Starter'ın sürüm geçmişi kökteki `CHANGELOG.md`'dedir; bu dosya yalnız
 `modules/Transkript/` içindir. Biçim [Keep a Changelog](https://keepachangelog.com/tr/1.1.0/).
 
+## 0.11.1 (2026-10-11): kuyruk önceliği
+
+Kullanıcı onayı ("gerekli işlemleri yap"); cowork kabul testinin önerisi.
+
+- Başlamış analizin birleştirme ve rapor işi (`AnalizBirlestir`,
+  `RaporuTamamla`) "transkript_oncelik" kuyruğunda; modülün işçisi önce ona
+  bakar (`KuyrukDurumu::sonrakiniIsle`). Durum sayımı, bayat iş kurtarma ve
+  iptal iki kuyruğu birlikte görür (`KuyrukDurumu::kuyrukKosulu`).
+- `routes/schedule.php` (CLAUDE.md'nin izin verdiği istisna): çekirdeğin
+  "kuyruk-isle" görevi yalnız "varsayilan" kuyruğu işler; Transkript
+  işlerini FIFO alıp önceliği bozmaz. Çekirdek `Queue` değişmedi.
+- Canlı (aynı 4 kısa video): raporlar 1:26, 2:00, 2:20, 2:30'da teker teker
+  bitti; önce dördü birden 3:09'da.
+- Geçici yönetici hesapları (96, 101) kullanıcı onayıyla silindi.
+
 ## 0.11.0 (2026-10-11): PDF raporu ve video kategorisi
 
 Kullanıcı isteği: "çıkan sonuçları PDF olarak da kullanıcıya verelim";

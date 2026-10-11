@@ -58,7 +58,7 @@ final class KategoriBelirle extends Job
 
     public function queue(): string
     {
-        return 'transkript';
+        return KuyrukDurumu::KUYRUK;
     }
 
     public function tries(): int

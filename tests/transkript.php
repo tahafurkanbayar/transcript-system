@@ -1255,7 +1255,19 @@ dogrula('Zincirdeki işlerin yükü yalnız analiz_id (metinden tam sayıya)', a
 $parcaIsi = ParcaAnalizEt::fromPayload(['analiz_id' => 12, 'parca' => 7]);
 dogrula('ParcaAnalizEt yükü: analiz_id + parca', $parcaIsi->toPayload() === ['analiz_id' => 12, 'parca' => 7]);
 $kuyruklar = array_map(static fn (string $sinif): string => $sinif::fromPayload(['analiz_id' => 1])->queue(), $isler);
-dogrula('Hepsi "transkript" kuyruğunda', $parcaIsi->queue() === 'transkript' && array_values(array_unique($kuyruklar)) === ['transkript']);
+$bayatPdo = new KayitPdo();
+KuyrukDurumu::bayatlariBirak($bayatPdo);
+$zamanlayici = (string) file_get_contents(dirname(MODUL_YOLU, 2) . '/routes/schedule.php');
+$olaylar     = (string) file_get_contents(MODUL_YOLU . '/events.php');
+dogrula('Kuyruk önceliği: yeni iş "transkript", başlamış analizin birleştirme / rapor işi "transkript_oncelik"; modül işçisi önce öncelikliye bakar',
+    $kuyruklar === ['transkript', 'transkript', 'transkript_oncelik', 'transkript_oncelik'] && $parcaIsi->queue() === 'transkript'
+    && (new KategoriBelirle(1))->queue() === 'transkript' && KuyrukDurumu::KUYRUKLAR === ['transkript_oncelik', 'transkript']
+    && KuyrukDurumu::kuyrukKosulu() === "kuyruk IN ('transkript_oncelik', 'transkript')"
+    && str_contains(implode("\n", $bayatPdo->sorgular), "WHERE kuyruk IN ('transkript_oncelik', 'transkript') AND durum = 'calisiyor'")
+    && str_contains($olaylar, 'KuyrukDurumu::sonrakiniIsle()') && !str_contains($olaylar, "runNext('transkript')"),
+    json_encode($kuyruklar));
+dogrula('Çekirdeğin "kuyruk-isle" görevi yalnız "varsayilan" kuyruğu işler (Transkript işlerini FIFO alıp önceliği bozmaz)',
+    str_contains($zamanlayici, "Queue::runNext('varsayilan')") && !str_contains($zamanlayici, 'Queue::runNext()'));
 dogrula('Birleştirme 2, diğerleri 3 deneme', (new AnalizBirlestir(1))->tries() === 2 && (new TranskriptAl(1))->tries() === 3 && $parcaIsi->tries() === 3);
 
 $kalici = [
@@ -3585,7 +3597,7 @@ $kaynakKodu2 = (string) file_get_contents(MODUL_YOLU . '/src/Controllers/KaynakC
 preg_match('#function kuyrukTik\(.*?\n    }\n#s', $kaynakKodu2, $tikGovde);
 dogrula('Tik ucu: kilit doluysa 202, tek iş (runNext bir kez), kilit finally ile bırakılır, oturum kilidi açılır, sekme kapansa da sürer',
     isset($tikGovde[0]) && str_contains($tikGovde[0], "GET_LOCK('transkript_kuyruk_tik', 0)") && str_contains($tikGovde[0], ', 202);')
-    && substr_count($tikGovde[0], 'Queue::runNext(') === 1 && str_contains($tikGovde[0], "RELEASE_LOCK('transkript_kuyruk_tik')")
+    && substr_count($tikGovde[0], 'KuyrukDurumu::sonrakiniIsle()') === 1 && str_contains($tikGovde[0], "RELEASE_LOCK('transkript_kuyruk_tik')")
     && str_contains($tikGovde[0], 'session_write_close()') && str_contains($tikGovde[0], 'ignore_user_abort(true)')
     && strpos($tikGovde[0], 'finally') < strpos($tikGovde[0], 'RELEASE_LOCK'));
 

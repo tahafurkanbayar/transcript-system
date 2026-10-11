@@ -26,6 +26,7 @@ use App\Core\Log\Logger;
 use App\Core\Queue\Queue;
 use Modules\Transkript\Ai\AiHatasi;
 use Modules\Transkript\Ayarlar;
+use Modules\Transkript\Services\KuyrukDurumu;
 use Modules\Transkript\Services\ModelOzeti;
 use Modules\Transkript\Services\Pipeline;
 use Modules\Transkript\Zaman;
@@ -33,6 +34,12 @@ use Modules\Transkript\Zaman;
 final class AnalizBirlestir extends TranskriptIsi
 {
     protected const ASAMA = 'birlestirme';
+
+    /** Başlamış analizin birleştirme işi yeni analizlerin bölümlerinden önce (KuyrukDurumu::ONCELIKLI). */
+    public function queue(): string
+    {
+        return KuyrukDurumu::ONCELIKLI;
+    }
 
     /** Kademeli birleştirmenin ilerlemesi (Cache; KaynakDurumu gösterir). */
     public const KADEMELI_ONEKI = 'transkript.kademeli.';
