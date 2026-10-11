@@ -9,6 +9,7 @@
  *      ['metin' => '00:04:47', 'yazitipi' => Yazitipi::KALIN, 'punto' => 8.5,
  *       'renk' => [29, 78, 216], 'url' => 'https://youtu.be/…?t=287']
  *      ['metin' => 'Kritik', 'rozet' => [254, 226, 226], …]   bölünmez, zeminli
+ *      ['metin' => '#7. sınıf fen', 'butun' => true, …]         bölünmez (etiket)
  *      ['sekme' => 62]                                         x'i girinti + 62'ye taşır
  *
  *  Satır kırma kelime kelimedir (Yazitipi genişlikleriyle); satıra
@@ -255,15 +256,15 @@ final class Akis
                 continue;
             }
 
-            // Rozet bölünmez.
-            if (isset($parca['rozet'])) {
-                $g = Yazitipi::genislik($kodlu, $yazitipi, $punto) + 2 * self::ROZET_YATAY;
+            // Rozet ve "butun" parça bölünmez (satıra sığmazsa alt satıra iner).
+            if (isset($parca['rozet']) || !empty($parca['butun'])) {
+                $g = Yazitipi::genislik($kodlu, $yazitipi, $punto) + (isset($parca['rozet']) ? 2 * self::ROZET_YATAY : 0);
 
                 if ($x + $g > $genislik && $x > $baslangic) {
                     $bitir();
                 }
 
-                $ogeler[] = $stil + ['x' => $x, 'metin' => $kodlu, 'genislik' => $g, 'rozet' => $parca['rozet']];
+                $ogeler[] = $stil + ['x' => $x, 'metin' => $kodlu, 'genislik' => $g] + (isset($parca['rozet']) ? ['rozet' => $parca['rozet']] : []);
                 $x += $g;
 
                 continue;

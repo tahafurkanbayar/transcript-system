@@ -230,7 +230,8 @@ Panel: `panel/transkript` (liste), `panel/transkript/{kaynak_id}` (rapor),
 `panel/transkript/varlik/{dosya}` (modülün JS / CSS'i),
 `panel/transkript/{kaynak_id}/indir/{bicim}` (rapor.pdf, rapor.md, transkript.txt / .srt / .vtt),
 `panel/transkript/{kaynak_id}/sil`, `…/iptal`, `…/kutuphaneden-cikar` ve
-`…/paylas` (POST, kayıt yönetimi; paylaşım yalnız yönetici),
+`…/paylas` (POST, kayıt yönetimi; paylaşım yalnız yönetici), `…/kategori`
+(POST, video kategorisini düzeltme; yalnız yönetici),
 `panel/transkript/kuyruk/isle` (POST, yönetici; "Şimdi işle"),
 `panel/transkript/uyelik` (Üyeliğim) + `…/uyelik/talep` ve `…/uyelik/talebi-geri-cek` (POST),
 `panel/transkript/uyelikler` (yönetici) + `…/uyelikler/ver`, `…/kaldir`, `…/reddet` (POST),
@@ -299,6 +300,21 @@ bölümler varsa aralıkları uyarıda. Konular videoyu kesintisiz böler: ilk k
 (`ResultValidator::konulariDuzenle`; eski raporlara da gösterirken uygulanır).
 "Bu rapor" panelinde model, istem ve transcript dili; rapor güncel istemden
 eski bir sürümle üretildiyse not düşülür (yönetici yeniden analiz edebilir).
+
+**Video kategorisi** (`Kategori\Kategoriler`, tablo `transkript_kategoriler`):
+rapor bitince `Jobs\KategoriBelirle` küçük bir AI çağrısıyla (girdi raporun
+özeti; `prompts/kategori.v1.txt`, json_schema enum) içerik türünü (ders
+anlatımı, eğitim / nasıl yapılır, konferans, belgesel, haber, röportaj,
+vlog, inceleme …), konu alanını (teknoloji, bilim, sağlık, siyaset, spor …),
+ikincil alanı, seviyeyi, ana konuyu ve en çok 8 etiketi yazar. Rapor
+sayfasında rozet ve etiket olarak görünür (rozete tıklayınca liste o
+süzgeçle açılır), listede "İçerik türü" / "Konu alanı" süzgeçleri, API
+`kaynaklar/{id}/ozet` → `kategori`, PDF ve Markdown'da. Yönetici "Kategoriyi
+düzelt" ile değiştirir (`elle`; yeniden analizde AI üzerine yazmaz). Var olan
+raporlar için: `php modules/Transkript/bin/kategori-doldur.php --dry-run`, sonra
+`--hemen` (sırayla) ya da seçeneksiz (kuyruğa). Kapatmak: config
+`kategori.otomatik = false`. İleride türe göre üretim (ders → soru / test,
+teknoloji tanıtımı → makale) bu tablonun üstüne kurulur.
 
 **Dışa aktarma ve kısayollar** (rakip analizinden; `docs/RAKIP_ANALIZI.md`):
 rapor PDF (`Pdf\RaporPdf`: A4, kısa özet kutusu, önem rozetleri, zaman

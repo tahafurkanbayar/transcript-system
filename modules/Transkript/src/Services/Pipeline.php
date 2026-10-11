@@ -22,6 +22,9 @@
  *  Model yanıtlamayı reddederse "reddedildi" (kalıcı).
  *
  *  ogeler(): reduce çıktısını transkript_analiz_ogeleri satırlarına çevirir.
+ *
+ *  kategori: rapor bittikten sonra ayrı ve küçük bir çağrı (Jobs\KategoriBelirle);
+ *  girdi raporun özeti, transcript değil. prompts/kategori.<sürüm>.txt.
  * =====================================================================
  */
 
@@ -38,6 +41,7 @@ use Modules\Transkript\Ai\GirisSiniri;
 use Modules\Transkript\Ai\Provider;
 use Modules\Transkript\Ai\YedekliSaglayici;
 use Modules\Transkript\Ayarlar;
+use Modules\Transkript\Kategori\Kategoriler;
 use Modules\Transkript\Repositories\AiKullanimRepository;
 use Modules\Transkript\Repositories\AnalizRepository;
 use Modules\Transkript\Transcript\Segment;
@@ -187,6 +191,53 @@ final class Pipeline
 
         return $this->jsonIste('reduce', $istem, $kullanici, self::BIRLESTIRME_SEMASI,
             fn (array $veri): array => $this->dogrulayici->birlestirme($veri, $bitMs, $baslangiclar, new ZamanYedegi($parcaSonuclari)));
+    }
+
+    /* =================================================================
+     *  KATEGORİ
+     * ============================================================== */
+
+    /**
+     * Videonun içerik türü, konu alanı, seviyesi, ana konusu ve etiketleri.
+     *
+     * @param  array<string,string> $girdi Kategoriler::girdi()
+     * @return array{sonuc: array<string,mixed>, model: string, saglayici: string, uyarilar: list<string>}
+     *
+     * @throws AiHatasi
+     */
+    public function kategoriBelirle(array $girdi): array
+    {
+        $istem = Istem::yukle('kategori', Kategoriler::ISTEM_SURUMU);
+
+        return $this->jsonIste('kategori', $istem, self::kategoriIstemi($istem, $girdi), self::kategoriSemasi(),
+            static fn (array $veri): array => ['sonuc' => Kategoriler::dogrula($veri), 'uyarilar' => []]);
+    }
+
+    /** @param array<string,string> $girdi */
+    public static function kategoriIstemi(Istem $istem, array $girdi): string
+    {
+        return $istem->kullanici([
+            'turler'    => Kategoriler::secenekMetni(Kategoriler::TURLER),
+            'alanlar'   => Kategoriler::secenekMetni(Kategoriler::ALANLAR),
+            'seviyeler' => implode(', ', array_keys(Kategoriler::SEVIYELER)),
+        ] + array_map(static fn (string $deger): string => Istem::veri($deger), $girdi));
+    }
+
+    /** @return array<string,mixed> seçenekler enum (EVREN json_schema strict, Gemini responseSchema) */
+    public static function kategoriSemasi(): array
+    {
+        return [
+            'type'       => 'object',
+            'properties' => [
+                'icerik_turu'  => ['type' => 'string', 'enum' => array_keys(Kategoriler::TURLER)],
+                'konu_alani'   => ['type' => 'string', 'enum' => array_keys(Kategoriler::ALANLAR)],
+                'ikincil_alan' => ['type' => 'string', 'enum' => [...array_keys(Kategoriler::ALANLAR), Kategoriler::YOK]],
+                'seviye'       => ['type' => 'string', 'enum' => array_keys(Kategoriler::SEVIYELER)],
+                'ana_konu'     => self::METIN,
+                'etiketler'    => ['type' => 'array', 'items' => self::METIN],
+            ],
+            'required' => ['icerik_turu', 'konu_alani', 'ikincil_alan', 'seviye', 'ana_konu', 'etiketler'],
+        ];
     }
 
     /**

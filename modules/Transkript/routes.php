@@ -134,6 +134,10 @@ $router->post('panel/transkript/{kaynak_id}/kutuphaneden-cikar', KaynakControlle
 $router->post('panel/transkript/{kaynak_id}/paylas', KaynakController::class, 'paylas',
     ['installed', 'auth', 'csrf', 'can:transkript.admin']);
 
+// Video kategorisini yönetici düzeltir (Kategori\Kategoriler; "elle" işaretlenir).
+$router->post('panel/transkript/{kaynak_id}/kategori', KaynakController::class, 'kategori',
+    ['installed', 'auth', 'csrf', 'can:transkript.admin']);
+
 $router->post('panel/transkript/{kaynak_id}/iptal', KaynakController::class, 'iptal',
     ['installed', 'auth', 'csrf', 'can:transkript.view']);
 

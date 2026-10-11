@@ -3,9 +3,34 @@
 Starter'ın sürüm geçmişi kökteki `CHANGELOG.md`'dedir; bu dosya yalnız
 `modules/Transkript/` içindir. Biçim [Keep a Changelog](https://keepachangelog.com/tr/1.1.0/).
 
-## 0.11.0 (2026-10-11): PDF raporu
+## 0.11.0 (2026-10-11): PDF raporu ve video kategorisi
 
-Kullanıcı isteği: "çıkan sonuçları PDF olarak da kullanıcıya verelim".
+Kullanıcı isteği: "çıkan sonuçları PDF olarak da kullanıcıya verelim";
+"videoların kategorisini belirleyebilir miyiz … veritabanında tutsak ileride
+çok işimize yarayacak (ders videosundan soru / test, teknoloji tanıtımından
+makale)".
+
+### Video kategorisi
+- Tablo `transkript_kategoriler` (migration `2026_10_11_170000`, yalnız yeni
+  tablo; `down()` siler): video başına içerik türü (biçim), konu alanı,
+  ikincil alan, seviye, ana konu, etiketler (≤8), belirleyen (ai / elle),
+  istem sürümü, model.
+- `Kategori\Kategoriler`: 17 içerik türü, 22 konu alanı, 4 seviye; Türkçe
+  ad / kimlik, AI çıktısı doğrulama (bilinmeyen → "diger"), yönetici formunda
+  katı doğrulama, etiket temizliği.
+- `Jobs\KategoriBelirle`: RaporuTamamla'dan sonra kuyruğa girer
+  (`kategori.otomatik`); girdi raporun özeti (transcript değil),
+  `prompts/kategori.v1.txt`, şemada enum. Elle düzeltilmiş ya da bu analizden
+  çıkarılmışsa AI'a gitmez; GET_LOCK + iş nabzı; dinlenmede erteleme (≤3);
+  başarısız olsa da rapor tamam. Ölçüm: qwen3.8-flash-next ~5 sn, ~2.400 token.
+- Rapor sayfası: tür / alan / seviye rozeti (tıklayınca liste süzülür),
+  etiketler, konu; yöneticiye "Kategoriyi düzelt" (`POST …/kategori`).
+  Liste: "İçerik türü" ve "Konu alanı" süzgeci (ikincil alan da), satırda tür ·
+  alan. API `ozet` → `kategori`. PDF'te rozetler, Markdown'da satır.
+- `bin/kategori-doldur.php` (`--dry-run`, `--hemen`, `--yenile`, `--limit`):
+  var olan 23 rapor dolduruldu (23 / 23).
+
+### PDF raporu
 
 - Rapor sayfası → Dışa aktar → **Rapor (PDF)** (`indir/rapor.pdf`); raporu
   görebilen herkes indirebilir (Markdown gibi), AI çağrısı yok.

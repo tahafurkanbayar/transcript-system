@@ -70,13 +70,15 @@ iddialar, fikirler ve kullanıcıya özel bölüm. Türkçe önceliklidir.
 
 ## Mimari özeti (ayrıntı `docs/TEKNIK_RAPOR.md`'de)
 
-**Tablolar** (13 modül tablosu + `ai_kullanim_kaydi`):
+**Tablolar** (14 modül tablosu + `ai_kullanim_kaydi`):
 `transkript_kaynaklar` (`tur`: youtube / ses_dosyasi / video_dosyasi, `dis_kimlik`,
 `sahip_id`, UNIQUE(`tur`, `dis_kimlik`, `sahip_id`), `paylasildi`), `transkript_metinler`,
 `transkript_segmentler`, `transkript_analizler`, `transkript_parcalar`,
 `transkript_analiz_ogeleri`, `transkript_kisisel_ozetler`, `transkript_sohbetler`,
 `transkript_sohbet_mesajlari`, `transkript_ilgi_alanlari`, `transkript_kutuphane`,
-`transkript_uyelikler` (Pro dönemleri), `transkript_uyelik_talepleri`.
+`transkript_uyelikler` (Pro dönemleri), `transkript_uyelik_talepleri`,
+`transkript_kategoriler` (video başına içerik türü, konu alanı, seviye, ana konu,
+etiketler; `Kategori\Kategoriler`, 2026-10-11 kullanıcı isteği).
 Kaynak türünü yalnız `transkript_kaynaklar` bilir; diğer tablolar `kaynak_id` ile
 bağlanır. Önbellek ortak, görünürlük kişisel: rapor yalnız kütüphanesine
 ekleyene ve yöneticinin paylaştığına görünür (`TranskriptPolicy::canViewSource`,
@@ -110,7 +112,9 @@ sabitlenir. EVREN akışlı (SSE), json_schema (strict), düşünme "low"; ayrı
 Promptlar `modules/Transkript/prompts/*.v1.txt`, sürüm analizle birlikte kaydedilir.
 
 **İşler:** `KaynakBilgisiAl` → `TranskriptAl` → `ParcaAnalizEt` × N → `AnalizBirlestir`
-→ `RaporuTamamla`. Durumlar: `bekliyor`, `transkript_aliniyor`, `transkript_hazir`,
+→ `RaporuTamamla` (→ `KategoriBelirle`: raporun özetinden küçük bir AI çağrısı; zincirin
+dışında, başarısız olsa da rapor tamamdır). Rapor PDF'i `Pdf\RaporPdf` (bağımlılıksız
+`Pdf\PdfBelgesi`). Durumlar: `bekliyor`, `transkript_aliniyor`, `transkript_hazir`,
 `analiz_ediliyor`, `tamamlandi`, `hata`.
 
 ## Kaynak repolar (yalnız okuma)

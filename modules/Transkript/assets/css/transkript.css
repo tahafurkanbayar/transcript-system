@@ -57,6 +57,19 @@
 .tk-kart__meta { display: flex; flex-wrap: wrap; gap: .25rem 1rem; margin: 0 0 .5rem; color: var(--cy-text-muted); font-size: .875rem; }
 .tk-kart__meta span { display: inline-flex; align-items: center; gap: .3rem; }
 .tk-kart__eylem { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin: 0; }
+/* Video kategorisi (tür, alan, seviye, etiketler) ve yönetici düzeltme formu. */
+.tk-video-kategori { display: flex; flex-wrap: wrap; gap: .35rem .4rem; align-items: center; margin: 0 0 .4rem; }
+.tk-video-kategori a.cy-pill { text-decoration: none; }
+.tk-video-kategori a.cy-pill:hover { filter: brightness(.95); }
+.tk-etiket { font-size: .78rem; color: var(--cy-text-muted); }
+.tk-video-kategori__konu { margin: 0 0 .5rem; font-size: .875rem; }
+.tk-video-kategori__konu span { color: var(--cy-text-muted); }
+.tk-kategori-duzelt { margin: 0 0 .6rem; font-size: .85rem; }
+.tk-kategori-duzelt summary { cursor: pointer; color: var(--cy-text-muted); }
+.tk-kategori-duzelt__form { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: .5rem .75rem; margin-top: .5rem; align-items: end; }
+.tk-kategori-duzelt__form label { display: grid; gap: .2rem; font-size: .8rem; color: var(--cy-text-muted); }
+.tk-kategori-duzelt__genis { grid-column: 1 / -1; }
+.tk-kategori-chip { display: inline-block; margin-left: .35rem; padding: 0 .45rem; border-radius: var(--cy-radius-pill); background: var(--cy-info-soft); color: var(--cy-info-text); font-size: .72rem; font-weight: 600; white-space: nowrap; }
 /* Büyük ekranda yanda oynatıcı var; küçük resim tekrar olmasın. */
 @media (min-width: 992px) { .tk-kart__resim { display: none; } }
 

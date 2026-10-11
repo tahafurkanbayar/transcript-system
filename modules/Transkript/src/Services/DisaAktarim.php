@@ -23,6 +23,7 @@ declare(strict_types=1);
 
 namespace Modules\Transkript\Services;
 
+use Modules\Transkript\Kategori\Kategoriler;
 use Modules\Transkript\Transcript\Segment;
 use Modules\Transkript\Zaman;
 
@@ -50,9 +51,10 @@ final class DisaAktarim
     /**
      * @param array<string,mixed>      $kaynak transkript_kaynaklar satırı
      * @param array<string,mixed>      $rapor  doğrulanmış rapor JSON'u
-     * @param array<string,mixed>|null $analiz RaporVerisi::getir()['analiz']
+     * @param array<string,mixed>|null $analiz   RaporVerisi::getir()['analiz']
+     * @param array<string,mixed>|null $kategori RaporVerisi::getir()['kategori'] (Kategoriler::disaVer)
      */
-    public static function markdown(array $kaynak, array $rapor, ?array $analiz, ?array $transcript = null): string
+    public static function markdown(array $kaynak, array $rapor, ?array $analiz, ?array $transcript = null, ?array $kategori = null): string
     {
         $video = $kaynak['tur'] === 'youtube' ? (string) $kaynak['dis_kimlik'] : '';
         $zaman = static fn (mixed $at): string => self::zamanBaglantisi($at, $video);
@@ -69,6 +71,13 @@ final class DisaAktarim
 
         if ($meta !== []) {
             $satir[] = implode(' · ', $meta);
+            $satir[] = '';
+        }
+
+        if ($kategori !== null) {
+            $satir[] = 'Kategori: ' . self::md(Kategoriler::ozet($kategori))
+                . ($kategori['ana_konu'] !== '' ? ' · Konu: ' . self::md($kategori['ana_konu']) : '')
+                . ($kategori['etiketler'] !== [] ? ' · Etiketler: ' . implode(', ', array_map(self::md(...), $kategori['etiketler'])) : '');
             $satir[] = '';
         }
 

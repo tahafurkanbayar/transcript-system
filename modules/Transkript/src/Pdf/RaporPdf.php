@@ -50,7 +50,7 @@ final class RaporPdf
      * @param array<string,mixed>      $rapor      doğrulanmış rapor JSON'u
      * @param array<string,mixed>|null $analiz     RaporVerisi::getir()['analiz']
      * @param array<string,mixed>|null $transcript RaporVerisi::getir()['transcript']
-     * @param array{site?: string, zaman?: int} $secenek
+     * @param array{site?: string, zaman?: int, kategori?: array<string,mixed>|null} $secenek kategori: Kategoriler::disaVer()
      */
     public static function olustur(array $kaynak, array $rapor, ?array $analiz = null, ?array $transcript = null, array $secenek = []): string
     {
@@ -62,7 +62,7 @@ final class RaporPdf
      * @param array<string,mixed>      $rapor
      * @param array<string,mixed>|null $analiz
      * @param array<string,mixed>|null $transcript
-     * @param array{site?: string, zaman?: int} $secenek
+     * @param array{site?: string, zaman?: int, kategori?: array<string,mixed>|null} $secenek
      */
     private function ciz(array $kaynak, array $rapor, ?array $analiz, ?array $transcript, array $secenek): string
     {
@@ -84,7 +84,7 @@ final class RaporPdf
             $a->pdf->cizgi($a->sol, 41.0, PdfBelgesi::GENISLIK - $a->sag, 41.0, self::CIZGI, 0.6);
         });
 
-        $this->kapak($kaynak, $rapor, $analiz, $transcript, $baslik, $zaman);
+        $this->kapak($kaynak, $rapor, $analiz, $transcript, $baslik, $zaman, $secenek['kategori'] ?? null);
         $this->govde($rapor);
 
         // Alt bilgi: toplam sayfa sayısı ancak sonda bilinir.
@@ -111,7 +111,8 @@ final class RaporPdf
      * @param array<string,mixed>|null $analiz
      * @param array<string,mixed>|null $transcript
      */
-    private function kapak(array $kaynak, array $rapor, ?array $analiz, ?array $transcript, string $baslik, int $zaman): void
+    /** @param array<string,mixed>|null $kategori Kategoriler::disaVer() */
+    private function kapak(array $kaynak, array $rapor, ?array $analiz, ?array $transcript, string $baslik, int $zaman, ?array $kategori = null): void
     {
         $a = $this->akis;
         $a->yeniSayfa();
@@ -136,6 +137,35 @@ final class RaporPdf
 
         if ($meta !== []) {
             $a->paragraf([['metin' => implode('  ·  ', $meta), 'punto' => 9.0, 'renk' => self::IKINCIL]]);
+        }
+
+        // Video kategorisi: tür / alan / seviye rozeti, konu ve etiketler.
+        if ($kategori !== null) {
+            $rozetler = [['metin' => $kategori['icerik_turu_adi'], 'yazitipi' => Yazitipi::KALIN, 'punto' => 8.0, 'renk' => self::VURGU, 'rozet' => [219, 234, 254]], ['metin' => ' ', 'punto' => 8.0]];
+            $rozetler[] = ['metin' => $kategori['konu_alani_adi'], 'yazitipi' => Yazitipi::KALIN, 'punto' => 8.0, 'renk' => self::IKINCIL, 'rozet' => [241, 245, 249]];
+
+            if ($kategori['ikincil_alan_adi'] !== null) {
+                $rozetler[] = ['metin' => ' ', 'punto' => 8.0];
+                $rozetler[] = ['metin' => $kategori['ikincil_alan_adi'], 'yazitipi' => Yazitipi::KALIN, 'punto' => 8.0, 'renk' => self::IKINCIL, 'rozet' => [241, 245, 249]];
+            }
+
+            if ($kategori['seviye'] !== 'genel') {
+                $rozetler[] = ['metin' => ' ', 'punto' => 8.0];
+                $rozetler[] = ['metin' => $kategori['seviye_adi'], 'yazitipi' => Yazitipi::KALIN, 'punto' => 8.0, 'renk' => [146, 64, 14], 'rozet' => [254, 243, 199]];
+            }
+
+            foreach ($kategori['etiketler'] as $etiket) {
+                $rozetler[] = ['metin' => '  ', 'punto' => 8.5];
+                $rozetler[] = ['metin' => '#' . $etiket, 'punto' => 8.5, 'renk' => self::SOLUK, 'butun' => true];
+            }
+
+            $a->bosluk(3);
+            $a->paragraf($rozetler, ['satir' => 1.75]);
+
+            if ($kategori['ana_konu'] !== '') {
+                $a->paragraf([['metin' => 'Konu: ', 'yazitipi' => Yazitipi::KALIN, 'punto' => 9.0, 'renk' => self::IKINCIL],
+                    ['metin' => $kategori['ana_konu'], 'punto' => 9.0, 'renk' => self::METIN]]);
+            }
         }
 
         $kunye = array_values(array_filter([

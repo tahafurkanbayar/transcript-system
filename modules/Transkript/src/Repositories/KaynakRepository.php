@@ -261,6 +261,21 @@ final class KaynakRepository
             $parametreler[':tur'] = $tur;
         }
 
+        // Video kategorisi (transkript_kategoriler): içerik türü / konu alanı (ikincil alan da sayılır).
+        $icerik = (string) ($filtre['icerik'] ?? '');
+
+        if ($icerik !== '') {
+            $kosullar[] = 'EXISTS (SELECT 1 FROM transkript_kategoriler fkt WHERE fkt.kaynak_id = k.id AND fkt.icerik_turu = :icerik)';
+            $parametreler[':icerik'] = $icerik;
+        }
+
+        $alan = (string) ($filtre['alan'] ?? '');
+
+        if ($alan !== '') {
+            $kosullar[] = 'EXISTS (SELECT 1 FROM transkript_kategoriler fka WHERE fka.kaynak_id = k.id AND (fka.konu_alani = :alan1 OR fka.ikincil_alan = :alan2))';
+            $parametreler += [':alan1' => $alan, ':alan2' => $alan];
+        }
+
         $kosullar[] = match ((string) ($filtre['durum'] ?? '')) {
             'hazir'   => 'EXISTS (SELECT 1 FROM transkript_analizler r WHERE r.kaynak_id = k.id AND r.guncel_mi = 1 AND r.durum = \'tamamlandi\')',
             'suruyor' => 'a.durum NOT IN (\'tamamlandi\', \'hata\')',
@@ -298,6 +313,8 @@ final class KaynakRepository
         $sorgu = $this->db->prepare(
             "SELECT k.id, k.tur, k.dis_kimlik, k.sahip_id, k.baslik, k.kanal_adi, k.sure_sn, k.kucuk_resim, k.yayin_tarihi,
                     k.durum AS kaynak_durumu, k.paylasildi, $kim
+                    (SELECT kt.icerik_turu FROM transkript_kategoriler kt WHERE kt.kaynak_id = k.id) AS kategori_tur,
+                    (SELECT kt.konu_alani FROM transkript_kategoriler kt WHERE kt.kaynak_id = k.id) AS kategori_alan,
                     EXISTS (SELECT 1 FROM transkript_kutuphane sku WHERE sku.kaynak_id = k.id AND sku.kullanici_id = :satir_ben) AS kutuphanede,
                     a.id AS analiz_id, a.kullanici_id, a.durum, a.asama, a.ilerleme, a.hata_kodu, a.hata_ozeti, a.created_at,
                     (SELECT r.id FROM transkript_analizler r

@@ -21,7 +21,9 @@ declare(strict_types=1);
 namespace Modules\Transkript\Services;
 
 use Modules\Transkript\Ayarlar;
+use Modules\Transkript\Kategori\Kategoriler;
 use Modules\Transkript\Repositories\AnalizRepository;
+use Modules\Transkript\Repositories\KategoriRepository;
 use Modules\Transkript\Repositories\KaynakRepository;
 use Modules\Transkript\Repositories\SegmentRepository;
 use Modules\Transkript\TranskriptPolicy;
@@ -56,7 +58,8 @@ final class RaporVerisi
      *     rapor: array<string,mixed>|null,
      *     analiz: array<string,mixed>|null,
      *     eksik: list<string>,
-     *     transcript: array<string,mixed>|null
+     *     transcript: array<string,mixed>|null,
+     *     kategori: array<string,mixed>|null
      * }
      */
     public function getir(array $kaynak): array
@@ -103,6 +106,8 @@ final class RaporVerisi
                 'otomatik_mi'    => (bool) $metin['otomatik_mi'],
                 'segment_sayisi' => (int) $metin['segment_sayisi'],
             ],
+            // Video kategorisi (Kategori\Kategoriler); belirlenmediyse null.
+            'kategori'   => Kategoriler::disaVer((new KategoriRepository($this->db))->bul($kaynakId)),
         ];
     }
 
