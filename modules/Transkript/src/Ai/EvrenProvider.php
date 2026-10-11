@@ -84,12 +84,12 @@ final class EvrenProvider extends OpenAiCompatibleProvider
      * @var array<string,string> kimlik => kısa açıklama
      */
     public const MODELLER = [
-        'glm-5.3'             => 'amiral model, 512K bağlam — yavaş (kısa video 2,5–3 dk)',
-        'deepseek-v4.1-flash' => '1M bağlam — uzun düşünür (kısa video 1,5–3 dk)',
-        'mimo-v2.6-pro'       => 'filonun en büyüğü, 1M bağlam — süresi değişken',
+        'glm-5.3'             => 'amiral model, 512K bağlam; yavaş (kısa video 2,5–3 dk)',
+        'deepseek-v4.1-flash' => '1M bağlam; uzun düşünür (kısa video 1,5–3 dk)',
+        'mimo-v2.6-pro'       => 'filonun en büyüğü, 1M bağlam; süresi değişken',
         'qwen3.8-flash-next'  => 'en hızlı (ölçüm), en yüksek eşzamanlılık, 256K bağlam',
-        'gemma-4-31b'         => 'düşük gecikme, düşünmez, 256K bağlam (EVREN içi yedek)',
-        'auto'                => 'geçit seçer — yavaş / tutarsız olabilir, analiz başına sabitlenir',
+        'gemma-4-31b'         => 'düşük gecikme, 256K bağlam (EVREN içi yedek)',
+        'auto'                => 'geçit seçer; yavaş / tutarsız olabilir, analiz başına sabitlenir',
     ];
 
     /** Bağlam (token), GET /v1/models (11.10.2026). auto yalnız 32K. */

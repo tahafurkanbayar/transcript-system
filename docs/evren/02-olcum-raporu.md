@@ -12,7 +12,7 @@ summary.json, rapor.md).
 | `…051206-once-eski-kod-kismi` | eski kodla, yalnız glm-5.3 (kesildi) | 7 | — |
 | `…054011-once` | **önce**: 11.10 sabahki üretim ayarı (akışsız, düşünme varsayılan, json_object, yeniden deneme yok) × 6 model × 6 kısa/orta video | 72 | 384.462 |
 | `…054423-deney` | budget, stream, consistency, context | 74 | 507.553 |
-| `…-sonra` | **sonra**: akış, düşünme low, json_schema × 5 sabit model × 6 video + 38 dk video × 3 | bkz. 4. bölüm | |
+| `…123310-sonra` | **sonra**: akış, düşünme low, json_schema × 5 sabit model × 6 video + 38 dk video × 3 | 82 | 475.304 |
 
 Fixture'lar (herkese açık YouTube transcript'leri, kişisel veri yok):
 kısa 2:01 ve 2:33 (TR), orta 3:42 (EN kaynak), 4:19, 5:02, 5:18 (TR altyazı),
@@ -81,12 +81,16 @@ Uçtan uca (bölüm + rapor, video başına) ve kalite:
 
 | model | medyan sn | ort. sn | kalite | başarısız rapor |
 |---|---|---|---|---|
-| gemma-4-31b | 88 | 76 | 9,77 | 0 / 6 |
-| mimo-v2.6-pro | 111 | 89 | 9,69 | 0 / 6 |
-| qwen3.8-flash-next | 133 | 122 | 9,69 | 0 / 6 |
+| gemma-4-31b | 78 | 76 | 9,77 | 0 / 6 |
+| mimo-v2.6-pro | 92 | 89 | 9,69 | 0 / 6 |
+| qwen3.8-flash-next | 121 | 122 | 9,69 | 0 / 6 |
+| auto | 128 | 149 | 6,51 | 2 / 6 |
 | deepseek-v4.1-flash | 130 | 136 | 9,71 | 0 / 6 |
-| auto | 160 | 149 | 6,51 | 2 / 6 |
-| glm-5.3 | 399 | 395 | 0 | 6 / 6 (yalnız 2'si birleştirmeye ulaştı) |
+| glm-5.3 | 396 | 396 | 0 | 6 / 6 (yalnız 2'si birleştirmeye ulaştı) |
+
+Uçtan uca süre `summary.json` → `uctan_uca` (bölümler eşzamanlı + rapor).
+Medyan, çift sayıda videoda iki ortanın ortalamasıdır (taslakta üstteki
+değer yazılmıştı; düzeltildi).
 
 ## 3. Deneyler
 
@@ -159,8 +163,84 @@ qwen3.8-flash-next ×1).
 Akışlı, düşünme `low`, json_schema; 5 sabit model × 6 kısa / orta video +
 38:41 video (qwen3.8-flash-next, gemma-4-31b, deepseek-v4.1-flash).
 
-<!-- SONRA -->
+Çalıştırma `20261011-123310-sonra`: 1.542 sn, 82 çağrı, 475.304 token,
+eşzamanlı 3. "Önce" ile aynı fikstürler; sunucu yükü saate göre değiştiği
+için çalıştırmalar arası farkı değil, **aynı çalıştırmadaki** modelleri
+karşılaştırın.
+
+| model · aşama | çağrı | başarı | ort. sn | p95 sn | ilk token sn | tok/sn | ort. token | JSON | zaman aşımı | `length` | düşünme oranı | önbellek |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| qwen3.8-flash-next · bölüm | 11 | %100 | **19,6** | 24,6 | 1,7 | 88,3 | 4.382 | **%100** | 0 | 0 | 0,27 | %0 |
+| qwen3.8-flash-next · rapor | 7 | %100 | **31,2** | 36,2 | 2,8 | 95,2 | 5.806 | **%100** | 0 | 0 | 0,36 | %0 |
+| gemma-4-31b · bölüm | 12 | %100 | 25,9 | 27,8 | 1,3 | 104,4 | 5.274 | %92 | 0 | 1 | 0,43 | %35 |
+| gemma-4-31b · rapor | 7 | %100 | 26,3 | 29,4 | 1,7 | 102,1 | 5.105 | %100 | 0 | 0 | 0,40 | %34 |
+| deepseek-v4.1-flash · bölüm | 13 | %100 | 45,9 | 84,6 | 1,4 | 86,4 | 7.567 | %85 | 0 | 2 | 0,47 | %35 |
+| deepseek-v4.1-flash · rapor | 8 | %100 | 80,3 | 82,1 | 1,9 | 91,1 | 12.560 | %88 | 0 | 1 | 0,57 | %42 |
+| mimo-v2.6-pro · bölüm | 6 | %100 | 46,5 | 50,6 | 1,5 | 33,5 | 3.611 | %100 | 0 | 0 | 0,16 | %36 |
+| mimo-v2.6-pro · rapor | 6 | %83 | 67,9 | 103,9 | 1,3 | 33,5 | 3.735 | %100 | **1** | 0 | 0,13 | %41 |
+| glm-5.3 · bölüm | 6 | %100 | 62,1 | 80,5 | 7,0 | 24,4 | 3.337 | %100 | 0 | 0 | 0 | %0 |
+| glm-5.3 · rapor | 6 | %100 | 73,1 | 110,7 | 10,6 | 25,5 | 4.077 | %100 | 0 | 0 | 0 | %15 |
+
+Uçtan uca (sn; ✖ = rapor çıkmadı) ve kalite:
+
+| model | 2:01 | 2:33 | 3:42 EN | 4:19 | 5:02 | 5:18 | **kısa medyan** | 38:41 (5 bölüm) | kalite |
+|---|---|---|---|---|---|---|---|---|---|
+| **qwen3.8-flash-next** | 17 | 24 | 36 | 56 | 41 | 38 | **37** | 222 | 9,82 / 9,56 |
+| gemma-4-31b | 29 | 30 | 34 | 53 | 51 | 121¹ | 43 | 177 | 9,78 / 9,71 |
+| deepseek-v4.1-flash | 104 | 82 | 125 | 169 | 172 | 72 | 115 | 515 | 9,79 / 9,31 |
+| mimo-v2.6-pro | 42 | 47 | 152 | 148 | 139 | 157 ✖ | 144 | — | 8,05 |
+| glm-5.3 | 39 | 49 | 190 | 192 | 147 | 194 | 168 | — | 9,80 |
+
+¹ bölüm çağrısı 8.192 token'da `length` (çıktı kendini tekrarladı), ×2
+bütçeyle düzeldi.
+
+Bulgular:
+
+1. **qwen3.8-flash-next en hızlı ve hatasız:** 18 / 18 çağrı, JSON %100,
+   `length` yok; kısa videoda medyan 37 sn ("önce" aynı modelde 121 sn,
+   `auto` 128 sn). Kalite ötekilerle aynı bantta (9,82).
+2. **gemma-4-31b ikinci:** medyan 43 sn, uzun videoda en hızlı (177 sn). Bir
+   bölümde çıktı döngüye girdi (`length`, ×2 bütçeyle düzeldi).
+   `reasoning_effort` kabul etmiyor ama akışta düşünme token'ı bildiriyor
+   (%40); bu düşünme ayarla kısılamıyor.
+3. **deepseek-v4.1-flash "low"u yok sayıyor:** düşünme oranı 0,47–0,57,
+   çağrı başına token qwen'in 1,7–2,2 katı; 3 kez `length` (38 dk raporunda
+   24.000 token'ın 20.335'i düşünme). Hepsi ×2 bütçeyle düzeldi ama 38 dk
+   video 515 sn (qwen 222).
+4. **glm-5.3 artık çalışıyor ama yavaş:** "önce" 6 / 6 başarısızdı, şimdi
+   12 / 12 başarılı ve zaman aşımı yok. Yine de ilk token 7–11 sn, 24–25
+   tok/sn: kısa videoda qwen'in 3–6 katı.
+5. **mimo-v2.6-pro'nun süresi değişken** (42–157 sn). Bir rapor çağrısı 9
+   keep-alive (≈90 sn kuyruk) sonrası 60 sn kuralıyla kesildi: bu ölçüm
+   12:33'te başladı, ilk token'a 120 sn tanıyan düzeltme 12:38'de geldi
+   (`23f4406`). Yeni kuralla beklenirdi.
+6. **JSON:** geçersiz JSON'un hepsi `length` ile kesilen yanıtta. `stop` ile
+   biten 77 yanıtın 77'si geçerli (json_schema). Genel ilk deneme %95,1;
+   varsayılan modelde %100.
+7. **Bütçe:** "düşünme bütçesi yetmedi" ile biten çağrı 0 (önce: glm 2 / 4
+   `length`, qwen bir kez bütçe yetmedi).
+8. **Kota sapması %2,7:** EVREN kota sayacı 426.343 düştü. Kayıtlı giriş +
+   çıkış 475.304'tür, bunun 60.432'si önbellekten okunan giriş. Giriş + çıkış −
+   önbellek = 414.872, fark 11.471 (%2,7). Farkı kesilen mimo çağrısı (bu
+   çalıştırmada tahmini kullanım yazılmıyordu) ve aynı dakikalarda yapılan
+   düşünme keşfi çağrıları açıklıyor. **Önbellekten okunan token kotadan
+   düşmüyor görünüyor.** Bu tek ölçüme dayanıyor; 1 Kasım sonrası
+   fiyatlandırmada doğrulanmalı.
 
 ## 5. Öneri tablosu
 
-<!-- ONERI -->
+| Konu | Öneri (uygulandı) | Gerekçe (ölçüm) |
+|---|---|---|
+| Varsayılan model (bölüm + rapor) | **qwen3.8-flash-next** | kısa medyan 37 sn, 18 / 18, JSON %100, en yüksek eşzamanlılık |
+| EVREN içi yedek halka | **gemma-4-31b** | farklı model ailesi, 19 / 19 başarılı, uzun videoda en hızlı |
+| Aşama başına ayrı model | **hayır** (ikisi de varsayılan) | glm-5.3 raporu 73 sn, qwen 31 sn; kalite aynı (9,80 / 9,78); analiz başına tek model |
+| `auto` | listede kalır, önerilmez; analiz başına sabitlenir | önce 13 çağrı 7 model, rapor %67 başarı, kalite 6,51 |
+| `deepseek-v4.1-flash` | varsayılan **olmamalı** (cowork önerisiydi) | low'u yok sayar; kısa medyan 115 sn, 38 dk 515 sn, 3 `length` |
+| `glm-5.3` | yalnız elle | 12 / 12 başarılı ama 3–6 kat yavaş |
+| Düşünme `EVREN_THINKING` | `low` | qwen bölüm 63–75 → 11–13 sn; `off` yalnız deepseek'te tam kapatır |
+| Akış `EVREN_STREAM` | açık | ölü bağlantı 60 sn'de anlaşılır, ilk token ölçülür |
+| İlk token `EVREN_ILK_TOKEN_SN` | 120 sn | glm 50 sn, mimo ≈90 sn kuyrukta bekledi (keep-alive) |
+| Boşta `EVREN_BOSTA_SN` | 60 sn | token başladıktan sonra 60 sn sessizlik görülmedi |
+| Bütçe | bölüm 8.192 / rapor 24.000, `length`'te ×2 bir kez | 4 `length`'in 4'ü ×2 ile düzeldi |
+| Yanıt biçimi `EVREN_JSON_SCHEMA` | json_schema (strict) | `stop` ile biten 77 / 77 geçerli; json_object'te alan adları kayıyordu |
+| Bölüm boyutu | **değişmedi** (ayrı adım önerisi) | 38 dk'da 8.000 token'lık bölüm 155 sn, 2.000'lik 458 sn (deepseek); zaman damgası / örtüşme davranışı değişeceği için ölçülerek yapılmalı |
