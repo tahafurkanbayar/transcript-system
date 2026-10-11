@@ -24,6 +24,7 @@ use App\Core\Setting;
 use App\Http\Controller;
 use Modules\Transkript\Ai\Ai;
 use Modules\Transkript\Ai\EvrenHesap;
+use Modules\Transkript\Ai\EvrenModelleri;
 use Modules\Transkript\Ai\EvrenProvider;
 use Modules\Transkript\Ai\YedekliSaglayici;
 use Modules\Transkript\Ayarlar;
@@ -111,6 +112,10 @@ final class AyarController extends Controller
                 'ai_anahtar'  => Ai::isConfigured(),
                 // Son EVREN yanıtının bildirdiği kalan günlük token (API'ye gidilmez).
                 'evren_kota'  => EvrenProvider::sonKota(),
+                // 1 Kasım 2026 sonrası ücretli (GET /v1/models free_until, günde bir önbelleğe).
+                'evren_ucretsiz_son' => EvrenModelleri::ucretsizSon(),
+                'evren_ucretli'      => EvrenModelleri::ucretliMi(),
+                'evren_aylik_tahmin' => $kullanim->evrenTahmini(),
                 // Panelden verilen şart onayı (sürüm, tarih); yoksa null.
                 'evren_sart'  => self::sartOnayi(),
                 'yt_anahtar'  => trim(Env::get('YOUTUBE_API_KEY')) !== '',

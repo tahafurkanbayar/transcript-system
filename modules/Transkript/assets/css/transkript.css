@@ -229,6 +229,11 @@ a.tk-zaman.is-oynuyor { background: var(--cy-brand); color: #fff; }
 /* Başarısız analizde yöneticiye zincirin özeti (liste ve rapor) */
 .tk-zincir-ozeti { display: block; margin-top: .25rem; font-size: .8rem; color: var(--cy-text-muted); overflow-wrap: anywhere; }
 .tk-saglayici-tablo td, .tk-gunluk td { vertical-align: top; }
+/* Durum: kuyruk işçisi komutları (kopyalanabilir) */
+.tk-komutlar { display: grid; gap: .35rem; }
+.tk-komut { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; }
+.tk-komut > span { min-width: 9.5rem; }
+.tk-komut code { flex: 1 1 14rem; padding: .2rem .45rem; border-radius: .3rem; background: var(--cy-surface-soft); overflow-wrap: anywhere; }
 /* Son hata, sonrasında başarılı çağrı olduysa: eskidi, soluk */
 .tk-saglayici-tablo td.tk-hata-cozuldu { opacity: .55; }
 

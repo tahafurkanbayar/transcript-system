@@ -284,14 +284,35 @@ $sayi     = static fn (int $n): string => number_format($n, 0, ',', '.');
                 <dt>YouTube Data API</dt><dd><?= $tanimli($durum['yt_anahtar']) ?></dd>
                 <dt>Transcript sırası</dt><dd class="cy-mono"><?= e($durum['transcript'] !== '' ? $durum['transcript'] : '—') ?></dd>
                 <dt>İstem sürümü</dt><dd class="cy-mono"><?= e($durum['istem']) ?></dd>
-                <dt>Kuyruk işçisi</dt><dd><?= $durum['kuyruk']['takildi']
-                    ? '<span class="cy-pill is-danger">Çalışmıyor</span>'
-                    : ($durum['kuyruk']['son_gorulme_sn'] !== null || $durum['kuyruk']['calisan'] > 0
-                        ? '<span class="cy-pill is-ok">Görüldü</span>'
-                        : '<span class="cy-pill">Henüz görülmedi</span>') ?></dd>
+                <?php
+                $kuyruk     = $durum['kuyruk'];
+                $sonGorulme = $kuyruk['son_gorulme_sn'];
+                $isciVar    = $sonGorulme !== null && $sonGorulme <= KuyrukDurumu::ESIK_SN;
+                ?>
+                <dt>Kuyruk işçisi</dt>
+                <dd>
+                    <?= $kuyruk['takildi']
+                        ? '<span class="cy-pill is-danger">Çalışmıyor</span>'
+                        : ($isciVar || (int) ($kuyruk['calisan'] ?? 0) > 0 ? '<span class="cy-pill is-ok">Çalışıyor</span>'
+                            : ($sonGorulme !== null ? '<span class="cy-pill is-warn">Görülmüyor</span>' : '<span class="cy-pill">Henüz görülmedi</span>')) ?>
+                    <small class="d-block">
+                        Son görülme: <?= $sonGorulme === null ? 'hiç' : e($sonGorulme < 60 ? $sonGorulme . ' sn önce' : ($sonGorulme < 3600 ? intdiv($sonGorulme, 60) . ' dk önce' : human_date(date('Y-m-d H:i:s', time() - $sonGorulme)))) ?>
+                        · bekleyen <?= (int) ($kuyruk['bekleyen'] ?? 0) ?> · çalışan <?= (int) ($kuyruk['calisan'] ?? 0) ?>
+                        · <span<?= ($kuyruk['takili'] ?? 0) > 0 ? ' class="text-danger" title="Nabzı 5 dakikadır gelmeyen iş: işçi bir sonraki turda kuyruğa geri bırakır (kaldığı yerden sürer)."' : '' ?>>takılı <?= (int) ($kuyruk['takili'] ?? 0) ?></span>
+                    </small>
+                </dd>
             </dl>
-            <?php if ($durum['kuyruk']['takildi']): ?>
-                <p class="cy-panel__note is-warn mt-2 mb-0">İşçiyi başlatmak için proje klasöründe: <code><?= e(KuyrukDurumu::KOMUT_ELLE) ?></code></p>
+            <?php if (!$isciVar && (int) ($kuyruk['calisan'] ?? 0) === 0): ?>
+                <div class="tk-komutlar mt-2">
+                    <p class="small mb-1">Kalıcı işçi (Windows / XAMPP / Laragon): proje klasöründeki <code><?= e(KuyrukDurumu::KOMUT_KUR) ?></code> dosyasına bir kez çift tıklayın. Oturum açılınca gizli başlar, kapanırsa 5 dakika içinde kendiliğinden yeniden başlar.</p>
+                    <?php foreach ([['Tek seferlik (komut satırı)', KuyrukDurumu::KOMUT_ELLE], ['Pencerede sürekli', KuyrukDurumu::KOMUT_WINDOWS], ['Sunucuda cron', KuyrukDurumu::KOMUT_CRON]] as [$komutAdi, $komut]): ?>
+                        <div class="tk-komut">
+                            <span class="small cy-muted"><?= e($komutAdi) ?></span>
+                            <code class="cy-mono"><?= e($komut) ?></code>
+                            <button type="button" class="btn cy-btn cy-btn--ghost cy-btn--sm js-tk-kopyala" data-kopya="<?= e($komut) ?>" aria-label="<?= e($komutAdi . ' komutunu kopyala') ?>"><?= icon('copy', 'cy-icon cy-icon--sm') ?> Kopyala</button>
+                        </div>
+                    <?php endforeach; ?>
+                </div>
             <?php endif; ?>
         </section>
     </div>
@@ -402,6 +423,15 @@ $sayi     = static fn (int $n): string => number_format($n, 0, ',', '.');
                         <td>
                             <small><?= e($sayi((int) $halka['bugun_cagri'])) ?> çağrı · <?= e($sayi((int) $halka['bugun_token'])) ?> token</small>
                             <?php $kota = $halka['ad'] === 'evren' ? ($durum['evren_kota'] ?? null) : null; ?>
+                            <?php if ($kota !== null && (int) $kota['limit'] > 0 && (int) $kota['kalan'] < 0.1 * (int) $kota['limit']): ?>
+                                <span class="cy-pill is-warn d-inline-block mt-1" title="Kota 03:00'te yenilenir; o zamana kadar zincirde sıradaki sağlayıcı kullanılır.">Günlük kotanın %10'undan azı kaldı</span>
+                            <?php endif; ?>
+                            <?php if ($halka['ad'] === 'evren'): ?>
+                                <?php $ucretsizSon = $durum['evren_ucretsiz_son'] ?? null; ?>
+                                <small class="d-block cy-muted" title="Fiyatlar GET /v1/models'ten (CR / 1M token) günde bir okunur.">
+                                    <?= !empty($durum['evren_ucretli']) ? 'Ücretli dönem: maliyet CR cinsinden' : 'Ücretsiz: ' . e($ucretsizSon !== null ? date('d.m.Y', (int) strtotime((string) $ucretsizSon)) : '1 Kasım 2026') . ' sonrası ücretli' ?><?= isset($durum['evren_aylik_tahmin']) ? ' · son 7 gün ' . e($sayi((int) $durum['evren_aylik_tahmin']['token_7gun'])) . ' token (aylık ≈ ' . e($sayi((int) $durum['evren_aylik_tahmin']['token_ay'])) . ')' : '' ?>
+                                </small>
+                            <?php endif; ?>
                             <?php if ($kota !== null): ?>
                                 <small class="d-block cy-muted" title="Son EVREN yanıtının bildirdiği; 03:00'te yenilenir">
                                     Kalan günlük kota: <?= e($sayi((int) $kota['kalan'])) ?><?= (int) $kota['limit'] > 0 ? ' / ' . e($sayi((int) $kota['limit'])) : '' ?> token
@@ -440,10 +470,21 @@ $sayi     = static fn (int $n): string => number_format($n, 0, ',', '.');
                     <?php foreach ($cagrilar as $c): ?>
                         <?php $basarili = $c['durum'] === 'basarili'; ?>
                         <tr>
-                            <td><small class="cy-mono" title="<?= e((string) $c['created_at']) ?>"><?= e(date('d.m H:i:s', (int) strtotime((string) $c['created_at']))) ?></small></td>
+                            <?php
+                            /* Zaman: çağrının KENDİ başlangıcı (0.10.0). Model: istenen → yanıttaki (aynıysa tek). */
+                            $istenen = (string) ($c['istenen_model'] ?? '');
+                            $yanitModeli = (string) $c['model'];
+                            $modelMetni = $istenen === '' || $istenen === $yanitModeli || str_starts_with($yanitModeli, $istenen . ' → ') ? $yanitModeli : $istenen . ' → ' . $yanitModeli;
+                            $onbellek = (int) ($c['onbellek_token'] ?? 0);
+                            $tokenAyrinti = 'giriş ' . $sayi((int) $c['giris_token']) . ' · çıkış ' . $sayi((int) $c['cikis_token'])
+                                . (($c['dusunme_token'] ?? null) !== null ? ' · düşünme ' . $sayi((int) $c['dusunme_token']) : '')
+                                . ($onbellek > 0 ? ' · önbellek ' . $sayi($onbellek) : '');
+                            ?>
+                            <td><small class="cy-mono" title="<?= e('Başlangıç ' . (string) $c['created_at'] . (($c['bitis_at'] ?? null) !== null ? ' · bitiş ' . (string) $c['bitis_at'] : '')) ?>"><?= e(date('d.m H:i:s', (int) strtotime((string) $c['created_at']))) ?></small></td>
                             <td>
                                 <?= e((string) $c['saglayici']) ?>
-                                <small class="cy-mono d-block cy-muted"><?= e((string) $c['model']) ?></small>
+                                <?php if (($c['asama'] ?? '') !== ''): ?><small class="cy-muted"> · <?= e($c['asama'] === 'map' ? 'bölüm' : 'rapor') ?></small><?php endif; ?>
+                                <small class="cy-mono d-block cy-muted"><?= e($modelMetni) ?></small>
                             </td>
                             <td>
                                 <?php /* Analiz sayfasının adresindeki numara (kaynak); iş (analiz) no üzerine gelince. */ ?>
@@ -453,12 +494,22 @@ $sayi     = static fn (int $n): string => number_format($n, 0, ',', '.');
                                     <span class="cy-muted" title="İş no"><?= $c['ref_id'] !== null ? 'İş #' . (int) $c['ref_id'] : '—' ?></span>
                                 <?php endif; ?>
                             </td>
-                            <td><small><?= e(number_format(((int) $c['sure_ms']) / 1000, 1, ',', '.')) ?> sn</small></td>
-                            <td><small><?= e($sayi((int) $c['giris_token'] + (int) $c['cikis_token'])) ?></small></td>
+                            <td>
+                                <small<?= ($c['ilk_token_ms'] ?? null) !== null ? ' title="İlk token ' . e(number_format(((int) $c['ilk_token_ms']) / 1000, 1, ',', '.')) . ' sn' . (!empty($c['akis']) ? ' · akış' : '') . '"' : '' ?>><?= e(number_format(((int) $c['sure_ms']) / 1000, 1, ',', '.')) ?> sn</small>
+                            </td>
+                            <td>
+                                <small title="<?= e($tokenAyrinti) ?>"><?= e($sayi((int) $c['giris_token'] + (int) $c['cikis_token'])) ?></small>
+                                <?php if ($onbellek > 0 && (int) $c['giris_token'] > 0): ?>
+                                    <small class="d-block cy-muted">önbellek %<?= (int) round(100 * $onbellek / (int) $c['giris_token']) ?></small>
+                                <?php endif; ?>
+                            </td>
                             <td>
                                 <span class="cy-pill <?= $basarili ? 'is-ok' : 'is-danger' ?>"<?= !$basarili && ($c['hata_ayrinti'] ?? null) !== null ? ' title="' . e((string) $c['hata_ayrinti']) . '"' : '' ?>>
                                     <?= e($basarili ? 'Başarılı' : $sebepAdi((string) ($c['hata_kodu'] ?? $c['durum']))) ?>
                                 </span>
+                                <?php if (($c['bitis_nedeni'] ?? '') !== '' && $c['bitis_nedeni'] !== 'stop'): ?>
+                                    <small class="d-block cy-muted cy-mono">finish: <?= e((string) $c['bitis_nedeni']) ?></small>
+                                <?php endif; ?>
                             </td>
                         </tr>
                     <?php endforeach; ?>

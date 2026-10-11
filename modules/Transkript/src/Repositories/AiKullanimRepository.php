@@ -163,7 +163,8 @@ final class AiKullanimRepository
     public function sonCagrilar(int $adet = 50): array
     {
         $statement = $this->db->prepare(
-            "SELECT u.id, u.created_at, u.saglayici, u.model, u.ref_tur, u.ref_id, u.giris_token, u.cikis_token,
+            "SELECT u.id, u.created_at, u.bitis_at, u.saglayici, u.model, u.istenen_model, u.asama, u.ref_tur, u.ref_id, u.giris_token, u.cikis_token,
+                    u.dusunme_token, u.onbellek_token, u.ilk_token_ms, u.akis, u.bitis_nedeni, u.kalan_kota,
                     u.sure_ms, u.durum, u.hata_kodu, u.hata_ayrinti, a.kaynak_id
                FROM ai_kullanim_kaydi u
                LEFT JOIN transkript_analizler a ON u.ref_tur = 'analiz' AND a.id = u.ref_id
@@ -176,6 +177,24 @@ final class AiKullanimRepository
         $statement->execute();
 
         return $statement->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    /**
+     * EVREN'in son 7 günlük token'ı ve 30 güne ölçeklenmiş tahmini
+     * (1 Kasım 2026 sonrası maliyet planı için; Durum sekmesi).
+     *
+     * @return array{token_7gun:int, token_ay:int}
+     */
+    public function evrenTahmini(): array
+    {
+        $statement = $this->db->prepare(
+            "SELECT COALESCE(SUM(giris_token + cikis_token), 0) FROM ai_kullanim_kaydi
+              WHERE modul = :modul AND saglayici = 'evren' AND created_at >= NOW() - INTERVAL 7 DAY"
+        );
+        $statement->execute([':modul' => self::MODUL]);
+        $hafta = (int) $statement->fetchColumn();
+
+        return ['token_7gun' => $hafta, 'token_ay' => (int) round($hafta * 30 / 7)];
     }
 
     /** @return array{token:int,maliyet:float} Analizin toplamı */

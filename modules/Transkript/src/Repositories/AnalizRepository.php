@@ -182,6 +182,20 @@ final class AnalizRepository
         return $statement->rowCount() === 1;
     }
 
+    /** Nabız (Jobs\IsNabzi): aşamayı tutan iş hâlâ çalışıyor; kilit bayatlamasın. */
+    public function asamaNabzi(int $id, string $asama): void
+    {
+        $this->db->prepare('UPDATE transkript_analizler SET updated_at = NOW() WHERE id = :id AND asama = :calisan')
+            ->execute([':id' => $id, ':calisan' => $asama . self::CALISIYOR]);
+    }
+
+    /** Nabız: parçayı işleyen iş hâlâ çalışıyor. */
+    public function parcaNabzi(int $analizId, int $sira): void
+    {
+        $this->db->prepare("UPDATE transkript_parcalar SET updated_at = NOW() WHERE analiz_id = :analiz AND sira = :sira AND durum = 'isleniyor'")
+            ->execute([':analiz' => $analizId, ':sira' => $sira]);
+    }
+
     /** Geçici hatada aşamayı geri bırakır; kuyruk yeniden dener. */
     public function asamayiBirak(int $id, string $asama): void
     {

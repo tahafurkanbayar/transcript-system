@@ -16,6 +16,7 @@
 use App\Core\Auth;
 use App\Core\Database;
 use Modules\Transkript\Repositories\UyelikRepository;
+use Modules\Transkript\Services\KuyrukDurumu;
 use Modules\Transkript\Uyelik\Planlar;
 
 $yonetici = $policy->isAdmin();
@@ -39,8 +40,24 @@ if ($yonetici) {
 }
 
 $plan = $yonetici ? null : Planlar::plan(Auth::user());
+
+/* Komut satırısız kuyruk (cowork 3. tur): bütün Transkript sayfaları
+ * (ayarlar dahil) kuyruğu yürütebilsin. İşçi görülmüyorsa ve iş
+ * bekliyorsa sayfa açılır açılmaz tik döngüsü başlar (assets/js). */
+$tikAdresi = '';
+$tikBaslat = false;
+
+if (KuyrukDurumu::tarayicidanIslenir() && $policy->canAnalyze()) {
+    $tikAdresi = url('panel/transkript/kuyruk/tik');
+
+    try {
+        $tikBaslat = !KuyrukDurumu::isciGorulduMu() && (new KuyrukDurumu(Database::connection()))->getir()['bekleyen'] > 0;
+    } catch (Throwable) {
+        $tikBaslat = false;
+    }
+}
 ?>
-<div class="tk-altmenu-sarici">
+<div class="tk-altmenu-sarici"<?= $tikAdresi !== '' ? ' data-tk-tik="' . e($tikAdresi) . '" data-tk-tik-baslat="' . ($tikBaslat ? '1' : '0') . '"' : '' ?>>
     <nav class="tk-altmenu" aria-label="Transkript bölümleri">
         <?php foreach ($sekmeler as [$ad, $yol, $ikon, $etiket, $rozet]): ?>
             <a class="tk-altmenu__oge<?= $ad === $etkin ? ' is-etkin' : '' ?>" href="<?= e(url($yol)) ?>"<?= $ad === $etkin ? ' aria-current="page"' : '' ?>>

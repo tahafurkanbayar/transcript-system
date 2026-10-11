@@ -176,7 +176,13 @@ $indir = static fn (string $bicim): string => url('panel/transkript/' . $kaynakI
                 <?php endforeach; ?>
             </ol>
             <?php if (!$durdu): ?>
-                <p class="cy-panel__note mb-0">Sayfayı kapatabilirsiniz; analiz arka planda sürer.<?= $rapor !== null ? ' Yeni rapor hazır olana kadar aşağıda önceki rapor görünür.' : '' ?></p>
+                <?php /* İşçi yokken tarayıcı işler: "kapatabilirsiniz" yanlış olurdu (JS ilerlemeyle günceller). */ ?>
+                <?php $tarayiciModu = !empty($durum['tarayici_isle']); ?>
+                <p class="cy-panel__note mb-0">
+                    <span class="js-tk-not-isci"<?= $tarayiciModu ? ' hidden' : '' ?>>Sayfayı kapatabilirsiniz; analiz arka planda sürer.</span>
+                    <span class="js-tk-not-tarayici"<?= $tarayiciModu ? '' : ' hidden' ?>>Kuyruk işçisi çalışmıyor: bu sayfa (ya da başka bir Transkript sayfası) açık kaldıkça analiz sürer; hepsi kapanırsa bekler.</span>
+                    <?= $rapor !== null ? ' Yeni rapor hazır olana kadar aşağıda önceki rapor görünür.' : '' ?>
+                </p>
             <?php endif; ?>
         </section>
 

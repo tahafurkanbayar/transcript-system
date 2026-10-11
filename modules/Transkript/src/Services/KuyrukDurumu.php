@@ -94,14 +94,14 @@ final class KuyrukDurumu
 
             return [
                 'bilinmiyor' => true, 'calisiyor' => true, 'takildi' => false,
-                'bekleyen' => 0, 'calisan' => 0, 'en_eski_sn' => 0, 'son_gorulme_sn' => null,
+                'bekleyen' => 0, 'calisan' => 0, 'en_eski_sn' => 0, 'son_gorulme_sn' => null, 'takili' => 0,
             ];
         }
 
         $son     = self::sonGorulme();
         $gorulme = $son > 0 ? max(0, time() - $son) : null;
 
-        return self::karar($sayilar['bekleyen'], $sayilar['calisan'], $sayilar['en_eski_sn'], $gorulme);
+        return self::karar($sayilar['bekleyen'], $sayilar['calisan'], $sayilar['en_eski_sn'], $gorulme) + ['takili' => $sayilar['takili']];
     }
 
     /**
@@ -159,20 +159,28 @@ final class KuyrukDurumu
         return $son > 0 && ($simdi ?? time()) - $son <= self::ESIK_SN;
     }
 
-    /** @return array{bekleyen: int, calisan: int, en_eski_sn: int} */
+    /** Kuyruk tablosunun adı (config queue.table, yalnız harf / rakam / _). */
+    public static function tablo(): string
+    {
+        return preg_replace('/[^a-zA-Z0-9_]/', '', (string) Config::get('queue.table', 'isler')) ?: 'isler';
+    }
+
+    /** @return array{bekleyen: int, calisan: int, en_eski_sn: int, takili: int} */
     private function sayilar(): array
     {
-        $tablo = preg_replace('/[^a-zA-Z0-9_]/', '', (string) Config::get('queue.table', 'isler')) ?: 'isler';
+        $tablo = self::tablo();
 
         $sorgu = $this->db->prepare(
             "SELECT COALESCE(SUM(durum = 'bekliyor' AND hazir_at <= NOW()), 0) AS bekleyen,
                     COALESCE(MAX(CASE WHEN durum = 'bekliyor' AND hazir_at <= NOW()
                                       THEN TIMESTAMPDIFF(SECOND, hazir_at, NOW()) END), 0) AS en_eski,
-                    COALESCE(SUM(durum = 'calisiyor' AND ayrildi_at > NOW() - INTERVAL :zaman SECOND), 0) AS calisan
+                    COALESCE(SUM(durum = 'calisiyor' AND ayrildi_at > NOW() - INTERVAL :zaman SECOND), 0) AS calisan,
+                    COALESCE(SUM(durum = 'calisiyor' AND ayrildi_at <= NOW() - INTERVAL :zaman2 SECOND), 0) AS takili
                FROM `" . $tablo . "`
               WHERE kuyruk = 'transkript'"
         );
         $sorgu->bindValue(':zaman', max(30, (int) Config::get('queue.timeout', 300)), PDO::PARAM_INT);
+        $sorgu->bindValue(':zaman2', max(30, (int) Config::get('queue.timeout', 300)), PDO::PARAM_INT);
         $sorgu->execute();
 
         $satir = $sorgu->fetch(PDO::FETCH_ASSOC) ?: [];
@@ -181,6 +189,8 @@ final class KuyrukDurumu
             'bekleyen'   => (int) ($satir['bekleyen'] ?? 0),
             'calisan'    => (int) ($satir['calisan'] ?? 0),
             'en_eski_sn' => max(0, (int) ($satir['en_eski'] ?? 0)),
+            // Nabzı 5 dk'dır gelmeyen "çalışıyor" iş: ölmüş; işçi (ya da tarayıcı) bir sonraki turda geri bırakır.
+            'takili'     => (int) ($satir['takili'] ?? 0),
         ];
     }
 

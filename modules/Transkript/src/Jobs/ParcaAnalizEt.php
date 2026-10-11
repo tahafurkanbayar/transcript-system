@@ -56,10 +56,15 @@ final class ParcaAnalizEt extends TranskriptIsi
         return new static((int) ($payload['analiz_id'] ?? 0), (int) ($payload['parca'] ?? 0));
     }
 
-    public function handle(): void
+    /** Nabız: kuyruk satırı + bu parçanın kilidi. */
+    protected function nabizYaz(): void
     {
-        KuyrukDurumu::imle();
+        parent::nabizYaz();
+        $this->analizler()->parcaNabzi($this->analizId, $this->parca);
+    }
 
+    protected function isle(): void
+    {
         $analiz = $this->analizler()->bul($this->analizId);
 
         if ($analiz === null || in_array($analiz['durum'], AnalizRepository::BITMIS_DURUMLAR, true)) {

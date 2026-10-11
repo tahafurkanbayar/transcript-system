@@ -104,10 +104,37 @@ abstract class TranskriptIsi extends Job
         return new static((int) ($payload['analiz_id'] ?? 0));
     }
 
+    /**
+     * İş sürerken nabız atılır (IsNabzi): kuyruk satırı ve aşama kilidi
+     * tazelenir; iş ölürse 5 dk sonra kuyruğa geri döner.
+     */
     public function handle(): void
     {
-        KuyrukDurumu::imle();
+        IsNabzi::basla(fn () => $this->nabizYaz());
 
+        try {
+            $this->isle();
+        } finally {
+            IsNabzi::bitir();
+        }
+    }
+
+    /**
+     * Nabız: bu işin kuyruk satırı (çekirdek releaseStuck'a karşı) ve
+     * aldığı aşamanın kilidi. Parça işi parça kilidini de ekler.
+     */
+    protected function nabizYaz(): void
+    {
+        $this->db()->prepare('UPDATE `' . KuyrukDurumu::tablo() . "` SET ayrildi_at = NOW() WHERE durum = 'calisiyor' AND sinif = :sinif AND veri = :veri")
+            ->execute([':sinif' => static::class, ':veri' => (string) json_encode($this->toPayload(), JSON_UNESCAPED_UNICODE)]);
+
+        if (static::ASAMA !== '') {
+            $this->analizler()->asamaNabzi($this->analizId, static::ASAMA);
+        }
+    }
+
+    protected function isle(): void
+    {
         $analiz = $this->analizler()->bul($this->analizId);
 
         if ($analiz === null || in_array($analiz['durum'], AnalizRepository::BITMIS_DURUMLAR, true)) {

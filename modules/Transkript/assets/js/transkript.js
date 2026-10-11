@@ -94,29 +94,89 @@
         }, devam);
     }
 
-    /* İlerleme yanıtındaki kuyruk_takili → "Kuyruk işçisi çalışmıyor" uyarısı. */
+    /* İlerleme yanıtındaki kuyruk_takili → "Kuyruk işçisi çalışmıyor" uyarısı;
+     * "Sayfayı kapatabilirsiniz" notu yalnız işçi varken (tarayıcıdan
+     * işlenirken sayfa kapanırsa analiz bekler: iki çelişkili cümle olmasın). */
     function kuyrukUyarisi(d) {
         if (d && typeof d.kuyruk_takili === 'boolean') {
             $('.js-tk-kuyruk-uyari').prop('hidden', !d.kuyruk_takili);
+        }
+
+        if (d && typeof d.tarayici_isle === 'boolean') {
+            $('.js-tk-not-isci').prop('hidden', d.tarayici_isle);
+            $('.js-tk-not-tarayici').prop('hidden', !d.tarayici_isle);
         }
 
         tarayicidanIsle(d);
     }
 
     /* Komut satırısız kuyruk: işçi yokken (tarayici_isle) sunucu, kilitle TEK
-     * bir işi çalıştırır. Aynı anda bu sekmeden tek istek; yanıtı beklenmez,
-     * ilerleme yoklaması sürer. global:false → kapalıysa hata bildirimi yok. */
-    var tikAdresi = $('.js-tk-kuyruk-uyari').attr('data-tik') || '';
+     * bir işi çalıştırır. TİK DÖNGÜSÜ (cowork 3. tur): yanıt "bekleyen" iş
+     * söyledikçe bir sonraki tik hemen (işlediyse 1,5 sn, kilit doluysa
+     * 10 sn) atılır; sayfanın kendi analizi bitse ya da sekme arka plana
+     * geçse de kuyruk boşalana kadar sürer. Eskiden yalnız ilerleme
+     * yoklaması tetikliyordu: analiz bitince ya da sekme gizlenince
+     * duruyor, öteki analizlerin işleri sırada kalıyordu (11.10.2026,
+     * 04:20–04:30). Bütün Transkript sayfaları (ayarlar dahil) alt
+     * menüdeki data-tk-tik ile katılır. global:false → hata bildirimi yok. */
+    var $tikKaynagi = $('[data-tk-tik]');
+    var tikAdresi = $('.js-tk-kuyruk-uyari').attr('data-tik') || $tikKaynagi.attr('data-tk-tik') || '';
     var tikSuruyor = false;
+    var tikZamanlayici = null;
 
-    function tarayicidanIsle(d) {
-        if (!tikAdresi || tikSuruyor || !d || d.tarayici_isle !== true) { return; }
+    function tikZamanla(ms) {
+        window.clearTimeout(tikZamanlayici);
+        tikZamanlayici = window.setTimeout(tikAt, ms);
+    }
+
+    function tikAt() {
+        tikZamanlayici = null;
+
+        if (!tikAdresi || tikSuruyor) { return; }
 
         tikSuruyor = true;
 
         $.ajax({ url: tikAdresi, method: 'POST', dataType: 'json', global: false, data: { csrf_token: CY.token() } })
-            .always(function () { tikSuruyor = false; });
+            .done(function (r) {
+                tikSuruyor = false;
+
+                if (r && typeof r.bekleyen === 'number' && r.bekleyen > 0) {
+                    tikZamanla(r.islenen ? 1500 : 10000);
+                }
+            })
+            .fail(function () {
+                tikSuruyor = false;
+                tikZamanla(30000);
+            });
     }
+
+    function tarayicidanIsle(d) {
+        if (!tikAdresi || tikSuruyor || tikZamanlayici !== null || !d || d.tarayici_isle !== true) { return; }
+
+        tikAt();
+    }
+
+    if (tikAdresi && $tikKaynagi.attr('data-tk-tik-baslat') === '1') {
+        tikZamanla(800);
+    }
+
+    /* Durum sekmesi: işçi komutunu panoya kopyala (Kopyala → Kopyalandı). */
+    $(document).on('click', '.js-tk-kopyala', function () {
+        var $d = $(this);
+        var metin = $d.attr('data-kopya') || '';
+        var bitti = function (tamam) {
+            $d.find('.js-tk-kopya-metin').length || $d.append(' ');
+            $d.attr('data-durum', tamam ? 'tamam' : 'hata');
+            $d.contents().last()[0].textContent = tamam ? ' Kopyalandı' : ' Seçip kopyalayın';
+            window.setTimeout(function () { $d.contents().last()[0].textContent = ' Kopyala'; }, 2000);
+        };
+
+        if (navigator.clipboard && window.isSecureContext !== false) {
+            navigator.clipboard.writeText(metin).then(function () { bitti(true); }, function () { bitti(false); });
+        } else {
+            bitti(false);
+        }
+    });
 
     /* Sekme arka plandayken istek atılmaz; dönünce hemen bir kez bakılır. */
     function yokla(is) {
@@ -204,16 +264,27 @@
                     goster('bilgi', res.description + ' Rapor sayfasına geçiliyor…');
                     window.location.href = res.adres;
                 }
-            }).fail(function (xhr) {
+            }).fail(function (xhr, durum) {
                 var res = xhr.responseJSON || {};
 
-                // Oturum düştüyse app.js uyarır ve sayfayı yeniler.
+                /* Gönderim hiçbir zaman sessizce başarısız olmasın (cowork 3. tur):
+                 * oturum / güvenlik anahtarı (CSRF) süresi dolduysa sebep kutuda
+                 * kalır ve sayfa bağlantı kutuya YENİDEN YAZILMIŞ olarak açılır
+                 * (?url=…); tek dokunuşla yeniden gönderilir. */
                 if (res.expired === true || xhr.status === 401 || xhr.status === 419) {
-                    CY.ajaxError(xhr);
+                    goster('hata', 'Oturumunuzun güvenlik anahtarının süresi dolmuş; analiz başlatılmadı. Sayfa yenileniyor, bağlantı kutuda hazır olacak: "Analiz Et"e yeniden basın.');
+
+                    window.setTimeout(function () {
+                        window.location.href = window.location.pathname + '?url=' + encodeURIComponent(url) + '#tk_analiz';
+                    }, 2500);
                     return;
                 }
 
-                goster('hata', res.description || 'Analiz başlatılamadı. Biraz sonra yeniden deneyin.');
+                goster('hata', res.description || (xhr.status === 0
+                    ? 'Sunucuya ulaşılamadı; analiz başlatılmadı. Bağlantınızı kontrol edip yeniden deneyin.'
+                    : durum === 'parsererror'
+                        ? 'Sunucu beklenmeyen bir yanıt verdi; analiz başlatılmadı. Sayfayı yenileyip yeniden deneyin.'
+                        : 'Analiz başlatılamadı (HTTP ' + xhr.status + '). Biraz sonra yeniden deneyin.'));
             }).always(function () {
                 $dugme.prop('disabled', false);
             });

@@ -70,6 +70,7 @@ use Modules\Transkript\Controllers\KaynakController;
 use Modules\Transkript\Controllers\UyelikController;
 use Modules\Transkript\HataKodlari;
 use Modules\Transkript\Jobs\AnalizBirlestir;
+use Modules\Transkript\Jobs\IsNabzi;
 use Modules\Transkript\Jobs\KaynakBilgisiAl;
 use Modules\Transkript\Jobs\ParcaAnalizEt;
 use Modules\Transkript\Jobs\RaporuTamamla;
@@ -3368,11 +3369,35 @@ foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator(MODUL_YOLU
 $kurBat = (string) @file_get_contents(CY_BASE . '/kuyruk-isci-kur.bat');
 $kurPs  = (string) @file_get_contents(CY_BASE . '/kuyruk-isci-kur.ps1');
 dogrula('Modül PHP\'den süreç / işletim sistemi komutu başlatmaz (exec, shell_exec, popen, proc_open, system); bin/ yalnız CLI korumalıysa muaf', $surecKomutu === [], implode(', ', $surecKomutu));
-dogrula('kuyruk-isci-kur.bat: etiket / goto yok, ps1\'i çağırır; görev oturum açılınca, gizli, tek örnek, süre sınırsız',
+dogrula('kuyruk-isci-kur.bat: etiket / goto yok, ps1\'i çağırır; görev oturum açılınca ve 5 dk\'da bir (ölen işçi yeniden başlar), gizli, tek örnek, süre sınırsız',
     $kurBat !== '' && !preg_match('/^\s*(:\w|goto\b)/mi', $kurBat) && str_contains($kurBat, 'kuyruk-isci-kur.ps1') && str_contains($kurBat, '%1')
-    && str_contains($kurPs, '-AtLogOn') && str_contains($kurPs, '-MultipleInstances IgnoreNew') && str_contains($kurPs, '-WindowStyle Hidden')
+    && str_contains($kurPs, '-AtLogOn') && str_contains($kurPs, '-RepetitionInterval (New-TimeSpan -Minutes 5)')
+    && str_contains($kurPs, '-MultipleInstances IgnoreNew') && str_contains($kurPs, '-WindowStyle Hidden')
     && str_contains($kurPs, '-ExecutionTimeLimit ([TimeSpan]::Zero)') && str_contains($kurPs, 'Unregister-ScheduledTask')
     && KuyrukDurumu::KOMUT_KUR === 'kuyruk-isci-kur.bat');
+
+/* Kuyruk nabzı (cowork 3. tur): çalışan iş kuyruk satırını, aşama ve parça kilidini tazeler; ölen iş 5 dk sonra geri döner. */
+$nabizSayac = 0;
+IsNabzi::basla(static function () use (&$nabizSayac): void { $nabizSayac++; });
+IsNabzi::at();
+IsNabzi::at();
+$kanca = (new ReflectionProperty(HttpProvider::class, 'nabiz'))->getValue();
+$etkinIken = IsNabzi::etkin();
+IsNabzi::bitir();
+$tiKodu = (string) file_get_contents(MODUL_YOLU . '/src/Jobs/TranskriptIsi.php');
+$paKodu = (string) file_get_contents(MODUL_YOLU . '/src/Jobs/ParcaAnalizEt.php');
+dogrula('İş nabzı: işin başında bir kez, sonra en çok 30 sn\'de bir; HTTP ilerlemesine bağlanır, iş bitince çözülür; kuyruk satırı (ayrildi_at), aşama ve parça kilidi tazelenir',
+    $nabizSayac === 1 && $kanca instanceof Closure && $etkinIken && !IsNabzi::etkin() && (new ReflectionProperty(HttpProvider::class, 'nabiz'))->getValue() === null
+    && str_contains($tiKodu, "SET ayrildi_at = NOW() WHERE durum = 'calisiyor' AND sinif = :sinif AND veri = :veri")
+    && str_contains($tiKodu, 'IsNabzi::basla(') && str_contains($tiKodu, 'IsNabzi::bitir()') && str_contains($tiKodu, 'asamaNabzi(')
+    && str_contains($paKodu, 'parcaNabzi(') && !preg_match('/public function handle\(\)/', $paKodu));
+
+$jsKuyruk = (string) file_get_contents(MODUL_YOLU . '/assets/js/transkript.js');
+preg_match('#public function kuyrukTik\(.*?\n    }\n#s', (string) file_get_contents(MODUL_YOLU . '/src/Controllers/KaynakController.php'), $tikGovde2);
+$altMenu = App\Core\View::capture('Transkript::_parcalar/alt-menu', ['policy' => $prY, 'etkin' => 'ayarlar']);
+dogrula('Tarayıcı tik döngüsü: yanıt "bekleyen" söyledikçe sürer (analiz bitse / sekme gizlense de); bütün Transkript sayfaları alt menüden katılır; gönderim hatası kutuda kalır',
+    str_contains($tikGovde2[0] ?? '', "'bekleyen' =>") && str_contains($jsKuyruk, 'function tikZamanla(') && str_contains($jsKuyruk, "attr('data-tk-tik-baslat') === '1'")
+    && str_contains($altMenu, 'data-tk-tik="') && str_contains($jsKuyruk, "'?url=' + encodeURIComponent(url)") && str_contains($jsKuyruk, 'Sunucuya ulaşılamadı'));
 
 $durduCiz = static fn (TranskriptPolicy $p): string => App\Core\View::capture('Transkript::goster', [
     'kaynak' => ['id' => 25, 'tur' => 'youtube', 'dis_kimlik' => 'abcdefghijk', 'sahip_id' => 0, 'baslik' => 'Örnek', 'kanal_adi' => 'Kanal',
