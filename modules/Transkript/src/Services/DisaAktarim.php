@@ -6,6 +6,7 @@
  *  Rakiplerde ortak beklenti (Glasp: Markdown / HTML / CSV / JSON,
  *  transcript kopyalama; docs/RAKIP_ANALIZI.md):
  *
+ *    rapor.pdf        rapor PDF (Pdf\RaporPdf); zaman damgası bağlantı, içindekiler
  *    rapor.md         rapor Markdown; zaman damgaları youtu.be?t= bağlantısı
  *    transkript.txt   okunur bloklar, "[hh:mm:ss] metin"
  *    transkript.srt   altyazı (video düzenleyiciler, oynatıcılar)
@@ -22,6 +23,7 @@ declare(strict_types=1);
 
 namespace Modules\Transkript\Services;
 
+use Modules\Transkript\Kategori\Kategoriler;
 use Modules\Transkript\Transcript\Segment;
 use Modules\Transkript\Zaman;
 
@@ -29,6 +31,7 @@ final class DisaAktarim
 {
     /** İndirilebilir biçimler: ad → [içerik türü, dosya eki] */
     public const BICIMLER = [
+        'rapor.pdf'      => ['application/pdf', 'rapor.pdf'],
         'rapor.md'       => ['text/markdown; charset=utf-8', 'rapor.md'],
         'transkript.txt' => ['text/plain; charset=utf-8', 'transkript.txt'],
         'transkript.srt' => ['application/x-subrip; charset=utf-8', 'srt'],
@@ -48,9 +51,10 @@ final class DisaAktarim
     /**
      * @param array<string,mixed>      $kaynak transkript_kaynaklar satırı
      * @param array<string,mixed>      $rapor  doğrulanmış rapor JSON'u
-     * @param array<string,mixed>|null $analiz RaporVerisi::getir()['analiz']
+     * @param array<string,mixed>|null $analiz   RaporVerisi::getir()['analiz']
+     * @param array<string,mixed>|null $kategori RaporVerisi::getir()['kategori'] (Kategoriler::disaVer)
      */
-    public static function markdown(array $kaynak, array $rapor, ?array $analiz, ?array $transcript = null): string
+    public static function markdown(array $kaynak, array $rapor, ?array $analiz, ?array $transcript = null, ?array $kategori = null): string
     {
         $video = $kaynak['tur'] === 'youtube' ? (string) $kaynak['dis_kimlik'] : '';
         $zaman = static fn (mixed $at): string => self::zamanBaglantisi($at, $video);
@@ -67,6 +71,13 @@ final class DisaAktarim
 
         if ($meta !== []) {
             $satir[] = implode(' · ', $meta);
+            $satir[] = '';
+        }
+
+        if ($kategori !== null) {
+            $satir[] = 'Kategori: ' . self::md(Kategoriler::ozet($kategori))
+                . ($kategori['ana_konu'] !== '' ? ' · Konu: ' . self::md($kategori['ana_konu']) : '')
+                . ($kategori['etiketler'] !== [] ? ' · Etiketler: ' . implode(', ', array_map(self::md(...), $kategori['etiketler'])) : '');
             $satir[] = '';
         }
 

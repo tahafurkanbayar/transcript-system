@@ -157,6 +157,8 @@ final class TranskriptApiController extends Controller
             'kaynak_id'      => (int) $veri['durum']['kaynak_id'],
             'analiz'         => $analiz,
             'eksik_araliklar' => $veri['eksik'],
+            // Video kategorisi (içerik türü, konu alanı, seviye, ana konu, etiketler); belirlenmediyse null.
+            'kategori'       => $veri['kategori'],
             'rapor'          => $veri['rapor'],
         ]);
     }

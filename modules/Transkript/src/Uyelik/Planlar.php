@@ -201,7 +201,7 @@ final class Planlar
             $satir('En uzun video', 'Bundan uzun videolar analiz edilmez', static fn (array $p): string|bool => !$p['analiz'] ? false
                 : self::sureMetni(self::etkinEnUzunDk($p['en_uzun_dk'], $sistem))),
             $satir('Yeniden analiz', 'Kendi raporunuzu güncel modelle baştan üretmek', static fn (array $p): bool => $p['analiz'] && $p['yeniden_analiz']),
-            $satir('Rapor ve metin indirme', 'Markdown rapor ve düz metin transcript', static fn (): bool => true),
+            $satir('Rapor ve metin indirme', 'PDF ve Markdown rapor, düz metin transcript', static fn (): bool => true),
             $satir('Altyazı indirme', 'SRT ve VTT (video düzenleyiciler için)', static fn (array $p): bool => $p['altyazi_indir']),
             ['etiket' => 'API erişimi', 'aciklama' => 'Kendi uygulamanızdan analiz başlatmak (Bearer anahtar)', 'degerler' => $api],
         ];

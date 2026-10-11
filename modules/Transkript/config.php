@@ -211,6 +211,17 @@ return [
             'gemini_ek'   => ['thinkingConfig' => ['thinkingBudget' => 4096]],
         ],
 
+        /* Video kategorisi (Jobs\KategoriBelirle): rapor bitince ayrı, küçük
+         * bir çağrı; girdi raporun özeti. Model boşsa rapor modeli (EVREN:
+         * rapor modeli, yoksa EVREN modeli; analize sabitlenen model önce). */
+        'kategori' => [
+            'saglayici'   => '',
+            'model'       => '',
+            'max_token'   => 2048,
+            'zaman_asimi' => 90,
+            'gemini_ek'   => ['thinkingConfig' => ['thinkingBudget' => 0]],
+        ],
+
         // Onarım isteğinde modele geri verilen bozuk yanıtın en çok uzunluğu.
         'onarim_en_cok_karakter' => 6000,
 
@@ -337,6 +348,23 @@ return [
         'en_cok_is'         => 50,
         'panelden_isle'     => false,
         'tarayicidan_isle'  => null,
+    ],
+
+    /* -----------------------------------------------------------------
+     *  VİDEO KATEGORİSİ (Kategori\Kategoriler, Jobs\KategoriBelirle)
+     * -----------------------------------------------------------------
+     *  İçerik türü (ders anlatımı, vlog, haber …), konu alanı (teknoloji,
+     *  spor, siyaset …), seviye, ana konu ve etiketler; tablo
+     *  transkript_kategoriler. İleride türe göre içerik üretimi (soru /
+     *  test, makale) bunun üstüne kurulur.
+     *
+     *  otomatik  rapor bitince kategori işi kuyruğa girer: küçük bir AI
+     *            çağrısı (ai.kategori), girdi raporun özeti. Kapalıyken
+     *            kategori yalnız yöneticinin elle girdiği ve
+     *            bin/kategori-doldur.php ile dolar.
+     * -------------------------------------------------------------- */
+    'kategori' => [
+        'otomatik' => true,
     ],
 
     /* -----------------------------------------------------------------

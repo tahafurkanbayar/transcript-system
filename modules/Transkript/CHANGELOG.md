@@ -3,6 +3,50 @@
 Starter'ın sürüm geçmişi kökteki `CHANGELOG.md`'dedir; bu dosya yalnız
 `modules/Transkript/` içindir. Biçim [Keep a Changelog](https://keepachangelog.com/tr/1.1.0/).
 
+## 0.11.0 (2026-10-11): PDF raporu ve video kategorisi
+
+Kullanıcı isteği: "çıkan sonuçları PDF olarak da kullanıcıya verelim";
+"videoların kategorisini belirleyebilir miyiz … veritabanında tutsak ileride
+çok işimize yarayacak (ders videosundan soru / test, teknoloji tanıtımından
+makale)".
+
+### Video kategorisi
+- Tablo `transkript_kategoriler` (migration `2026_10_11_170000`, yalnız yeni
+  tablo; `down()` siler): video başına içerik türü (biçim), konu alanı,
+  ikincil alan, seviye, ana konu, etiketler (≤8), belirleyen (ai / elle),
+  istem sürümü, model.
+- `Kategori\Kategoriler`: 17 içerik türü, 22 konu alanı, 4 seviye; Türkçe
+  ad / kimlik, AI çıktısı doğrulama (bilinmeyen → "diger"), yönetici formunda
+  katı doğrulama, etiket temizliği.
+- `Jobs\KategoriBelirle`: RaporuTamamla'dan sonra kuyruğa girer
+  (`kategori.otomatik`); girdi raporun özeti (transcript değil),
+  `prompts/kategori.v1.txt`, şemada enum. Elle düzeltilmiş ya da bu analizden
+  çıkarılmışsa AI'a gitmez; GET_LOCK + iş nabzı; dinlenmede erteleme (≤3);
+  başarısız olsa da rapor tamam. Ölçüm: qwen3.8-flash-next ~5 sn, ~2.400 token.
+- Rapor sayfası: tür / alan / seviye rozeti (tıklayınca liste süzülür),
+  etiketler, konu; yöneticiye "Kategoriyi düzelt" (`POST …/kategori`).
+  Liste: "İçerik türü" ve "Konu alanı" süzgeci (ikincil alan da), satırda tür ·
+  alan. API `ozet` → `kategori`. PDF'te rozetler, Markdown'da satır.
+- `bin/kategori-doldur.php` (`--dry-run`, `--hemen`, `--yenile`, `--limit`):
+  var olan 23 rapor dolduruldu (23 / 23).
+
+### PDF raporu
+
+- Rapor sayfası → Dışa aktar → **Rapor (PDF)** (`indir/rapor.pdf`); raporu
+  görebilen herkes indirebilir (Markdown gibi), AI çağrısı yok.
+- `Pdf\PdfBelgesi`: bağımlılıksız PDF 1.4 yazıcı (metin, yuvarlak köşeli
+  kutu, çizgi, URI bağlantısı, yer imleri, belge bilgisi, Flate). Yazı tipi
+  gömülmez: Helvetica / Helvetica-Bold / Helvetica-Oblique, CP1254 kodlaması
+  (/Differences ile Ğ İ Ş ğ ı ş); genişlik tablosu Helvetica AFM ile aynı.
+- `Pdf\Akis`: kelime kelime satır kırma, rozet, sekme hizası, asılı girinti,
+  zeminli kutu, sayfa geçişi ve üst bilgi; kısa maddeler sayfada bölünmez.
+- `Pdf\RaporPdf`: başlık ve künye (kanal, süre, transcript dili, model,
+  istem), kısa özet kutusu, detaylı özet, konular (zaman aralığı), önemli
+  noktalar (Kritik / Önemli / Faydalı rozeti), zaman çizelgesi, kavramlar
+  (kategoriye göre), fikirler, iddialar, öneriler. Zaman damgası YouTube'da
+  o saniyeyi açar; alt bilgide "Sayfa i / N" ve yapay zekâ uyarısı.
+- Ölçüm: 5:18 video 2 sayfa / 12 KB / ~20 ms; 1:06:25 video 7 sayfa / 43 KB.
+
 ## 0.10.0 (2026-10-11): EVREN geliştirme + cowork 3. test turu
 
 Kullanıcı isteği (bilgisayar başında değil, "tüm onaylar sende"): cowork 3.

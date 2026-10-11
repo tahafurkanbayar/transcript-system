@@ -31,7 +31,10 @@ use App\Core\Response;
 use App\Core\Setting;
 use App\Http\Controller;
 use Modules\Transkript\HataKodlari;
+use Modules\Transkript\Kategori\Kategoriler;
+use Modules\Transkript\Pdf\RaporPdf;
 use Modules\Transkript\Repositories\AnalizRepository;
+use Modules\Transkript\Repositories\KategoriRepository;
 use Modules\Transkript\Repositories\KaynakRepository;
 use Modules\Transkript\Repositories\KutuphaneRepository;
 use Modules\Transkript\Repositories\SegmentRepository;
@@ -39,6 +42,7 @@ use Modules\Transkript\Services\AnalizBaslatici;
 use Modules\Transkript\Services\AnalizReddedildi;
 use Modules\Transkript\Services\Cleaner;
 use Modules\Transkript\Services\DisaAktarim;
+use Modules\Transkript\Services\GecersizSonuc;
 use Modules\Transkript\Services\KaynakDurumu;
 use Modules\Transkript\Services\KayitYonetimi;
 use Modules\Transkript\Services\KuyrukDurumu;
@@ -68,6 +72,9 @@ final class KaynakController extends Controller
             'kapsam' => !$policy->isAdmin() && $kapsam === 'kutuphanem' ? '' : $kapsam,
             // Kişiye göre süzgeç yalnız yöneticide.
             'kullanici' => $policy->isAdmin() ? (string) ($request->int('kullanici', 1) ?? '') : '',
+            // Video kategorisi (Kategori\Kategoriler): içerik türü ve konu alanı.
+            'icerik'    => isset(Kategoriler::TURLER[$request->input('icerik')]) ? $request->input('icerik') : '',
+            'alan'      => isset(Kategoriler::ALANLAR[$request->input('alan')]) ? $request->input('alan') : '',
         ];
         $boyut = max(5, min(50, (int) Setting::get('sistem_sayfa_basina', '10') ?: 10));
         $sayfa = $request->int('sayfa', 1, 100000) ?? 1;
@@ -192,14 +199,16 @@ final class KaynakController extends Controller
             throw HttpException::forbidden('Altyazı indirme Pro planında. Üyeliğim sayfasından Pro\'ya geçebilirsiniz.');
         }
 
-        if ($bicim === 'rapor.md') {
+        if ($bicim === 'rapor.md' || $bicim === 'rapor.pdf') {
             $veri = (new RaporVerisi($this->db, new TranskriptPolicy(Auth::user())))->getir($kaynak);
 
             if ($veri['rapor'] === null) {
                 throw HttpException::notFound();
             }
 
-            $icerik = DisaAktarim::markdown($kaynak, $veri['rapor'], $veri['analiz'], $veri['transcript']);
+            $icerik = $bicim === 'rapor.pdf'
+                ? RaporPdf::olustur($kaynak, $veri['rapor'], $veri['analiz'], $veri['transcript'], ['site' => Setting::get('site_adi'), 'kategori' => $veri['kategori']])
+                : DisaAktarim::markdown($kaynak, $veri['rapor'], $veri['analiz'], $veri['transcript'], $veri['kategori']);
         } else {
             $segmentler = new SegmentRepository($this->db);
             $metin      = $segmentler->sonMetin((int) $kaynak['id']) ?? throw HttpException::notFound();
@@ -368,6 +377,43 @@ final class KaynakController extends Controller
         Response::success($paylas ? 'Rapor üyelerle paylaşıldı; panele giren herkes görebilir.' : 'Paylaşım kaldırıldı; rapor yalnız kütüphanesine ekleyenlere görünür.', [
             'adres' => url('panel/transkript/' . (int) $kaynak['id']),
         ]);
+    }
+
+    /**
+     * POST panel/transkript/{kaynak_id}/kategori — yönetici video
+     * kategorisini düzeltir. Değerler listeden olmalı (Kategoriler::dogrula
+     * katı); kayıt "elle" olur, yeniden analizde AI üzerine yazmaz.
+     */
+    public function kategori(Request $request, string $kaynak_id): void
+    {
+        $kaynak = $this->gorulebilirKaynak($kaynak_id);
+        $adres  = url('panel/transkript/' . (int) $kaynak['id']);
+        $analiz = (new KaynakRepository($this->db))->guncelTamamlanmisAnaliz((int) $kaynak['id']);
+
+        if ($analiz === null) {
+            Flash::error('Raporu olmayan videonun kategorisi girilemez.');
+            Response::redirect($adres);
+        }
+
+        try {
+            $k = Kategoriler::dogrula([
+                'icerik_turu'  => $request->input('icerik_turu'),
+                'konu_alani'   => $request->input('konu_alani'),
+                'ikincil_alan' => $request->input('ikincil_alan'),
+                'seviye'       => $request->input('seviye'),
+                'ana_konu'     => mb_substr($request->input('ana_konu'), 0, 200),
+                'etiketler'    => mb_substr($request->input('etiketler'), 0, 400),
+            ], true);
+        } catch (GecersizSonuc $e) {
+            Flash::error('Kategori kaydedilmedi: ' . implode(' ', $e->sorunlar));
+            Response::redirect($adres);
+        }
+
+        (new KategoriRepository($this->db))->yaz((int) $kaynak['id'], (int) $analiz['id'], $k, KategoriRepository::ELLE);
+
+        Logger::info('Video kategorisi elle düzeltildi', ['kaynak' => (int) $kaynak['id'], 'kullanici' => Auth::id(), 'tur' => $k['icerik_turu'], 'alan' => $k['konu_alani']], 'transkript');
+        Flash::success('Kategori kaydedildi. Yeniden analizde yapay zekâ bu kaydı değiştirmez.');
+        Response::redirect($adres);
     }
 
     /**

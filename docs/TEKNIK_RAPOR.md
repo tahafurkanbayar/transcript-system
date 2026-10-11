@@ -108,6 +108,7 @@ Modül 11 tablo ekler (kişisel kütüphane 2026-10-09 kararıyla eklendi); kull
 | `transkript_sohbet_mesajlari` | Sohbet mesajları | `sohbet_id` FK, `rol`, `icerik`, `atif_ms_json`, `giris_token`, `cikis_token`, `maliyet_usd` |
 | `transkript_ilgi_alanlari` | Kişisel AI filtresi | `kullanici_id`, `ilgi`, `agirlik`; UNIQUE(`kullanici_id`, `ilgi`) |
 | `transkript_kutuphane` | Kişisel kütüphane (2026-10-09 kararı): raporu kimin gördüğü | `kullanici_id`, `kaynak_id` FK, `ekleme_turu` (baslatti / onbellek); UNIQUE(`kullanici_id`, `kaynak_id`). Paylaşım için `transkript_kaynaklar.paylasildi` |
+| `transkript_kategoriler` | Video kategorisi (2026-10-11 kullanıcı isteği; ileride türe göre içerik üretimi: ders → soru / test, tanıtım → makale) | `kaynak_id` FK UNIQUE, `analiz_id`, `icerik_turu` (biçim: ders_anlatimi, vlog, haber …), `konu_alani` (teknoloji, spor, siyaset …), `ikincil_alan`, `seviye` (genel / baslangic / orta / ileri), `ana_konu`, `etiketler` (JSON, ≤8), `belirleyen` (ai / elle), `istem_surumu`, `model`. Değer listesi `Kategori\Kategoriler`; AI `Jobs\KategoriBelirle` ile rapor bitince doldurur, yönetici rapor sayfasında düzeltir |
 
 **AI maliyet kaydı:** her AI çağrısı için `ai_kullanim_kaydi` tablosu (`modul`, `ref_tur`, `ref_id`, `saglayici`, `model`, `giris_token`, `cikis_token`, `maliyet_usd DECIMAL(12,8)`, `sure_ms`, `durum`). İlk sürümde modülün migration'ında açılır, adı genel tutulur ki ileride başka modüller de yazabilsin. Bununla modülün toplamı 11 tablo eder.
 

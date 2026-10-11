@@ -28,6 +28,7 @@
 
 use App\Core\View;
 use Modules\Transkript\Ayarlar;
+use Modules\Transkript\Kategori\Kategoriler;
 use Modules\Transkript\Services\DisaAktarim;
 use Modules\Transkript\Services\ModelOzeti;
 use Modules\Transkript\Services\RaporVerisi;
@@ -127,6 +128,76 @@ $indir = static fn (string $bicim): string => url('panel/transkript/' . $kaynakI
                         <span title="Kısa özet, konular ve önemli noktalar"><?= icon('book', 'cy-icon cy-icon--sm') ?> ~<?= RaporVerisi::okumaDakikasi($rapor) ?> dk okuma</span>
                     <?php endif; ?>
                 </p>
+                <?php $kategori = $veri['kategori'] ?? null; ?>
+                <?php if ($kategori !== null): ?>
+                    <?php /* Video kategorisi (Kategori\Kategoriler): tür ve alana tıklayınca liste o süzgeçle açılır. */ ?>
+                    <div class="tk-video-kategori" aria-label="Video kategorisi">
+                        <a class="cy-pill is-info" href="<?= e(url('panel/transkript') . '?icerik=' . rawurlencode($kategori['icerik_turu'])) ?>" title="İçerik türü: bu türdeki videolar"><?= e($kategori['icerik_turu_adi']) ?></a>
+                        <a class="cy-pill" href="<?= e(url('panel/transkript') . '?alan=' . rawurlencode($kategori['konu_alani'])) ?>" title="Konu alanı: bu alandaki videolar"><?= e($kategori['konu_alani_adi']) ?></a>
+                        <?php if ($kategori['ikincil_alan'] !== null): ?>
+                            <a class="cy-pill" href="<?= e(url('panel/transkript') . '?alan=' . rawurlencode($kategori['ikincil_alan'])) ?>" title="İkincil alan"><?= e($kategori['ikincil_alan_adi']) ?></a>
+                        <?php endif; ?>
+                        <?php if ($kategori['seviye'] !== 'genel'): ?>
+                            <span class="cy-pill is-warn" title="Seviye"><?= e($kategori['seviye_adi']) ?></span>
+                        <?php endif; ?>
+                        <?php foreach ($kategori['etiketler'] as $etiket): ?>
+                            <span class="tk-etiket">#<?= e($etiket) ?></span>
+                        <?php endforeach; ?>
+                    </div>
+                    <?php if ($kategori['ana_konu'] !== ''): ?>
+                        <p class="tk-video-kategori__konu"><span>Konu:</span> <?= e($kategori['ana_konu']) ?></p>
+                    <?php endif; ?>
+                <?php endif; ?>
+                <?php if ($rapor !== null && $policy->isAdmin()): ?>
+                    <?php
+                    /* Yönetici kategoriyi düzeltir; "elle" işaretlenir, yeniden analizde AI üzerine yazmaz. */
+                    $kd = $kategori ?? ['icerik_turu' => '', 'konu_alani' => '', 'ikincil_alan' => null, 'seviye' => 'genel', 'ana_konu' => '', 'etiketler' => [], 'belirleyen' => ''];
+                    ?>
+                    <details class="tk-kategori-duzelt">
+                        <summary><?= $kategori === null ? 'Kategori belirlenmedi — elle gir' : 'Kategoriyi düzelt' ?><?= ($kategori['belirleyen'] ?? '') === 'elle' ? ' (elle girildi)' : '' ?></summary>
+                        <form method="post" action="<?= e(url('panel/transkript/' . $kaynakId . '/kategori')) ?>" class="tk-kategori-duzelt__form">
+                            <?= csrf_field() ?>
+                            <label>İçerik türü
+                                <select class="form-select form-select-sm" name="icerik_turu" required>
+                                    <?php foreach (Kategoriler::TURLER as $kimlik => [$ad]): ?>
+                                        <option value="<?= e($kimlik) ?>"<?= $kd['icerik_turu'] === $kimlik ? ' selected' : '' ?>><?= e($ad) ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </label>
+                            <label>Konu alanı
+                                <select class="form-select form-select-sm" name="konu_alani" required>
+                                    <?php foreach (Kategoriler::ALANLAR as $kimlik => [$ad]): ?>
+                                        <option value="<?= e($kimlik) ?>"<?= $kd['konu_alani'] === $kimlik ? ' selected' : '' ?>><?= e($ad) ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </label>
+                            <label>İkincil alan
+                                <select class="form-select form-select-sm" name="ikincil_alan">
+                                    <option value="yok">Yok</option>
+                                    <?php foreach (Kategoriler::ALANLAR as $kimlik => [$ad]): ?>
+                                        <?php if ($kimlik !== Kategoriler::DIGER): ?>
+                                            <option value="<?= e($kimlik) ?>"<?= $kd['ikincil_alan'] === $kimlik ? ' selected' : '' ?>><?= e($ad) ?></option>
+                                        <?php endif; ?>
+                                    <?php endforeach; ?>
+                                </select>
+                            </label>
+                            <label>Seviye
+                                <select class="form-select form-select-sm" name="seviye">
+                                    <?php foreach (Kategoriler::SEVIYELER as $kimlik => $ad): ?>
+                                        <option value="<?= e($kimlik) ?>"<?= $kd['seviye'] === $kimlik ? ' selected' : '' ?>><?= e($ad) ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </label>
+                            <label class="tk-kategori-duzelt__genis">Ana konu
+                                <input type="text" class="form-control form-control-sm" name="ana_konu" maxlength="200" value="<?= e($kd['ana_konu']) ?>">
+                            </label>
+                            <label class="tk-kategori-duzelt__genis">Etiketler (virgülle, en çok <?= Kategoriler::ETIKET_EN_COK ?>)
+                                <input type="text" class="form-control form-control-sm" name="etiketler" maxlength="400" value="<?= e(implode(', ', $kd['etiketler'])) ?>">
+                            </label>
+                            <button type="submit" class="btn cy-btn cy-btn--primary cy-btn--sm"><?= icon('save', 'cy-icon cy-icon--sm') ?> Kaydet</button>
+                        </form>
+                    </details>
+                <?php endif; ?>
                 <p class="tk-kart__eylem">
                     <?php if ($youtube): ?>
                         <a class="btn cy-btn cy-btn--ghost cy-btn--sm" href="<?= e(RaporVerisi::youtubeBaglantisi($videoId, 0)) ?>" target="_blank" rel="noopener">
@@ -448,6 +519,7 @@ $indir = static fn (string $bicim): string => url('panel/transkript/' . $kaynakI
                     <h3 class="cy-panel__title mb-2"><?= icon('save', 'cy-icon cy-icon--sm') ?> Dışa aktar</h3>
                     <div class="tk-disa__liste">
                         <?php if ($rapor !== null): ?>
+                            <a class="btn cy-btn cy-btn--primary cy-btn--sm" href="<?= e($indir('rapor.pdf')) ?>" download><?= icon('file', 'cy-icon cy-icon--sm') ?> Rapor (PDF)</a>
                             <a class="btn cy-btn cy-btn--ghost cy-btn--sm" href="<?= e($indir('rapor.md')) ?>" download><?= icon('file', 'cy-icon cy-icon--sm') ?> Rapor (Markdown)</a>
                         <?php endif; ?>
                         <?php if ($veri['transcript'] !== null): ?>

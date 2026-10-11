@@ -35,6 +35,7 @@
 use App\Core\View;
 use App\Models\Role;
 use Modules\Transkript\HataKodlari;
+use Modules\Transkript\Kategori\Kategoriler;
 use Modules\Transkript\Services\RaporVerisi;
 use Modules\Transkript\Varliklar;
 
@@ -54,7 +55,8 @@ $filtre['kullanici'] ??= '';
 $kisiler    = $kisiler ?? [];
 $paylasilan = (int) ($paylasilan ?? 0);
 $benId      = (int) ($benId ?? 0);
-$filtreli = $filtre['q'] !== '' || $filtre['durum'] !== $varsayilanDurum || $filtre['kapsam'] !== '' || $filtre['kullanici'] !== '';
+$filtreli = $filtre['q'] !== '' || $filtre['durum'] !== $varsayilanDurum || $filtre['kapsam'] !== '' || $filtre['kullanici'] !== ''
+    || ($filtre['icerik'] ?? '') !== '' || ($filtre['alan'] ?? '') !== '';
 $hak      = $hak ?? null;
 $hakDolu  = $hak !== null && $hak['bekleme_sn'] > 0;
 // Adreste taşınan durum: varsayılan "hazir" iken "Tüm durumlar" boş değil "hepsi"dir.
@@ -196,7 +198,8 @@ $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format(
     <?php
     /* Telefonda süzgeçler "Filtreler" düğmesinin arkasında (JS); arama kutusu
      * hep görünür. Etkin süzgeç varsa açık gelir. JS yoksa hepsi görünür. */
-    $etkinSuzgec = (int) ($filtre['durum'] !== $varsayilanDurum) + (int) ($filtre['kapsam'] !== '') + (int) ($filtre['kullanici'] !== '');
+    $etkinSuzgec = (int) ($filtre['durum'] !== $varsayilanDurum) + (int) ($filtre['kapsam'] !== '') + (int) ($filtre['kullanici'] !== '')
+        + (int) (($filtre['icerik'] ?? '') !== '') + (int) (($filtre['alan'] ?? '') !== '');
     ?>
     <form class="cy-toolbar tk-araclar js-tk-araclar<?= $etkinSuzgec > 0 ? ' is-acik' : '' ?>" method="get" action="<?= e(url('panel/transkript')) ?>" role="search">
         <div class="cy-toolbar__search">
@@ -238,6 +241,19 @@ $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format(
                 <option value="paylasilan"<?= $filtre['kapsam'] === 'paylasilan' ? ' selected' : '' ?>>Paylaşılanlar<?= $paylasilan > 0 ? ' (' . $sayi($paylasilan) . ')' : '' ?></option>
             </select>
         <?php endif; ?>
+        <?php /* Video kategorisi (Kategori\Kategoriler). */ ?>
+        <select class="form-select tk-filtre" name="icerik" aria-label="İçerik türüne göre filtrele">
+            <option value="">Tüm içerik türleri</option>
+            <?php foreach (Kategoriler::TURLER as $kimlik => [$ad]): ?>
+                <option value="<?= e($kimlik) ?>"<?= ($filtre['icerik'] ?? '') === $kimlik ? ' selected' : '' ?>><?= e($ad) ?></option>
+            <?php endforeach; ?>
+        </select>
+        <select class="form-select tk-filtre" name="alan" aria-label="Konu alanına göre filtrele">
+            <option value="">Tüm konu alanları</option>
+            <?php foreach (Kategoriler::ALANLAR as $kimlik => [$ad]): ?>
+                <option value="<?= e($kimlik) ?>"<?= ($filtre['alan'] ?? '') === $kimlik ? ' selected' : '' ?>><?= e($ad) ?></option>
+            <?php endforeach; ?>
+        </select>
         <button type="submit" class="btn cy-btn cy-btn--ghost cy-btn--sm tk-uygula"><?= icon('filter', 'cy-icon cy-icon--sm') ?> Uygula</button>
         <?php if ($filtreli): ?>
             <a class="cy-link small" href="<?= e(url('panel/transkript')) ?>">Temizle</a>
@@ -303,6 +319,9 @@ $sayi     = static fn (int|float $n, int $basamak = 0): string => number_format(
                                             <?php if ($satir['tur'] !== 'youtube'): ?><span class="cy-chip"><?= e($turAdi[$satir['tur']] ?? (string) $satir['tur']) ?></span> <?php endif; ?>
                                             <?php if ((int) ($satir['paylasildi'] ?? 0) === 1): ?><span class="cy-chip tk-paylasilan" title="Yönetici bu raporu üyelerle paylaştı">Paylaşılan</span> <?php endif; ?>
                                             <?= e((string) ($satir['kanal_adi'] ?? '')) ?>
+                                            <?php if (($satir['kategori_tur'] ?? null) !== null): ?>
+                                                <span class="tk-kategori-chip" title="İçerik türü · konu alanı"><?= e(Kategoriler::turAdi((string) $satir['kategori_tur']) . ' · ' . Kategoriler::alanAdi((string) $satir['kategori_alan'])) ?></span>
+                                            <?php endif; ?>
                                         </small>
                                     </span>
                                 </a>
