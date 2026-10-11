@@ -58,6 +58,7 @@ use Modules\Transkript\Ai\GirisSiniri;
 use Modules\Transkript\Ai\HttpProvider;
 use Modules\Transkript\Ai\OpenAiCompatibleProvider;
 use Modules\Transkript\Ai\DinlenmeDeposu;
+use Modules\Transkript\Ai\SseAkisi;
 use Modules\Transkript\Ai\YedekliSaglayici;
 use Modules\Transkript\Http\HttpIstemci;
 use Modules\Transkript\Http\HttpYanit;
@@ -2328,27 +2329,119 @@ $geri();
 $geri = $ortamDegistir(['AI_PROVIDERS' => '', 'AI_PROVIDER' => '', 'EVREN_API_KEY' => 'evren_llm_test', 'EVREN_MODEL' => 'mimo-v2.6-pro', 'EVREN_BASE_URL' => 'https://ornek.test/v1/']);
 $evOrtam = Ai::make('evren');
 $geri();
-dogrula('make(): EVREN varsayılanı glm-5.3; bütçe en az 2048, süre en az 180 sn, Bearer anahtar, taban adres',
-    $evMakeDogru && EvrenProvider::EN_AZ_TOKEN === 2048 && (new ReflectionClassConstant(EvrenProvider::class, 'BAGLANTI_ZAMAN_ASIMI'))->getValue() === 10);
+dogrula('make(): EVREN varsayılanı glm-5.3; bütçe en az 2048, süre en az 180 sn, Bearer anahtar, taban adres; bağlantı 15 sn',
+    $evMakeDogru && EvrenProvider::EN_AZ_TOKEN === 2048 && (new ReflectionClassConstant(EvrenProvider::class, 'BAGLANTI_ZAMAN_ASIMI'))->getValue() === 15);
 dogrula('EVREN_MODEL ve EVREN_BASE_URL .env\'den okunur', $evOrtam->model() === 'mimo-v2.6-pro' && korumali($evOrtam, 'endpoint') === 'https://ornek.test/v1/chat/completions');
 
+EvrenProvider::dusunmeReddiniUnut();
+$geriAkis = $ortamDegistir(['EVREN_STREAM' => '', 'EVREN_THINKING' => '', 'EVREN_BOSTA_SN' => '', 'EVREN_TOPLAM_SN' => '']);
 $giden = [];
 $y = $evrenSahte([[200, $evrenYaniti('{"cevap":"Ankara"}', 'stop', 'uzun bir düşünce')]], $giden)->sendJson([['role' => 'user', 'content' => 'x']], 'JSON yaz', ['type' => 'object']);
-dogrula('JSON modu: response_format json_object, stream yok; yalnız content okunur (reasoning yok sayılır), token sayılır, maliyet 0',
-    ($giden[0]['response_format'] ?? null) === ['type' => 'json_object'] && !isset($giden[0]['stream']) && $giden[0]['model'] === 'glm-5.3'
-    && $y['text'] === '{"cevap":"Ankara"}' && $y['thinking'] === '' && $y['usage']['input_tokens'] === 120 && $y['usage']['output_tokens'] === 30 && $y['cost'] === 0.0);
+dogrula('JSON modu: response_format json_object; akış açık (stream + include_usage), düşünme "low"; yalnız content okunur, token sayılır, maliyet 0; akışı yok sayan düz JSON da okunur',
+    ($giden[0]['response_format'] ?? null) === ['type' => 'json_object'] && ($giden[0]['stream'] ?? null) === true
+    && ($giden[0]['stream_options'] ?? null) === ['include_usage' => true] && ($giden[0]['reasoning_effort'] ?? null) === 'low' && $giden[0]['model'] === 'glm-5.3'
+    && $y['text'] === '{"cevap":"Ankara"}' && $y['thinking'] === '' && $y['usage']['input_tokens'] === 120 && $y['usage']['output_tokens'] === 30 && $y['cost'] === 0.0
+    && ($y['olcum']['bitis_nedeni'] ?? null) === 'stop' && ($y['olcum']['istenen_model'] ?? null) === 'glm-5.3');
 
 $giden = [];
-$y = $evrenSahte([[400, '{"error":{"message":"response_format desteklenmiyor"}}'], [200, $evrenYaniti("```json\n{\"cevap\":\"Ankara\"}\n```")]], $giden)
+$y = $evrenSahte([[400, '{"error":{"message":"reasoning_effort desteklenmiyor"}}'], [400, '{"error":{"message":"response_format desteklenmiyor"}}'],
+    [200, $evrenYaniti("```json\n{\"cevap\":\"Ankara\"}\n```")]], $giden)
     ->sendJson([['role' => 'user', 'content' => 'x']], 'JSON yaz', ['type' => 'object']);
-dogrula('JSON modu 400 alırsa bir kez parametresiz denenir; JSON ``` çitinden ayıklanır',
-    count($giden) === 2 && isset($giden[0]['response_format']) && !isset($giden[1]['response_format'])
+$sonrakiGlm = [];
+$evrenSahte([[200, $evrenYaniti('{"a":1}')]], $sonrakiGlm)->sendJson([['role' => 'user', 'content' => 'x']], 'JSON yaz', ['type' => 'object']);
+EvrenProvider::dusunmeReddiniUnut();
+dogrula('400: önce düşünme parametresiz, yine 400 ise response_format\'sız denenir; red süreç boyunca hatırlanır; JSON ``` çitinden ayıklanır',
+    count($giden) === 3 && isset($giden[0]['reasoning_effort'], $giden[0]['response_format']) && !isset($giden[1]['reasoning_effort']) && isset($giden[1]['response_format'])
+    && !isset($giden[2]['response_format']) && !isset($giden[2]['reasoning_effort']) && !isset($sonrakiGlm[0]['reasoning_effort'])
     && ResultValidator::ayikla($y['text']) === ['cevap' => 'Ankara']);
 
 $giden = [];
-dogrula('İçerik boş + finish_reason length → "dusunme_butcesi" (sıradakine geçilir, dinletmez)',
-    aiHataKodu(static fn () => $evrenSahte([[200, $evrenYaniti('', 'length', 'çok uzun düşünce')]], $giden)->send([['role' => 'user', 'content' => 'x']])) === 'dusunme_butcesi'
-    && YedekliSaglayici::dinlenmeSuresi('dusunme_butcesi') === 0);
+$butceli = $evrenSahte([[200, $evrenYaniti('', 'length', 'çok uzun düşünce')], [200, $evrenYaniti('{"tamam":1}')]], $giden)->send([['role' => 'user', 'content' => 'x']]);
+$giden2 = [];
+$butceHatasi = null;
+try {
+    $evrenSahte([[200, $evrenYaniti('', 'length')], [200, $evrenYaniti('', 'length')]], $giden2)->send([['role' => 'user', 'content' => 'x']]);
+} catch (AiHatasi $e) {
+    $butceHatasi = $e;
+}
+$giden3 = [];
+$autoSaglayici = (new EvrenProvider('k', 'auto', EvrenProvider::TABAN_ADRES, 24000))->tasiyici($sahteHttp([[200, $evrenYaniti('', 'length')]], $giden3));
+$autoButce = aiHataKodu(static fn () => $autoSaglayici->send([['role' => 'user', 'content' => 'x']]));
+dogrula('Düşünme bütçesi yetmezse aynı modelde bir kez max_tokens ×2; yine olmazsa "dusunme_butcesi" (harcanan token hatada); auto (32K) bağlamı aşacaksa tekrar yok',
+    $butceli['text'] === '{"tamam":1}' && count($giden) === 2 && $giden[0]['max_tokens'] === 8192 && $giden[1]['max_tokens'] === 16384
+    && $butceHatasi?->kod === 'dusunme_butcesi' && count($giden2) === 2 && ($butceHatasi->olcum['cikis_token'] ?? null) === 30
+    && $autoButce === 'dusunme_butcesi' && count($giden3) === 1 && YedekliSaglayici::dinlenmeSuresi('dusunme_butcesi') === 0);
+
+$sse = ": keep-alive\n\n"
+    . "data: {\"id\":\"c1\",\"model\":\"zai/glm-5.3-fp8\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"önce düşüneyim\"}}]}\n\n"
+    . ": keep-alive\n\n"
+    . "data: {\"id\":\"c1\",\"model\":\"zai/glm-5.3-fp8\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"{\\\"cevap\\\":\"}}]}\n\n"
+    . "data: {\"id\":\"c1\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\\\"Ankara\\\"}\"},\"finish_reason\":\"stop\"}]}\n\n"
+    . "data: {\"id\":\"c1\",\"choices\":[],\"usage\":{\"prompt_tokens\":50,\"completion_tokens\":9,\"completion_tokens_details\":{\"reasoning_tokens\":4},\"prompt_tokens_details\":{\"cached_tokens\":32}}}\n\n"
+    . "data: [DONE]\n\n";
+$cozulen = SseAkisi::coz($sse);
+$parcali = SseAkisi::coz(str_replace("\n\n", "\r\n\r\n", $sse));
+$hataliAkis = SseAkisi::coz("data: {\"error\":{\"message\":\"sunucu düştü\"}}\n\n");
+dogrula('SSE: keep-alive atlanır ve sayılır; content birleşir, düşünme ayrı sayılır (metne girmez); finish_reason ve son usage alınır; [DONE] biter; CRLF; akış içi hata',
+    ($cozulen['yanit']['choices'][0]['message']['content'] ?? '') === '{"cevap":"Ankara"}' && $cozulen['keepalive'] === 2 && $cozulen['dusunme_karakter'] === 14
+    && ($cozulen['yanit']['choices'][0]['finish_reason'] ?? '') === 'stop' && ($cozulen['yanit']['usage']['completion_tokens'] ?? 0) === 9
+    && $cozulen['yanit']['model'] === 'zai/glm-5.3-fp8' && $cozulen['bitti'] && $parcali['yanit'] === $cozulen['yanit']
+    && ($hataliAkis['hata']['message'] ?? '') === 'sunucu düştü' && SseAkisi::coz('')['yanit'] === null
+    && SseAkisi::veriSatiriMi('data: {"a":1}') && !SseAkisi::veriSatiriMi(': keep-alive') && !SseAkisi::veriSatiriMi('data: [DONE]'));
+
+$giden = [];
+$akisli = $evrenSahte([[200, $sse, ['x-evren-daily-remaining-tokens' => '14000000']]], $giden)->sendJson([['role' => 'user', 'content' => 'x']], 'JSON yaz', ['type' => 'object']);
+$giden = [];
+$akisHatasi = aiHataKodu(static fn () => $evrenSahte([[200, "data: {\"error\":{\"message\":\"düştü\"}}\n\n"]], $giden)->send([['role' => 'user', 'content' => 'x']]));
+dogrula('Akışlı EVREN yanıtı: metin tek parça, düşünme metni yok; ölçüm: keep-alive, bitiş nedeni, düşünme ve önbellek token\'ı, kalan kota; akış içi hata "sunucu"',
+    $akisli['text'] === '{"cevap":"Ankara"}' && $akisli['thinking'] === '' && !str_contains(json_encode($akisli), 'düşüneyim')
+    && $akisli['olcum']['keepalive'] === 2 && $akisli['olcum']['bitis_nedeni'] === 'stop' && $akisli['olcum']['dusunme_token'] === 4
+    && $akisli['olcum']['onbellek_token'] === 32 && $akisli['olcum']['kalan_kota'] === 14000000 && $akisli['usage']['cache_read'] === 32
+    && $akisHatasi === 'sunucu');
+
+$geriKapali = $ortamDegistir(['EVREN_STREAM' => 'false', 'EVREN_THINKING' => 'default']);
+$giden = [];
+$evrenSahte([[200, $evrenYaniti('{"a":1}')]], $giden)->send([['role' => 'user', 'content' => 'x']]);
+$kapaliSure = korumali(new EvrenProvider('k', 'glm-5.3'), 'toplamSure', str_repeat('a', 35000));
+$geriKapali();
+$geriSure = $ortamDegistir(['EVREN_TOPLAM_SN' => '300']);
+$ayarSure = korumali(new EvrenProvider('k', 'glm-5.3'), 'toplamSure', 'x');
+$geriSure();
+dogrula('EVREN_STREAM=false: eski akışsız istek (tek 180 sn sınırı); EVREN_THINKING=default: düşünme parametresi yok; toplam süre girişle ölçeklenir (en az 180, en çok 900), EVREN_TOPLAM_SN ezer',
+    !isset($giden[0]['stream']) && !isset($giden[0]['reasoning_effort']) && $kapaliSure === 180 && $ayarSure === 300
+    && korumali(new EvrenProvider('k', 'glm-5.3'), 'toplamSure', str_repeat('a', 35000)) === 370
+    && EvrenProvider::olcekliSure(100) === 180 && EvrenProvider::olcekliSure(4000, 240) === 240 && EvrenProvider::olcekliSure(400000) === 900
+    && korumali(new EvrenProvider('k', 'glm-5.3'), 'bostaSiniri') === 60);
+
+dogrula('Düşünme ayarı: low → reasoning_effort "low"; off → mimo "none", ötekiler "low"; default ya da düşünmeyen model (gemma, auto) → yok',
+    EvrenProvider::dusunmeParametreleri('glm-5.3', 'low') === ['reasoning_effort' => 'low']
+    && EvrenProvider::dusunmeParametreleri('mimo-v2.6-pro', 'off') === ['reasoning_effort' => 'none']
+    && EvrenProvider::dusunmeParametreleri('deepseek-v4.1-flash', 'off') === ['reasoning_effort' => 'low']
+    && EvrenProvider::dusunmeParametreleri('glm-5.3', 'default') === [] && EvrenProvider::dusunmeParametreleri('gemma-4-31b', 'low') === []
+    && EvrenProvider::dusunmeParametreleri('auto', 'low') === [] && EvrenProvider::dusunmeAyari() === 'low');
+
+dogrula('Model adı: "auto → zai/glm-5.3-fp8" → glm-5.3; görsel (qwen3-vl) ve kalkan (deepseek-v4-flash) metin işine sabitlenmez; auto giriş sınırı 16.384 (32K bağlam)',
+    EvrenProvider::kisaAd('auto → zai/glm-5.3-fp8') === 'glm-5.3' && EvrenProvider::kisaAd('qwen/qwen3-vl-30b-a3b') === 'qwen3-vl-30b'
+    && EvrenProvider::kisaAd('deepseek-v4.1-flash') === 'deepseek-v4.1-flash' && EvrenProvider::kisaAd('xiaomi/mimo-v2.6-pro') === 'mimo-v2.6-pro'
+    && EvrenProvider::metinModeliMi('auto → zai/glm-5.3-fp8') && !EvrenProvider::metinModeliMi('auto → qwen/qwen3-vl-30b-a3b')
+    && !EvrenProvider::metinModeliMi('deepseek/deepseek-v4-flash') && !EvrenProvider::metinModeliMi('auto')
+    && EvrenProvider::girisSiniri('auto') === 16384 && GirisSiniri::sinir('evren', 'auto') === 16384 && GirisSiniri::sinir('evren', 'glm-5.3') === 200000
+    && GirisSiniri::sinir('groq', 'auto') === 7000);
+
+$giden = [];
+$groqGovde = [];
+(new OpenAiCompatibleProvider('k', 'openai/gpt-oss-120b'))->tasiyici($sahteHttp([[200, $evrenYaniti('{"a":1}')]], $groqGovde))->sendJson([['role' => 'user', 'content' => 'x']], 's', ['type' => 'object']);
+$bostaHatasi = null;
+try {
+    (new EvrenProvider('k', 'glm-5.3'))->tasiyici(static fn (string $g): array => [0, '', [], 'Boşta kalma: 60 sn boyunca yanıt verisi gelmedi', 28])->yenidenDenemeSiniri(0)->send([['role' => 'user', 'content' => 'x']]);
+} catch (AiHatasi $e) {
+    $bostaHatasi = $e;
+}
+dogrula('Öteki sağlayıcılar değişmedi (akış ve düşünme parametresi yok, akış kapalı); boşta kalma kesintisi "zaman_asimi"',
+    !isset($groqGovde[0]['stream']) && !isset($groqGovde[0]['reasoning_effort']) && !korumali(new OpenAiCompatibleProvider('k', 'm'), 'akis')
+    && korumali(new OpenAiCompatibleProvider('k', 'm'), 'bostaSiniri') === 0 && $bostaHatasi?->kod === 'zaman_asimi'
+    && str_contains($bostaHatasi->getMessage(), 'Boşta kalma'));
+$geriAkis();
 
 $giden = [];
 $e403 = null;

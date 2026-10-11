@@ -48,6 +48,8 @@ final class AiHatasi extends RuntimeException
         ?Throwable $previous = null,
         public readonly ?int $bekleme = null,
         public readonly ?string $sebep = null,
+        /** Başarısız çağrının ölçümü (süre, akış, kısmi kullanım): günlüğe yazılır, kota farkı kapanır. */
+        public readonly array $olcum = [],
     ) {
         parent::__construct($message, $httpDurumu, $previous);
     }

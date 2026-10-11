@@ -46,6 +46,21 @@ abstract class HttpProvider implements Provider
      */
     private ?Closure $tasiyici = null;
 
+    /**
+     * Uzun istek sürerken çağrılır (kuyruk işinin nabzı, Jobs\IsNabzi):
+     * cURL'ün ilerleme geri çağrısından, saniyede birkaç kez. Kanca kendisi
+     * seyreltir. null: kanca yok.
+     */
+    private static ?Closure $nabiz = null;
+
+    /**
+     * Son isteğin ölçümleri: akis, http, toplam_ms, ilk_token_ms (akışta ilk
+     * veri), keepalive (akışta yorum satırı), bosta_kesildi.
+     *
+     * @var array<string,mixed>
+     */
+    protected array $olcum = [];
+
     public function __construct(
         protected readonly string $apiKey,
         protected readonly string $modelName,
@@ -89,6 +104,55 @@ abstract class HttpProvider implements Provider
         $this->tasiyici = $tasiyici;
 
         return $this;
+    }
+
+    public static function nabizKancasi(?Closure $kanca): void
+    {
+        self::$nabiz = $kanca;
+    }
+
+    /** @return array<string,mixed> son isteğin ölçümleri (bkz. $olcum) */
+    public function sonOlcum(): array
+    {
+        return $this->olcum;
+    }
+
+    /* =================================================================
+     *  AKIŞ (SSE) — İSTEĞE BAĞLI, VARSAYILAN KAPALI
+     * =================================================================
+     *  Akışı açan sağlayıcı (EVREN) dört kancayı doldurur. Kapalıyken
+     *  istek eskisi gibidir: tek CURLOPT_TIMEOUT, gövde sonunda okunur.
+     *  Açıkken gövde parça parça gelir; BOŞTA KALMA sınırı ayrı ölçülür:
+     *  bostaSiniri() saniye boyunca hiç veri satırı ("data: …") gelmezse
+     *  istek kesilir (":" ile başlayan keep-alive satırları veri sayılmaz).
+     * ============================================================== */
+
+    protected function akis(): bool
+    {
+        return false;
+    }
+
+    /** Akışta veri gelmeden geçebilecek en uzun süre (sn); 0 = sınır yok. */
+    protected function bostaSiniri(): int
+    {
+        return 0;
+    }
+
+    /** Bu isteğin toplam süre sınırı (sn); alt sınıf girdi boyutuna göre ölçekleyebilir. */
+    protected function toplamSure(string $govde): int
+    {
+        return $this->timeout;
+    }
+
+    /**
+     * 2xx akış gövdesini tek yanıt dizisine çevirir; null → gövde düz JSON
+     * sayılır (sunucu akışı yok saydıysa).
+     *
+     * @return array<string,mixed>|null
+     */
+    protected function akisiCoz(string $raw): ?array
+    {
+        return null;
     }
 
     /* =================================================================
@@ -219,7 +283,14 @@ abstract class HttpProvider implements Provider
         while (true) {
             $attempt++;
 
-            [$status, $raw, $headers, $curlError, $curlErrno] = $this->tasiyici !== null ? ($this->tasiyici)($body) : $this->curl($body);
+            if ($this->tasiyici !== null) {
+                $bas = hrtime(true);
+                [$status, $raw, $headers, $curlError, $curlErrno] = ($this->tasiyici)($body);
+                $this->olcum = ['akis' => $this->akis(), 'http' => $status, 'toplam_ms' => (int) ((hrtime(true) - $bas) / 1_000_000),
+                                'ilk_token_ms' => null, 'keepalive' => 0, 'bosta_kesildi' => $curlErrno === 28 && str_starts_with($curlError, 'Boşta')];
+            } else {
+                [$status, $raw, $headers, $curlError, $curlErrno] = $this->curl($body);
+            }
 
             if ($curlError === '') {
                 $this->basliklariIsle($status, $headers);
@@ -241,7 +312,7 @@ abstract class HttpProvider implements Provider
             }
 
             if ($status >= 200 && $status < 300) {
-                $decoded = json_decode($raw, true);
+                $decoded = ($this->akis() ? $this->akisiCoz($raw) : null) ?? json_decode($raw, true);
 
                 if (!is_array($decoded)) {
                     throw new AiHatasi('API yanıtı çözümlenemedi.', 'yanit_cozulemedi', $status);
@@ -278,25 +349,30 @@ abstract class HttpProvider implements Provider
      */
     private function curl(string $body): array
     {
-        $curl = curl_init($this->endpoint());
-
+        $curl    = curl_init($this->endpoint());
         $headers = [];
+        $akis    = $this->akis();
+        $bosta   = $akis ? max(0, $this->bostaSiniri()) : 0;
+        $bas     = microtime(true);
+        $sonVeri = $bas;
+        $ilk     = null;
+        $keep    = 0;
+        $govde   = '';
+        $tampon  = '';
+        $kesildi = false;
 
         curl_setopt_array($curl, [
             CURLOPT_POST           => true,
             CURLOPT_POSTFIELDS     => $body,
             CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_TIMEOUT        => $this->timeout,
-
+            CURLOPT_TIMEOUT        => max(1, $this->toplamSure($body)),
             /* Sertifika doğrulaması AÇIK kalmalı. Kapatmak, API
              * anahtarınızı araya giren birine teslim etmek olur.
              * "Çalışmıyor" diye kapatmak yerine CA paketini
              * güncelleyin. */
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_SSL_VERIFYHOST => 2,
-
             CURLOPT_HTTPHEADER => $this->headers(),
-
             // Yanıt başlıklarını topluyoruz (Retry-After için).
             CURLOPT_HEADERFUNCTION => static function ($handle, string $line) use (&$headers): int {
                 $parts = explode(':', $line, 2);
@@ -307,7 +383,45 @@ abstract class HttpProvider implements Provider
 
                 return strlen($line);
             },
+            /* İlerleme: kuyruk nabzı (uzun istekte iş "ölü" sayılmasın) ve
+             * akışta boşta kalma sınırı. 0 dışı dönüş isteği keser. */
+            CURLOPT_NOPROGRESS       => false,
+            CURLOPT_XFERINFOFUNCTION => static function () use (&$sonVeri, &$kesildi, $bosta): int {
+                if (self::$nabiz !== null) {
+                    (self::$nabiz)();
+                }
+
+                if ($bosta > 0 && microtime(true) - $sonVeri > $bosta) {
+                    $kesildi = true;
+
+                    return 1;
+                }
+
+                return 0;
+            },
         ]);
+
+        if ($akis) {
+            // Gövde parça parça: veri satırı ("data: {…}") boşta sayacını sıfırlar; ":" keep-alive saymaz.
+            curl_setopt($curl, CURLOPT_WRITEFUNCTION, static function ($handle, string $parca) use (&$govde, &$tampon, &$sonVeri, &$ilk, &$keep, $bas): int {
+                $govde  .= $parca;
+                $tampon .= $parca;
+
+                while (($i = strpos($tampon, "\n")) !== false) {
+                    $satir  = rtrim(substr($tampon, 0, $i), "\r");
+                    $tampon = (string) substr($tampon, $i + 1);
+
+                    if ($satir !== '' && $satir[0] === ':') {
+                        $keep++;
+                    } elseif (SseAkisi::veriSatiriMi($satir)) {
+                        $sonVeri = microtime(true);
+                        $ilk   ??= (int) (($sonVeri - $bas) * 1000);
+                    }
+                }
+
+                return strlen($parca);
+            });
+        }
 
         if (static::BAGLANTI_ZAMAN_ASIMI > 0) {
             curl_setopt($curl, CURLOPT_CONNECTTIMEOUT, static::BAGLANTI_ZAMAN_ASIMI);
@@ -320,7 +434,21 @@ abstract class HttpProvider implements Provider
 
         curl_close($curl);
 
-        return [$status, is_string($raw) ? $raw : '', $headers, $error, $errno];
+        $this->olcum = [
+            'akis'          => $akis,
+            'http'          => $status,
+            'toplam_ms'     => (int) ((microtime(true) - $bas) * 1000),
+            'ilk_token_ms'  => $ilk,
+            'keepalive'     => $keep,
+            'bosta_kesildi' => $kesildi,
+        ];
+
+        if ($kesildi) {
+            // Boşta kalma zaman aşımı: 28 (CURLE_OPERATION_TIMEDOUT) gibi "zaman_asimi" sayılır.
+            return [$status, $govde, $headers, sprintf('Boşta kalma: %d sn boyunca yanıt verisi gelmedi', $bosta), 28];
+        }
+
+        return [$status, $akis ? $govde : (is_string($raw) ? $raw : ''), $headers, $error, $errno];
     }
 
     /** 429, 529 ve 5xx yeniden denenir; alt sınıf daraltabilir (ör. günlük kota). */

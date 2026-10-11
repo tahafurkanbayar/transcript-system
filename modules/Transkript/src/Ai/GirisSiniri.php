@@ -104,10 +104,14 @@ final class GirisSiniri
         return max(1, isset($kayit['sinir']) ? (int) $kayit['sinir'] : (int) ($kayit['boyut'] ?? 0) - 1);
     }
 
-    /** Geçerli sınır: yapılandırılan ve öğrenilenin küçüğü; 0 = sınır yok. */
+    /**
+     * Geçerli sınır: yapılandırılan, modelin bağlamı (EVREN: "auto" 32K,
+     * EvrenProvider::girisSiniri) ve öğrenilenin küçüğü; 0 = sınır yok.
+     */
     public static function sinir(string $ad, string $model): int
     {
-        $sinirlar = array_filter([self::yapilandirilan($ad), self::ogrenilen($ad, $model) ?? 0], static fn (int $s): bool => $s > 0);
+        $modelSiniri = $ad === 'evren' ? EvrenProvider::girisSiniri($model) : 0;
+        $sinirlar    = array_filter([self::yapilandirilan($ad), $modelSiniri, self::ogrenilen($ad, $model) ?? 0], static fn (int $s): bool => $s > 0);
 
         return $sinirlar === [] ? 0 : min($sinirlar);
     }

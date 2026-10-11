@@ -27,7 +27,20 @@
  *      (15M token) doldu → bir sonraki 03:00'e (Europe/Istanbul) kadar;
  *      değilse dakikalık sınır (500k TPM) → Retry-After ya da 60 sn.
  *    · 503: anlık doluluk → "sunucu" (2 dk), sıradakine geçilir.
- *    · Bağlantı 10 sn, toplam en az 180 sn (uzun düşünme).
+ *    · AKIŞ (0.10.0, EVREN_STREAM, varsayılan açık): "stream": true +
+ *      include_usage; SseAkisi parçaları birleştirir. Üç ayrı sınır:
+ *      bağlantı 15 sn, BOŞTA KALMA 60 sn (EVREN_BOSTA_SN; keep-alive
+ *      veri sayılmaz), toplam süre giriş boyutuyla ölçeklenir (120 sn +
+ *      40 token/sn, en çok 900; EVREN_TOPLAM_SN ezer). Akış kapalıysa eski
+ *      tek sınır (en az 180 sn). 11.10.2026'da 27 çağrının 4'ü tam 180,0
+ *      sn'de zaman aşımına uğradı (cowork 3. tur, docs/evren).
+ *    · DÜŞÜNME (EVREN_THINKING = off | low | default, varsayılan low):
+ *      reasoning_effort destekleyen modellere "low" (mimo-v2.6-pro off'ta
+ *      "none"). Model reddederse (400) parametresiz bir kez yeniden.
+ *      Düşünme bütçesi yetmezse (boş içerik + length) max_tokens ×2 ile
+ *      bir kez yeniden (bağlamı aşmadan).
+ *    · ÖLÇÜM: her yanıtın "olcum" alanı (ilk token, keep-alive, bitiş
+ *      nedeni, düşünme / önbellek token'ı, kalan kota) günlüğe yazılır.
  *
  *  MALİYET: 1 Kasım 2026'ya kadar ücretsiz; girdi ve çıktı fiyatı 0
  *  (Ai::sabitFiyat, panelde girilen USD fiyatı EVREN'e uygulanmaz).
@@ -45,6 +58,7 @@ declare(strict_types=1);
 namespace Modules\Transkript\Ai;
 
 use App\Core\Cache\Cache;
+use App\Core\Env;
 use DateTimeImmutable;
 use DateTimeZone;
 use Throwable;
@@ -68,8 +82,53 @@ final class EvrenProvider extends OpenAiCompatibleProvider
         'mimo-v2.6-pro'       => 'filonun en büyüğü, 1M bağlam',
         'qwen3.8-flash-next'  => 'en yüksek eşzamanlılık, 256K bağlam',
         'gemma-4-31b'         => 'düşük gecikme, 256K bağlam',
-        'auto'                => 'geçit kendisi seçer',
+        'auto'                => 'geçit seçer — yavaş / tutarsız olabilir, analiz başına sabitlenir',
     ];
+
+    /** Bağlam (token), GET /v1/models (11.10.2026). auto yalnız 32K. */
+    public const BAGLAM = [
+        'glm-5.3'             => 524288,
+        'deepseek-v4.1-flash' => 1048576,
+        'mimo-v2.6-pro'       => 1048576,
+        'qwen3.8-flash-next'  => 262144,
+        'gemma-4-31b'         => 262144,
+        'qwen3-vl-30b'        => 262144,
+        'deepseek-v4-flash'   => 1048576,
+        'auto'                => 32768,
+    ];
+
+    /** Bağlamın yanıta ayrılan payı (auto'nun varsayılan çıktısı); giriş sınırı = bağlam - pay. */
+    public const CIKTI_PAYI = 16384;
+
+    /** reasoning_effort'u destekleyen (düşünen) modeller (/v1/models capabilities). */
+    public const DUSUNEN = ['glm-5.3', 'deepseek-v4.1-flash', 'mimo-v2.6-pro', 'qwen3.8-flash-next', 'deepseek-v4-flash'];
+
+    /** Metin işine sabitlenmeyecek modeller: görsel model ve 1 Kasım 2026'da kalkan. */
+    public const METIN_DISI = ['qwen3-vl-30b', 'deepseek-v4-flash'];
+
+    /** Yanıttaki repo adı → kısa ad ("auto → zai/glm-5.3-fp8" → glm-5.3). */
+    public const KISA_ADLAR = [
+        'zai/glm-5.3-fp8'              => 'glm-5.3',
+        'zai/glm-5.3'                  => 'glm-5.3',
+        'deepseek/deepseek-v4.1-flash' => 'deepseek-v4.1-flash',
+        'xiaomi/mimo-v2.6-pro'         => 'mimo-v2.6-pro',
+        'qwen/qwen3.8-flash-next'      => 'qwen3.8-flash-next',
+        'google/gemma-4-31b'           => 'gemma-4-31b',
+        'qwen/qwen3-vl-30b-a3b'        => 'qwen3-vl-30b',
+        'deepseek/deepseek-v4-flash'   => 'deepseek-v4-flash',
+    ];
+
+    /** Düşünme ayarı (.env EVREN_THINKING). */
+    public const DUSUNME_AYARLARI = ['off', 'low', 'default'];
+    public const VARSAYILAN_DUSUNME = 'low';
+
+    /** Akışta veri gelmeden en çok (sn): EVREN 10 sn'de bir keep-alive gönderir, o veri sayılmaz. */
+    public const BOSTA_SN = 60;
+
+    /** Akışlı istekte toplam süre: taban + giriş token'ı / hız, üst sınır (sn). */
+    public const TOPLAM_TABAN_SN  = 120;
+    public const TOPLAM_TOKEN_HIZ = 40;
+    public const TOPLAM_EN_COK_SN = 900;
 
     /** Düşünme ve yanıt aynı havuzdan: daha azında yanıt boş kalır. */
     public const EN_AZ_TOKEN = 2048;
@@ -80,7 +139,7 @@ final class EvrenProvider extends OpenAiCompatibleProvider
     /** Son yanıttaki kalan günlük token (Ayarlar → Durum). */
     public const KOTA_ONBELLEK = 'transkript:evren_kota';
 
-    protected const BAGLANTI_ZAMAN_ASIMI = 10;
+    protected const BAGLANTI_ZAMAN_ASIMI = 15;
 
     /** Günlük hesap kotası bu saatte yenilenir. */
     private const KOTA_SAAT_DILIMI = 'Europe/Istanbul';
@@ -88,6 +147,12 @@ final class EvrenProvider extends OpenAiCompatibleProvider
 
     /** @var array<string,string> son HTTP yanıtının başlıkları (küçük harf) */
     private array $basliklar = [];
+
+    /** @var array<string,true> bu süreçte reasoning_effort'u 400'le reddeden modeller */
+    private static array $dusunmeReddi = [];
+
+    /** dusunme_butcesi sonrası tek yeniden denemenin bütçesi (null: maxTokens). */
+    private ?int $butce = null;
 
     public function __construct(
         string $apiKey,
@@ -104,21 +169,206 @@ final class EvrenProvider extends OpenAiCompatibleProvider
      * ============================================================== */
 
     /**
-     * JSON modu reddedilirse (400) bir kez response_format olmadan
-     * sorulur; istemler zaten "yalnız JSON" der ve Pipeline JSON'u
-     * metinden ayıklar.
+     * 400'de önce düşünme parametresi olmadan, yine olmazsa response_format
+     * olmadan sorulur (istemler zaten "yalnız JSON" der; Pipeline JSON'u
+     * metinden ayıklar). Düşünme bütçesi yetmezse bir kez max_tokens ×2.
      */
     public function sendJson(array $messages, string $system, array $sema, array $ek = []): array
     {
+        return $this->butceyleDene(function () use ($messages, $system, $sema, $ek): array {
+            try {
+                return $this->dusunmesizDene(fn (): array => parent::sendJson($messages, $system, $sema, $ek));
+            } catch (AiHatasi $e) {
+                if ($e->httpDurumu !== 400 || $e->kod !== 'istek_hatasi') {
+                    throw $e;
+                }
+
+                return $this->dusunmesizDene(fn (): array => parent::send($messages, $system));
+            }
+        });
+    }
+
+    public function send(array $messages, string $system = ''): array
+    {
+        return $this->butceyleDene(fn (): array => $this->dusunmesizDene(fn (): array => parent::send($messages, $system)));
+    }
+
+    /** 400: model reasoning_effort'u reddediyorsa (bu süreçte bir kez öğrenilir) parametresiz yeniden. */
+    private function dusunmesizDene(\Closure $istek): array
+    {
         try {
-            return parent::sendJson($messages, $system, $sema, $ek);
+            return $istek();
         } catch (AiHatasi $e) {
-            if ($e->httpDurumu !== 400 || $e->kod !== 'istek_hatasi') {
+            $kisa = self::kisaAd($this->modelName);
+
+            if ($e->httpDurumu !== 400 || $e->kod !== 'istek_hatasi' || isset(self::$dusunmeReddi[$kisa])
+                || self::dusunmeParametreleri($this->modelName, self::dusunmeAyari()) === []) {
                 throw $e;
             }
 
-            return $this->send($messages, $system);
+            self::$dusunmeReddi[$kisa] = true;
+
+            return $istek();
         }
+    }
+
+    /** Düşünme bütçesi yetmedi: aynı modelde bir kez max_tokens ×2 (bağlamı aşmadan). */
+    private function butceyleDene(\Closure $istek): array
+    {
+        try {
+            return $istek();
+        } catch (AiHatasi $e) {
+            $baglam = self::BAGLAM[self::kisaAd($this->modelName)] ?? 0;
+            $yeni   = $this->maxTokens * 2;
+
+            if ($e->kod !== 'dusunme_butcesi' || $this->butce !== null || ($baglam > 0 && $yeni > $baglam - 4096)) {
+                throw $e;
+            }
+
+            $this->butce = $yeni;
+
+            try {
+                return $istek();
+            } finally {
+                $this->butce = null;
+            }
+        }
+    }
+
+    /**
+     * Gövde: bütçe, düşünme ayarı, akış.
+     *
+     * @return array<string,mixed>
+     */
+    protected function payload(array $messages, string $system): array
+    {
+        $govde = parent::payload($messages, $system);
+        $govde['max_tokens'] = $this->butce ?? $this->maxTokens;
+
+        if (!isset(self::$dusunmeReddi[self::kisaAd($this->modelName)])) {
+            $govde += self::dusunmeParametreleri($this->modelName, self::dusunmeAyari());
+        }
+
+        if ($this->akis()) {
+            $govde['stream']         = true;
+            $govde['stream_options'] = ['include_usage' => true];
+        }
+
+        return $govde;
+    }
+
+    /* =================================================================
+     *  AKIŞ VE SÜRE SINIRLARI (HttpProvider kancaları)
+     * ============================================================== */
+
+    protected function akis(): bool
+    {
+        return Env::bool('EVREN_STREAM', true);
+    }
+
+    protected function bostaSiniri(): int
+    {
+        return max(15, Env::int('EVREN_BOSTA_SN', self::BOSTA_SN));
+    }
+
+    /** Akışta: 120 sn + giriş token'ı / 40, en çok 900 (EVREN_TOPLAM_SN ezer); akışsız: eski tek sınır. */
+    protected function toplamSure(string $govde): int
+    {
+        if (!$this->akis()) {
+            return $this->timeout;
+        }
+
+        $ayar = Env::int('EVREN_TOPLAM_SN', 0);
+
+        return $ayar > 0 ? max(60, $ayar) : self::olcekliSure(GirisSiniri::metinBoyutu($govde), $this->timeout);
+    }
+
+    /** Giriş boyutuna göre toplam süre (sn). */
+    public static function olcekliSure(int $girisToken, int $enAz = self::EN_AZ_SURE): int
+    {
+        return min(self::TOPLAM_EN_COK_SN, max($enAz, self::TOPLAM_TABAN_SN + intdiv(max(0, $girisToken), self::TOPLAM_TOKEN_HIZ)));
+    }
+
+    /** @return array<string,mixed>|null */
+    protected function akisiCoz(string $raw): ?array
+    {
+        $akis = SseAkisi::coz($raw);
+
+        $this->olcum['keepalive']        = max((int) ($this->olcum['keepalive'] ?? 0), $akis['keepalive']);
+        $this->olcum['dusunme_karakter'] = $akis['dusunme_karakter'];
+
+        if ($akis['hata'] !== null) {
+            throw new AiHatasi($this->maskele('EVREN akışı hata verdi: ' . (string) ($akis['hata']['message'] ?? json_encode($akis['hata']))),
+                'sunucu', (int) ($this->olcum['http'] ?? 0), null, null, null, $this->olcum);
+        }
+
+        return $akis['yanit'];
+    }
+
+    /* =================================================================
+     *  MODEL BİLGİSİ
+     * ============================================================== */
+
+    /** "auto → zai/glm-5.3-fp8", "zai/glm-5.3-fp8", "glm-5.3" → "glm-5.3". */
+    public static function kisaAd(string $model): string
+    {
+        $model = strtolower(trim((string) preg_replace('/^auto\s*→\s*/u', '', trim($model))));
+
+        if (isset(self::KISA_ADLAR[$model])) {
+            return self::KISA_ADLAR[$model];
+        }
+
+        $son = str_contains($model, '/') ? substr($model, strrpos($model, '/') + 1) : $model;
+
+        return (string) preg_replace('/-(fp8|bf16|awq|int4|int8)$/', '', $son);
+    }
+
+    /** Metin işi için sabitlenebilir mi (panel listesinde, görsel / kalkan değil, auto değil)? */
+    public static function metinModeliMi(string $model): bool
+    {
+        $kisa = self::kisaAd($model);
+
+        return isset(self::MODELLER[$kisa]) && $kisa !== 'auto' && !in_array($kisa, self::METIN_DISI, true);
+    }
+
+    /** Modelin giriş sınırı (token): bağlam - yanıt payı; bilinmeyen modelde 0 (sınır yok). */
+    public static function girisSiniri(string $model): int
+    {
+        $baglam = self::BAGLAM[self::kisaAd($model)] ?? 0;
+
+        return $baglam > 0 ? max(1024, $baglam - self::CIKTI_PAYI) : 0;
+    }
+
+    /** Testler ve uzun süren işçi: öğrenilen "reasoning_effort reddi" unutulur. */
+    public static function dusunmeReddiniUnut(): void
+    {
+        self::$dusunmeReddi = [];
+    }
+
+    /** .env EVREN_THINKING: off | low | default (geçersizse low). */
+    public static function dusunmeAyari(): string
+    {
+        $ayar = strtolower(trim(Env::get('EVREN_THINKING', self::VARSAYILAN_DUSUNME)));
+
+        return in_array($ayar, self::DUSUNME_AYARLARI, true) ? $ayar : self::VARSAYILAN_DUSUNME;
+    }
+
+    /**
+     * Düşünme parametreleri. default → yok; düşünmeyen model (gemma, auto)
+     * → yok; low → reasoning_effort "low"; off → mimo "none", ötekiler
+     * "low" (en düşük desteklenen; /v1/models "none"u yalnız mimo için bildiriyor).
+     *
+     * @return array<string,string>
+     */
+    public static function dusunmeParametreleri(string $model, string $ayar): array
+    {
+        $kisa = self::kisaAd($model);
+
+        if ($ayar === 'default' || !in_array($kisa, self::DUSUNEN, true)) {
+            return [];
+        }
+
+        return ['reasoning_effort' => $ayar === 'off' && $kisa === 'mimo-v2.6-pro' ? 'none' : 'low'];
     }
 
     /**
@@ -128,6 +378,19 @@ final class EvrenProvider extends OpenAiCompatibleProvider
     protected function normalize(array $response): array
     {
         $sonuc = parent::normalize($response);
+        $usage = is_array($response['usage'] ?? null) ? $response['usage'] : [];
+
+        // Günlük ve ölçüm aracı için (rapora girmez).
+        $sonuc['olcum'] = $this->olcum + [
+            'istenen_model'  => $this->modelName,
+            'max_token'      => $this->butce ?? $this->maxTokens,
+            'bitis_nedeni'   => (string) ($response['choices'][0]['finish_reason'] ?? ''),
+            'dusunme_token'  => isset($usage['completion_tokens_details']['reasoning_tokens']) ? (int) $usage['completion_tokens_details']['reasoning_tokens'] : null,
+            'onbellek_token' => isset($usage['prompt_tokens_details']['cached_tokens']) ? (int) $usage['prompt_tokens_details']['cached_tokens'] : null,
+            'kalan_kota'     => is_numeric($this->basliklar['x-evren-daily-remaining-tokens'] ?? null) ? (int) $this->basliklar['x-evren-daily-remaining-tokens'] : null,
+            'giris_token'    => (int) ($usage['prompt_tokens'] ?? 0),
+            'cikis_token'    => (int) ($usage['completion_tokens'] ?? 0),
+        ];
 
         // Düşünme metni kullanılmaz; rapor yalnız message.content'ten.
         $sonuc['thinking'] = '';
@@ -142,11 +405,12 @@ final class EvrenProvider extends OpenAiCompatibleProvider
         }
 
         if ($sonuc['text'] === '' && $sonuc['stop_reason'] === 'max_tokens') {
+            // Harcanan token kayda girsin (kota farkı), bkz. AiHatasi::$olcum.
             throw new AiHatasi(sprintf(
                 'EVREN yanıtı boş: düşünme bütçesi yetmedi (max_tokens %d, model %s). Bütçeyi artırın ya da daha hızlı bir model seçin.',
-                $this->maxTokens,
+                $this->butce ?? $this->maxTokens,
                 $this->modelName
-            ), 'dusunme_butcesi');
+            ), 'dusunme_butcesi', 0, null, null, null, $sonuc['olcum']);
         }
 
         return $sonuc;
