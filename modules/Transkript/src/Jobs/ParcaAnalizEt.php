@@ -56,11 +56,14 @@ final class ParcaAnalizEt extends TranskriptIsi
         return new static((int) ($payload['analiz_id'] ?? 0), (int) ($payload['parca'] ?? 0));
     }
 
-    /** Nabız: kuyruk satırı + bu parçanın kilidi. */
+    /** Nabız: kuyruk satırı + bu parçanın kilidi (yalnız alındıysa). */
     protected function nabizYaz(): void
     {
         parent::nabizYaz();
-        $this->analizler()->parcaNabzi($this->analizId, $this->parca);
+
+        if ($this->kilitte) {
+            $this->analizler()->parcaNabzi($this->analizId, $this->parca);
+        }
     }
 
     protected function isle(): void
@@ -77,6 +80,8 @@ final class ParcaAnalizEt extends TranskriptIsi
 
             return;
         }
+
+        $this->kilitte = true;
 
         try {
             $this->calis($analiz);
@@ -159,6 +164,8 @@ final class ParcaAnalizEt extends TranskriptIsi
         $sayi = $this->analizler()->parcaSayilari($this->analizId);
 
         if ($sayi['toplam'] === 0 || $sayi['biten'] < $sayi['toplam']) {
+            $this->yetimParcalariKuyrugaAl();
+
             return;
         }
 
@@ -168,5 +175,33 @@ final class ParcaAnalizEt extends TranskriptIsi
                 Queue::push(new AnalizBirlestir($this->analizId));
             }
         });
+    }
+
+    /**
+     * Kendi kendini onarma: işi kuyrukta olmayan bitmemiş parça (bekliyor
+     * ya da kilidi bayatlamış "işleniyor") yeniden kuyruğa girer. İşçi
+     * ölüp iş kaybolsa da analiz bir sonraki parça bitince kaldığı yerden
+     * sürer. Kuyrukta işi olan parçaya dokunulmaz.
+     *
+     * @return list<int> kuyruğa alınan parça sıraları
+     */
+    public function yetimParcalariKuyrugaAl(): array
+    {
+        $alinan = [];
+
+        foreach ($this->analizler()->sahipsizParcalar($this->analizId, self::bayatSn()) as $sira) {
+            $veri = (string) json_encode((new self($this->analizId, $sira))->toPayload(), JSON_UNESCAPED_UNICODE);
+
+            if (!KuyrukDurumu::isKuyruktaMi(self::class, $veri)) {
+                Queue::push(new self($this->analizId, $sira));
+                $alinan[] = $sira;
+            }
+        }
+
+        if ($alinan !== []) {
+            Logger::warning('Sahipsiz parçalar yeniden kuyruğa alındı', ['analiz' => $this->analizId, 'parcalar' => $alinan], 'transkript');
+        }
+
+        return $alinan;
     }
 }

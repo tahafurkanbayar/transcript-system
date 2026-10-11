@@ -473,6 +473,7 @@ final class KaynakController extends Controller
         @set_time_limit(max(300, (int) \App\Core\Config::get('queue.timeout', 300) + 60));
 
         try {
+            KuyrukDurumu::bayatlariBirak($this->db);
             $islendi = Queue::runNext('transkript');
         } catch (Throwable $e) {
             Logger::error('Kuyruk tarayıcıdan işlenirken hata', ['ayrinti' => $e->getMessage(), 'kullanici' => Auth::id()], 'transkript');

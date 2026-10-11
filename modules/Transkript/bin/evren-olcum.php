@@ -13,6 +13,7 @@
  *    --models=<liste>        varsayılan: glm-5.3,deepseek-v4.1-flash,mimo-v2.6-pro,qwen3.8-flash-next,gemma-4-31b,auto
  *    --boy=kisa,orta,uzun,cok_uzun  models / json için fixture boyları (varsayılan kisa,orta)
  *    --uzun-models=<liste>   uzun ve çok uzun fixture'ı yalnız bu modeller çalıştırır
+ *    --uzun-boy=uzun,cok_uzun bu modellerin çalıştıracağı uzun boylar
  *    --repeat=3 --concurrency=2 --max-tokens-budget=1500000
  *    --akis=1|0 --dusunme=low|off|default --sema=1|0  (akış, düşünme, json_schema; varsayılan .env)
  *                            "önce" ölçümü: --akis=0 --dusunme=default --sema=0 (11.10.2026 sabahki üretim)
@@ -260,6 +261,7 @@ $suitler = in_array('all', $suitler, true) ? ['smoke', 'models', 'budget', 'stre
 $ayar = [
     'modeller'     => $liste($secenek('models', implode(',', VARSAYILAN_MODELLER))),
     'uzun_modeller' => $liste($secenek('uzun-models', 'glm-5.3,deepseek-v4.1-flash')),
+    'uzun_boylar'  => $liste($secenek('uzun-boy', 'uzun,cok_uzun')),
     'boylar'       => $liste($secenek('boy', 'kisa,orta')),
     'tekrar'       => max(1, (int) $secenek('repeat', '3')),
     'eszamanli'    => max(1, min(4, (int) $secenek('concurrency', '2'))),
@@ -465,7 +467,7 @@ function gorevleriPlanla(array $suitler, array $ayar, array $fiksturler): array
                         $g[] = $gorev($suite, 'pipeline', $m, $f);
                     }
                     if (in_array($m, $ayar['uzun_modeller'], true) && $suite === 'models') {
-                        foreach ($boyla(array_diff(['uzun', 'cok_uzun'], $ayar['boylar'])) as $f) {
+                        foreach ($boyla(array_diff($ayar['uzun_boylar'], $ayar['boylar'])) as $f) {
                             $g[] = $gorev($suite, 'pipeline', $m, $f);
                         }
                     }

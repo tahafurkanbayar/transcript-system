@@ -65,6 +65,7 @@ if (PHP_SAPI === 'cli' && (bool) Ayarlar::get('kuyruk.zamanlanmis_gorev', true))
         $sinir = max(1, (int) Ayarlar::get('kuyruk.en_cok_is', 50));
 
         KuyrukDurumu::imle();
+        KuyrukDurumu::bayatlariBirak();
 
         for ($i = 0; $i < $sinir && time() < $bitis; $i++) {
             if (!Queue::runNext('transkript')) {

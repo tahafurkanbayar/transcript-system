@@ -189,6 +189,27 @@ final class AnalizRepository
             ->execute([':id' => $id, ':calisan' => $asama . self::CALISIYOR]);
     }
 
+    /**
+     * Bitmemiş ve sahibi görünmeyen parçalar: "bekliyor" ya da kilidi
+     * $bayatSn'den eski "isleniyor" (işçisi ölmüş).
+     *
+     * @return list<int> parça sıraları
+     */
+    public function sahipsizParcalar(int $analizId, int $bayatSn): array
+    {
+        $statement = $this->db->prepare(
+            "SELECT sira FROM transkript_parcalar
+              WHERE analiz_id = :analiz
+                AND (durum = 'bekliyor' OR (durum = 'isleniyor' AND (updated_at IS NULL OR updated_at < NOW() - INTERVAL :bayat SECOND)))
+              ORDER BY sira"
+        );
+        $statement->bindValue(':analiz', $analizId, PDO::PARAM_INT);
+        $statement->bindValue(':bayat', max(30, $bayatSn), PDO::PARAM_INT);
+        $statement->execute();
+
+        return array_map('intval', $statement->fetchAll(PDO::FETCH_COLUMN));
+    }
+
     /** Nabız: parçayı işleyen iş hâlâ çalışıyor. */
     public function parcaNabzi(int $analizId, int $sira): void
     {

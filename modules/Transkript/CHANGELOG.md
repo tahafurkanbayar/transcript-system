@@ -3,6 +3,73 @@
 Starter'ın sürüm geçmişi kökteki `CHANGELOG.md`'dedir; bu dosya yalnız
 `modules/Transkript/` içindir. Biçim [Keep a Changelog](https://keepachangelog.com/tr/1.1.0/).
 
+## 0.10.0 (2026-10-11): EVREN geliştirme + cowork 3. test turu
+
+Kullanıcı isteği (bilgisayar başında değil, "tüm onaylar sende"): cowork 3.
+tur (kuyruk işçisi durdu, EVREN "auto" yavaş, log süreleri, zaman damgası,
+sessiz gönderim) ve EVREN entegrasyonu ölç–analiz et–geliştir görevi.
+Ayrıntı ve rakamlar: `docs/evren/01-kesif.md`, `02-olcum-raporu.md`,
+`03-gelistirme-raporu.md`; API: `docs/EVREN_LLM_API_Rehberi.md`.
+
+### EVREN istemcisi
+- Akış (SSE, `Ai\SseAkisi`), bağlantı 15 sn / boşta 60 sn / toplam girişle
+  ölçekli (120 sn + 40 tok/sn, ≤900); `EVREN_STREAM`, `EVREN_BOSTA_SN`,
+  `EVREN_TOPLAM_SN`.
+- Düşünme `EVREN_THINKING=off|low|default` (low); 400'de parametresiz bir
+  kez. Düşünme bütçesi yetmezse aynı modelde `max_tokens` ×2 bir kez.
+- `json_schema` (strict) — `json_object`'te modeller alan adlarını
+  değiştiriyordu ("point", "claim") ve `at` koymuyordu; reddeden model
+  `json_object`'e düşer (`EVREN_JSON_SCHEMA`).
+- 503: aynı modelde 3 kez 2 / 4 / 8 sn. Kullanım (kısmi dahil) ve ölçüm
+  (ilk token, keep-alive, bitiş nedeni, düşünme / önbellek token'ı, kalan
+  kota) her yanıtta.
+- Model bağlamı: `auto` 32K → giriş sınırı 16.384 (büyük birleştirme
+  `auto`'ya gitmez, kademeli olur).
+
+### Model seçimi
+- Aşama başına EVREN modeli (bölüm / rapor; boş: EVREN modeli).
+- `auto` analiz başına sabitlenir (`transkript_analizler.evren_model`;
+  görsel / kalkan model sabitlenmez).
+- EVREN içi hızlı yedek halka (`EVREN_YEDEK_MODEL`, gemma-4-31b): zaman
+  aşımı / düşünme bütçesi / 503'te başka sağlayıcıdan önce.
+- Dinamik model listesi (`Ai\EvrenModelleri`, `/v1/models` günde bir;
+  görsel / OCR / ses / kalkan model yok); kayıtlı `deepseek-v4-flash` →
+  `deepseek-v4.1-flash`. Ücretsiz dönem sonu ve CR fiyatı oradan.
+
+### Zincir ve günlük
+- Devre kesici: art arda 429'da 60 sn → 5 → 15 → 60 dk; başarı sıfırlar.
+- Zincir süre sınırı 900 sn (aşılırsa iş 1 dk sonra yeniden).
+- Çağrı günlüğü: kendi başlangıç saati ve süresi (eskiden zincirin), bitiş,
+  aşama, istenen → yanıttaki model, akış, bütçe, bitiş nedeni, düşünme /
+  önbellek token'ı, TTFT, HTTP, kalan kota (migration `…140000`).
+- Ekranda çalışan model: "… — EVREN · glm-5.3, 2. deneme".
+- Şart kapısı: 403'ün istediği sürüm saklanır, Durum "yeni şart sürümü
+  onay bekliyor" der (kod onaylamaz).
+
+### Kuyruk (cowork 3. tur 1)
+- Neden: Görev Zamanlayıcı'da işçi kayıtlı değildi; tarayıcıdan işleme
+  sayfanın analizi bitince / sekme gizlenince duruyordu.
+- İş nabzı (`Jobs\IsNabzi`): kuyruk satırı, aşama ve parça kilidi 30 sn'de
+  bir; ölen iş 5 dk sonra kuyruğa geri döner, biten parça AI'a gitmez.
+- Tik döngüsü bütün Transkript sayfalarında, kuyruk boşalana kadar.
+- `kuyruk-isci-kur.ps1`: 5 dk'da bir tetik → ölen işçi yeniden başlar.
+- Durum: işçi son görülme, bekleyen / çalışan / takılı, kopyalanabilir
+  komutlar; EVREN kota %10 uyarısı, ücretsiz dönem sonu, 7 günlük token,
+  EVREN model sağlığı tablosu.
+- Rapor sayfası çelişkili cümleyi göstermez; gönderim hatası kutuda kalır
+  (419'da bağlantı kutuya yeniden yazılır).
+
+### Zaman damgaları (cowork 3. tur 4)
+- Doğrulayıcı alternatif alan adlarını ("point", "claim", "idea", "time")
+  ve "[00:01:25]" biçimini okur.
+- Bölüm analizinde boş `at`: transcript satırından, yoksa bölüm başından.
+
+### Araçlar ve testler
+- `bin/evren-olcum.php` (smoke, models, budget, stream, context,
+  consistency, json, fallback; bütçe / kota korumalı, eşzamanlı, kalite
+  puanı), `tests/evren-canli.php` (`EVREN_LIVE_TESTS=1`).
+- Testler: `tests/transkript.php` 466.
+
 ## 0.9.2 (2026-10-11): cowork 2. test turu — zaman damgaları, 413, rapordaki modeller
 
 Kullanıcı isteği: cowork'ün 2. test turunda kalan beş küçük sorunu düzelt.

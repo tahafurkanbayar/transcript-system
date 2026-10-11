@@ -327,6 +327,11 @@ return [
      *  değiştirilir. Kalıcı çözüm işçidir (kuyruk-isci-kur.bat).
      * -------------------------------------------------------------- */
     'kuyruk' => [
+        /* İş nabzı (Jobs\IsNabzi, 30 sn'de bir) bu kadar saniye gelmeyen
+         * "transkript" işi ölmüştür: kuyruğa geri bırakılır, aşama / parça
+         * kilidi devralınır (cowork 3. tur: 5 dk). .env QUEUE_TIMEOUT daha
+         * küçükse o geçerli. */
+        'nabiz_esik_sn' => 300,
         'zamanlanmis_gorev' => true,
         'butce_sn'          => 240,
         'en_cok_is'         => 50,

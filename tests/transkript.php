@@ -2918,7 +2918,9 @@ dogrula('Model özeti: aşama başına "EVREN · qwen3.8-flash-next"; hepsi ayn�
     && ModelOzeti::metin(json_encode($mo)) === 'Bölümler: EVREN · qwen3.8-flash-next — Birleştirme: EVREN · gemma-4-31b'
     && ModelOzeti::satirlar($moAyni) === [['etiket' => '', 'deger' => 'EVREN · glm-5.3']]
     && ModelOzeti::metin($moKarisik) === 'Bölümler: EVREN · glm-5.3 (2), Groq · gpt-oss-120b (1) — Ara özetler: Groq · gpt-oss-120b — Birleştirme: Groq · gpt-oss-120b'
-    && ModelOzeti::satirlar(null, 'auto → google/gemma-4-31b') === [['etiket' => '', 'deger' => 'auto → google/gemma-4-31b']] && ModelOzeti::satirlar(null, '') === []);
+    && ModelOzeti::satirlar(null, 'auto → google/gemma-4-31b') === [['etiket' => '', 'deger' => 'auto → google/gemma-4-31b']] && ModelOzeti::satirlar(null, '') === []
+    && ModelOzeti::satirlar(ModelOzeti::olustur([['saglayici' => 'evren', 'model' => 'auto → xiaomi/mimo-v2.6-pro'], ['saglayici' => 'evren', 'model' => 'mimo-v2.6-pro'],
+        ['saglayici' => 'evren', 'model' => 'mimo-v2.6-pro']], [], 'evren', 'mimo-v2.6-pro')) === [['etiket' => '', 'deger' => 'EVREN · mimo-v2.6-pro']]);
 
 dogrula('Ekran gerçek sebebi söyler: büyük girdi → "sınırını aşıyor … büyük bağlamlı servis", meşgul → "meşgul"; kademeli ilerleme (2 / 4)',
     str_contains(KaynakDurumu::ertelemeMetni(time() + 3600, null, AiHatasi::SEBEP_BUYUK_GIRDI), 'sınırını aşıyor')
@@ -3419,6 +3421,17 @@ dogrula('İş nabzı: işin başında bir kez, sonra en çok 30 sn\'de bir; HTTP
     && str_contains($tiKodu, "SET ayrildi_at = NOW() WHERE durum = 'calisiyor' AND sinif = :sinif AND veri = :veri")
     && str_contains($tiKodu, 'IsNabzi::basla(') && str_contains($tiKodu, 'IsNabzi::bitir()') && str_contains($tiKodu, 'asamaNabzi(')
     && str_contains($paKodu, 'parcaNabzi(') && !preg_match('/public function handle\(\)/', $paKodu));
+
+/* 11.10.2026 canlı denemesi: işçi öldürüldü; geri dönen iş, kilidi ALMADAN attığı ilk nabızla bayat parça
+ * kilidini taze gösterdi ve parçayı sahipsiz bıraktı. Nabız yalnız alınmış kilidi tazeler; sahipsiz parça
+ * (işi kuyrukta olmayan, kilidi bayat) bir sonraki parça bitince yeniden kuyruğa girer; eşik 5 dk. */
+preg_match('/protected function nabizYaz\(\): void\s*\{.*?\n    \}/s', $paKodu, $paNabiz);
+preg_match('/protected function isle\(\): void\s*\{.*?\$this->kilitte = true;/s', $paKodu, $paIsle);
+dogrula('Nabız yalnız ALINMIŞ kilidi tazeler (bayat kilit devralınabilir); sahipsiz parça yeniden kuyruğa girer; nabız eşiği 5 dk (QUEUE_TIMEOUT daha büyük olsa da)',
+    str_contains($tiKodu, "if (static::ASAMA !== '' && \$this->kilitte)") && str_contains($paNabiz[0] ?? '', 'if ($this->kilitte)')
+    && str_contains($paIsle[0] ?? '', 'parcayiAl(') && strpos($paIsle[0] ?? '', 'parcayiAl(') < strpos($paIsle[0] ?? '', '$this->kilitte = true;')
+    && str_contains($paKodu, 'yetimParcalariKuyrugaAl()') && method_exists(AnalizRepository::class, 'sahipsizParcalar')
+    && KuyrukDurumu::nabizEsigi() <= 300 && method_exists(KuyrukDurumu::class, 'bayatlariBirak'));
 
 $jsKuyruk = (string) file_get_contents(MODUL_YOLU . '/assets/js/transkript.js');
 preg_match('#public function kuyrukTik\(.*?\n    }\n#s', (string) file_get_contents(MODUL_YOLU . '/src/Controllers/KaynakController.php'), $tikGovde2);

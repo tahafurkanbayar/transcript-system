@@ -159,6 +159,57 @@ final class KuyrukDurumu
         return $son > 0 && ($simdi ?? time()) - $son <= self::ESIK_SN;
     }
 
+    /** Nabzı bu kadar saniye gelmeyen iş ölmüştür (config kuyruk.nabiz_esik_sn, QUEUE_TIMEOUT'tan büyük olmaz). */
+    public static function nabizEsigi(): int
+    {
+        return max(60, min((int) Config::get('queue.timeout', 300), (int) Ayarlar::get('kuyruk.nabiz_esik_sn', 300)));
+    }
+
+    /**
+     * Nabzı eşikten eski "transkript" işlerini kuyruğa geri bırakır (deneme
+     * hakkı bitmişse başarısız sayar, çekirdeğin releaseStuck'ı gibi). Çekirdek
+     * QUEUE_TIMEOUT'u bekler (bu kurulumda 900 sn); modülün işleri nabız
+     * attığı için 5 dk yeter. Zamanlanmış görev ve tarayıcı tik'i işlemeye
+     * başlamadan çağırır.
+     *
+     * @return int geri bırakılan iş sayısı
+     */
+    public static function bayatlariBirak(?PDO $db = null): int
+    {
+        $db  ??= \App\Core\Database::connection();
+        $esik  = self::nabizEsigi();
+        $tablo = self::tablo();
+
+        $guncelle = $db->prepare(
+            'UPDATE `' . $tablo . "`
+                SET durum = IF(deneme >= max_deneme, 'basarisiz', 'bekliyor'),
+                    hata  = IF(deneme >= max_deneme, 'İş nabzı kesildi ve deneme hakkı bitti (işçi çöktü ya da kapatıldı).', hata),
+                    ayrildi_at = NULL
+              WHERE kuyruk = 'transkript' AND durum = 'calisiyor'
+                AND ayrildi_at IS NOT NULL AND ayrildi_at < NOW() - INTERVAL :esik SECOND"
+        );
+        $guncelle->bindValue(':esik', $esik, PDO::PARAM_INT);
+        $guncelle->execute();
+        $adet = $guncelle->rowCount();
+
+        if ($adet > 0) {
+            Logger::warning('Nabzı kesilen Transkript işleri kuyruğa geri bırakıldı', ['adet' => $adet, 'esik_sn' => $esik], 'transkript');
+        }
+
+        return $adet;
+    }
+
+    /** Bu iş (sınıf + yük) kuyrukta bekliyor ya da çalışıyor mu? */
+    public static function isKuyruktaMi(string $sinif, string $veri): bool
+    {
+        $statement = \App\Core\Database::connection()->prepare(
+            'SELECT COUNT(*) FROM `' . self::tablo() . "` WHERE sinif = :sinif AND veri = :veri AND durum IN ('bekliyor', 'calisiyor')"
+        );
+        $statement->execute([':sinif' => $sinif, ':veri' => $veri]);
+
+        return (int) $statement->fetchColumn() > 0;
+    }
+
     /** Kuyruk tablosunun adı (config queue.table, yalnız harf / rakam / _). */
     public static function tablo(): string
     {
@@ -179,8 +230,8 @@ final class KuyrukDurumu
                FROM `" . $tablo . "`
               WHERE kuyruk = 'transkript'"
         );
-        $sorgu->bindValue(':zaman', max(30, (int) Config::get('queue.timeout', 300)), PDO::PARAM_INT);
-        $sorgu->bindValue(':zaman2', max(30, (int) Config::get('queue.timeout', 300)), PDO::PARAM_INT);
+        $sorgu->bindValue(':zaman', self::nabizEsigi(), PDO::PARAM_INT);
+        $sorgu->bindValue(':zaman2', self::nabizEsigi(), PDO::PARAM_INT);
         $sorgu->execute();
 
         $satir = $sorgu->fetch(PDO::FETCH_ASSOC) ?: [];

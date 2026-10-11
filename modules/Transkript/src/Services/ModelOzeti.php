@@ -90,16 +90,21 @@ final class ModelOzeti
                 continue;
             }
 
-            $tekModel = count($liste) === 1;
-            $asamalar[] = ['etiket' => $etiket, 'deger' => implode(', ', array_map(
-                static fn (array $m): string => self::etiket((string) ($m['saglayici'] ?? ''), (string) ($m['model'] ?? ''))
-                    . ($tekModel ? '' : ' (' . (int) ($m['adet'] ?? 1) . ')'),
-                $liste
-            ))];
+            // Ekranda aynı görünenler birleşir ("auto → xiaomi/mimo-v2.6-pro" ve sabitlenen "mimo-v2.6-pro").
+            $adetler = [];
 
             foreach ($liste as $m) {
-                $ciftler[self::etiket((string) ($m['saglayici'] ?? ''), (string) ($m['model'] ?? ''))] = true;
+                $gorunen = self::etiket((string) ($m['saglayici'] ?? ''), (string) ($m['model'] ?? ''));
+                $adetler[$gorunen] = ($adetler[$gorunen] ?? 0) + (int) ($m['adet'] ?? 1);
+                $ciftler[$gorunen] = true;
             }
+
+            $tekModel = count($adetler) === 1;
+            $asamalar[] = ['etiket' => $etiket, 'deger' => implode(', ', array_map(
+                static fn (string $gorunen, int $adet): string => $gorunen . ($tekModel ? '' : ' (' . $adet . ')'),
+                array_keys($adetler),
+                $adetler
+            ))];
         }
 
         if ($asamalar === []) {
