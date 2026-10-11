@@ -30,7 +30,8 @@
  *    · AKIŞ (0.10.0, EVREN_STREAM, varsayılan açık): "stream": true +
  *      include_usage; SseAkisi parçaları birleştirir. Üç ayrı sınır:
  *      bağlantı 15 sn, BOŞTA KALMA 60 sn (EVREN_BOSTA_SN; keep-alive
- *      veri sayılmaz), toplam süre giriş boyutuyla ölçeklenir (120 sn +
+ *      veri sayılmaz; ilk token'a kadar 120 sn — EVREN_ILK_TOKEN_SN —,
+ *      hiç bayt gelmezse 30 sn), toplam süre giriş boyutuyla ölçeklenir (120 sn +
  *      40 token/sn, en çok 900; EVREN_TOPLAM_SN ezer). Akış kapalıysa eski
  *      tek sınır (en az 180 sn). 11.10.2026'da 27 çağrının 4'ü tam 180,0
  *      sn'de zaman aşımına uğradı (cowork 3. tur, docs/evren).
@@ -124,6 +125,9 @@ final class EvrenProvider extends OpenAiCompatibleProvider
 
     /** Akışta veri gelmeden en çok (sn): EVREN 10 sn'de bir keep-alive gönderir, o veri sayılmaz. */
     public const BOSTA_SN = 60;
+
+    /** İlk token'a kadar en çok (sn; kuyrukta bekleyiş, keep-alive gelirken). */
+    public const ILK_TOKEN_SN = 120;
 
     /** Akışlı istekte toplam süre: taban + giriş token'ı / hız, üst sınır (sn). */
     public const TOPLAM_TABAN_SN  = 120;
@@ -359,6 +363,16 @@ final class EvrenProvider extends OpenAiCompatibleProvider
     protected function bostaSiniri(): int
     {
         return max(15, (int) ($this->ayar['bosta_sn'] ?? Env::int('EVREN_BOSTA_SN', self::BOSTA_SN)));
+    }
+
+    /**
+     * İlk token'a kadar en çok (sn): glm-5.3 yoğunken 50 sn kuyrukta bekledi
+     * (10 keep-alive, ölçüm 11.10.2026); bağlantı canlıysa (keep-alive) bu
+     * süre beklenir, hiç bayt gelmezse 30 sn'de kesilir.
+     */
+    protected function ilkTokenSiniri(): int
+    {
+        return max($this->bostaSiniri(), Env::int('EVREN_ILK_TOKEN_SN', self::ILK_TOKEN_SN));
     }
 
     /** Akışta: 120 sn + giriş token'ı / 40, en çok 900 (EVREN_TOPLAM_SN ezer); akışsız: eski tek sınır. */

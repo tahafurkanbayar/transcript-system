@@ -166,6 +166,19 @@ abstract class HttpProvider implements Provider
         return 0;
     }
 
+    /**
+     * İLK veri satırına kadar beklenebilecek süre (sn): model kuyruktayken
+     * sunucu keep-alive yollar, token yoktur. 0: bostaSiniri. Bu evrede hiç
+     * bayt (keep-alive dahil) OLU_BAGLANTI_SN gelmezse bağlantı ölüdür.
+     */
+    protected function ilkTokenSiniri(): int
+    {
+        return 0;
+    }
+
+    /** İlk token beklenirken hiç bayt gelmeyen en uzun süre (sn): sonra bağlantı ölü sayılır. */
+    protected const OLU_BAGLANTI_SN = 30;
+
     /** Bu isteğin toplam süre sınırı (sn); alt sınıf girdi boyutuna göre ölçekleyebilir. */
     protected function toplamSure(string $govde): int
     {
@@ -396,8 +409,11 @@ abstract class HttpProvider implements Provider
         $headers = [];
         $akis    = $this->akis();
         $bosta   = $akis ? max(0, $this->bostaSiniri()) : 0;
+        $ilkSinir = $akis && $this->ilkTokenSiniri() > 0 ? $this->ilkTokenSiniri() : $bosta;
+        $olu     = $akis && $this->ilkTokenSiniri() > 0 ? static::OLU_BAGLANTI_SN : 0;
         $bas     = microtime(true);
         $sonVeri = $bas;
+        $sonBayt = $bas;
         $ilk     = null;
         $keep    = 0;
         $govde   = '';
@@ -429,12 +445,19 @@ abstract class HttpProvider implements Provider
             /* İlerleme: kuyruk nabzı (uzun istekte iş "ölü" sayılmasın) ve
              * akışta boşta kalma sınırı. 0 dışı dönüş isteği keser. */
             CURLOPT_NOPROGRESS       => false,
-            CURLOPT_XFERINFOFUNCTION => static function () use (&$sonVeri, &$kesildi, $bosta): int {
+            CURLOPT_XFERINFOFUNCTION => static function () use (&$sonVeri, &$sonBayt, &$ilk, &$kesildi, $bosta, $ilkSinir, $olu, $bas): int {
                 if (self::$nabiz !== null) {
                     (self::$nabiz)();
                 }
 
-                if ($bosta > 0 && microtime(true) - $sonVeri > $bosta) {
+                $simdi = microtime(true);
+
+                // İlk token öncesi: kuyrukta bekleyiş (keep-alive geliyorsa) daha uzun; hiç bayt yoksa bağlantı ölü.
+                $asim = $ilk === null
+                    ? ($ilkSinir > 0 && $simdi - $bas > $ilkSinir) || ($olu > 0 && $simdi - $sonBayt > $olu)
+                    : $bosta > 0 && $simdi - $sonVeri > $bosta;
+
+                if ($asim) {
                     $kesildi = true;
 
                     return 1;
@@ -446,9 +469,10 @@ abstract class HttpProvider implements Provider
 
         if ($akis) {
             // Gövde parça parça: veri satırı ("data: {…}") boşta sayacını sıfırlar; ":" keep-alive saymaz.
-            curl_setopt($curl, CURLOPT_WRITEFUNCTION, static function ($handle, string $parca) use (&$govde, &$tampon, &$sonVeri, &$ilk, &$keep, $bas): int {
+            curl_setopt($curl, CURLOPT_WRITEFUNCTION, static function ($handle, string $parca) use (&$govde, &$tampon, &$sonVeri, &$sonBayt, &$ilk, &$keep, $bas): int {
                 $govde  .= $parca;
                 $tampon .= $parca;
+                $sonBayt = microtime(true);
 
                 while (($i = strpos($tampon, "\n")) !== false) {
                     $satir  = rtrim(substr($tampon, 0, $i), "\r");
@@ -488,7 +512,9 @@ abstract class HttpProvider implements Provider
 
         if ($kesildi) {
             // Boşta kalma zaman aşımı: 28 (CURLE_OPERATION_TIMEDOUT) gibi "zaman_asimi" sayılır.
-            return [$status, $govde, $headers, sprintf('Boşta kalma: %d sn boyunca yanıt verisi gelmedi', $bosta), 28];
+            return [$status, $govde, $headers, $ilk === null
+                ? sprintf('Boşta kalma: ilk token %d sn içinde gelmedi (ya da bağlantı %d sn sessiz kaldı)', $ilkSinir, $olu)
+                : sprintf('Boşta kalma: %d sn boyunca yanıt verisi gelmedi', $bosta), 28];
         }
 
         return [$status, $akis ? $govde : (is_string($raw) ? $raw : ''), $headers, $error, $errno];

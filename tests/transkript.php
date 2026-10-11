@@ -2416,7 +2416,8 @@ dogrula('EVREN_STREAM=false: eski akışsız istek (tek 180 sn sınırı); EVREN
     !isset($giden[0]['stream']) && !isset($giden[0]['reasoning_effort']) && $kapaliSure === 180 && $ayarSure === 300
     && korumali(new EvrenProvider('k', 'glm-5.3'), 'toplamSure', str_repeat('a', 35000)) === 370
     && EvrenProvider::olcekliSure(100) === 180 && EvrenProvider::olcekliSure(4000, 240) === 240 && EvrenProvider::olcekliSure(400000) === 900
-    && korumali(new EvrenProvider('k', 'glm-5.3'), 'bostaSiniri') === 60);
+    && korumali(new EvrenProvider('k', 'glm-5.3'), 'bostaSiniri') === 60 && korumali(new EvrenProvider('k', 'glm-5.3'), 'ilkTokenSiniri') === 120
+    && korumali(new OpenAiCompatibleProvider('k', 'm'), 'ilkTokenSiniri') === 0);
 
 dogrula('Düşünme ayarı: low → reasoning_effort "low"; off → mimo "none", ötekiler "low"; default ya da düşünmeyen model (gemma, auto) → yok',
     EvrenProvider::dusunmeParametreleri('glm-5.3', 'low') === ['reasoning_effort' => 'low']
