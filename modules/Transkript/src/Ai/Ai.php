@@ -491,8 +491,9 @@ final class Ai
         }
 
         return (string) preg_replace(
-            ['/evren_llm_[A-Za-z0-9_\-]{4,}/', '/AIza[0-9A-Za-z_\-]{20,}/', '/sk-(?:or-v1-|ant-)?[A-Za-z0-9_\-]{16,}/', '/gsk_[A-Za-z0-9]{16,}/'],
-            ['evren_llm_****', 'AIza****', 'sk-****', 'gsk_****'],
+            // Sonuncusu gizli değil ama gereksiz: Groq hata metnindeki kuruluş kimliği.
+            ['/evren_llm_[A-Za-z0-9_\-]{4,}/', '/AIza[0-9A-Za-z_\-]{20,}/', '/sk-(?:or-v1-|ant-)?[A-Za-z0-9_\-]{16,}/', '/gsk_[A-Za-z0-9]{16,}/', '/\borg_[A-Za-z0-9]{12,}/'],
+            ['evren_llm_****', 'AIza****', 'sk-****', 'gsk_****', 'org_****'],
             $metin
         );
     }

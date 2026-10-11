@@ -3,9 +3,10 @@
  * =====================================================================
  *  GÖRÜNÜM: EVREN kullanım şartları (panel/transkript/ayarlar/evren-sartlar)
  * ---------------------------------------------------------------------
- *  Yalnız yönetici. Şartların durumu, metni (EVREN'den; HTML olarak değil
- *  düz metin olarak basılır) ve "Okudum, onaylıyorum" formu. Onay yalnız
- *  bu formla verilir (AyarController::evrenSartOnayla).
+ *  Yalnız yönetici. Şartların durumu, metni (EVREN'den Markdown;
+ *  GuvenliMarkdown biçimler: ham HTML kapalı, dış resim yüklenmez) ve
+ *  "Okudum, onaylıyorum" formu. Onay yalnız bu formla verilir
+ *  (AyarController::evrenSartOnayla).
  *
  *  @var array{onayli:?bool, guncel_surum:?int, onaylanan_surum:?int} $bilgi
  *  @var bool        $erisim  durum ucu yanıt verdi mi
@@ -17,6 +18,7 @@
 
 use App\Core\Auth;
 use App\Core\View;
+use Modules\Transkript\Services\GuvenliMarkdown;
 use Modules\Transkript\TranskriptPolicy;
 use Modules\Transkript\Varliklar;
 
@@ -40,13 +42,16 @@ $surum = $bilgi['guncel_surum'];
         <?php elseif ($bilgi['onayli'] === true): ?>
             <p class="mb-2"><span class="cy-pill is-ok">Onaylı</span> Bu anahtar için kullanım şartları<?= $surum !== null ? ' (v' . (int) $surum . ')' : '' ?> onaylı. EVREN zincirde kullanılır.</p>
             <?php if ($kayit !== null && $kayit['tarih'] !== ''): ?>
-                <p class="cy-muted small mb-0">Panelde kayıtlı: v<?= (int) $kayit['surum'] ?> · <?= e(human_date($kayit['tarih'])) ?></p>
+                <p class="cy-muted small">Panelde kayıtlı: v<?= (int) $kayit['surum'] ?> · <?= e(human_date($kayit['tarih'])) ?></p>
+            <?php endif; ?>
+            <?php if ($metin !== null && $metin !== ''): ?>
+                <div class="tk-sart-metni mt-3" tabindex="0" aria-label="Onaylanan kullanım şartlarının metni"><?= GuvenliMarkdown::html($metin) ?></div>
             <?php endif; ?>
         <?php else: ?>
             <p class="mb-3"><span class="cy-pill is-warn">Onaylanmadı</span> Şartlar onaylanana kadar EVREN her isteği reddeder (403); analizler sıradaki sağlayıcıyla sürer.</p>
 
             <?php if ($metin !== null && $metin !== ''): ?>
-                <div class="tk-sart-metni" tabindex="0" aria-label="Kullanım şartlarının metni"><?= e($metin) ?></div>
+                <div class="tk-sart-metni" tabindex="0" aria-label="Kullanım şartlarının metni"><?= GuvenliMarkdown::html($metin) ?></div>
             <?php else: ?>
                 <p class="cy-panel__note is-warn">Şart metni alınamadı. Metni evren.ssyz.org.tr'den okuyabilirsiniz.</p>
             <?php endif; ?>

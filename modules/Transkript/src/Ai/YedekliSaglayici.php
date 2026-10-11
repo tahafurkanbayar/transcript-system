@@ -308,27 +308,31 @@ final class YedekliSaglayici implements Provider
 
                 return $yanit;
             } catch (AiHatasi $e) {
-                $kod     = $e->kod;
-                $bekleme = $e->bekleme;
-
-                // Groq'un 413'ü dakikalık kotanın dolması olabilir: hız sınırı gibi bekle, sınır öğrenme.
-                if (GirisSiniri::buyukIstekHatasi($e) && GirisSiniri::dakikalikDoluluk($e->getMessage(), $boyut)) {
-                    $kod     = 'rate_limit';
-                    $bekleme = 60;
-                } elseif (GirisSiniri::buyukIstekHatasi($e)) {
-                    GirisSiniri::ogren($halka['ad'], $model, $boyut, $simdi);
-                }
-
-                $son = $kod === $e->kod ? $e : new AiHatasi($e->getMessage(), $kod, $e->httpDurumu, $e, $bekleme);
+                $son = $e;
                 $this->denemeler[] = [
                     'ad'      => $halka['ad'],
                     'model'   => $model,
-                    'kod'     => $kod,
+                    'kod'     => $e->kod,
                     'mesaj'   => $e->getMessage(),
                     'sure_ms' => (int) ((hrtime(true) - $bas) / 1_000_000),
                 ];
 
-                self::dinlendir($halka['ad'], $kod, $simdi, $bekleme, $model);
+                /* 413: isteğin %80'i sınır olur; aynı boyut bu sağlayıcıya
+                 * yeniden gitmez (birleştirme küçük gruplara böler). Dakikalık
+                 * kota (Groq TPM) ise sağlayıcı 60 sn dinlenir: sıradaki
+                 * küçük istek dolu dakikaya gitmesin. Öteki 413 dinletmez. */
+                if (GirisSiniri::buyukIstekHatasi($e)) {
+                    $dakikalik = GirisSiniri::dakikalik($e->getMessage());
+                    GirisSiniri::ogren($halka['ad'], $model, $boyut, $simdi, $dakikalik);
+
+                    if ($dakikalik) {
+                        self::dinlendir($halka['ad'], 'rate_limit', $simdi, GirisSiniri::DAKIKALIK_DINLENME_SN, $model);
+                    }
+
+                    continue;
+                }
+
+                self::dinlendir($halka['ad'], $e->kod, $simdi, $e->bekleme, $model);
             }
         }
 

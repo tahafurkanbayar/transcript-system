@@ -34,7 +34,7 @@ final class AnalizRepository
     private const CALISIYOR = ':calisiyor';
 
     /** ilerle() ile yazılabilecek ek sütunlar. */
-    private const EK_SUTUNLAR = ['metin_id', 'sonuc_json', 'kisa_ozet', 'detayli_ozet', 'prompt_surumu', 'model', 'ara_sonuclar'];
+    private const EK_SUTUNLAR = ['metin_id', 'sonuc_json', 'kisa_ozet', 'detayli_ozet', 'prompt_surumu', 'model', 'modeller', 'ara_sonuclar'];
 
     public function __construct(private readonly PDO $db)
     {
@@ -326,12 +326,19 @@ final class AnalizRepository
     }
 
     /** @param array<string,mixed> $sonuc map çıktısı (doğrulanmış) */
-    public function parcayiBitir(int $analizId, int $sira, array $sonuc): void
+    public function parcayiBitir(int $analizId, int $sira, array $sonuc, ?string $saglayici = null, ?string $model = null): void
     {
         $this->db->prepare(
-            "UPDATE transkript_parcalar SET durum = 'tamamlandi', sonuc_json = :sonuc, hata = NULL
+            "UPDATE transkript_parcalar SET durum = 'tamamlandi', sonuc_json = :sonuc, saglayici = :saglayici, model = :model, hata = NULL
               WHERE analiz_id = :analiz AND sira = :sira"
-        )->execute([':sonuc' => json_encode($sonuc, JSON_UNESCAPED_UNICODE), ':analiz' => $analizId, ':sira' => $sira]);
+        )->execute([
+            ':sonuc'     => json_encode($sonuc, JSON_UNESCAPED_UNICODE),
+            // Raporun model özeti (ModelOzeti): bölümü hangi sağlayıcı + model yazdı.
+            ':saglayici' => $saglayici !== null && $saglayici !== '' ? mb_substr($saglayici, 0, 50) : null,
+            ':model'     => $model !== null && $model !== '' ? mb_substr($model, 0, 150) : null,
+            ':analiz'    => $analizId,
+            ':sira'      => $sira,
+        ]);
     }
 
     /** Kalıcı hata ya da denemeler tükendi: rapor bu parça olmadan, uyarıyla tamamlanır. */

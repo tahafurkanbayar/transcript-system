@@ -26,6 +26,7 @@ use App\Core\Log\Logger;
 use App\Core\Queue\Queue;
 use Modules\Transkript\Ai\AiHatasi;
 use Modules\Transkript\Ayarlar;
+use Modules\Transkript\Services\ModelOzeti;
 use Modules\Transkript\Services\Pipeline;
 use Modules\Transkript\Zaman;
 
@@ -46,6 +47,7 @@ final class AnalizBirlestir extends TranskriptIsi
         $sonuclar = [];
         $eksik    = [];
         $bitMs    = 0;
+        $modeller = [];
 
         foreach ($this->analizler()->parcalar($this->analizId) as $parca) {
             $bitMs = max($bitMs, (int) $parca['bitis_ms']);
@@ -53,6 +55,7 @@ final class AnalizBirlestir extends TranskriptIsi
 
             if (is_array($json)) {
                 $sonuclar[] = $json;
+                $modeller[] = ['saglayici' => $parca['saglayici'] ?? null, 'model' => $parca['model'] ?? null];
             } else {
                 $eksik[] = Zaman::yaz((int) $parca['baslangic_ms']) . '–' . Zaman::yaz((int) $parca['bitis_ms']);
             }
@@ -85,10 +88,12 @@ final class AnalizBirlestir extends TranskriptIsi
             ], 'transkript');
         }
 
-        $this->birlikte(function () use ($sonuc): void {
+        $this->birlikte(function () use ($sonuc, $modeller): void {
             $this->analizler()->ilerle($this->analizId, 'analiz_ediliyor', 'rapor', 95, [
                 'sonuc_json'    => $sonuc['sonuc'],
                 'model'         => $sonuc['model'],
+                // Raporun bütün modelleri: bölümler, ara özetler, birleştirme.
+                'modeller'      => ModelOzeti::olustur($modeller, $sonuc['ara_modeller'], $sonuc['saglayici'], $sonuc['model']),
                 'prompt_surumu' => (string) Ayarlar::get('ai.istem_surumu', 'v1'),
                 'ara_sonuclar'  => null,
             ]);

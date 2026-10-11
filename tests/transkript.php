@@ -88,16 +88,19 @@ use Modules\Transkript\Services\AnalizReddedildi;
 use Modules\Transkript\Services\Chunker;
 use Modules\Transkript\Services\DisaAktarim;
 use Modules\Transkript\Services\GecersizSonuc;
+use Modules\Transkript\Services\GuvenliMarkdown;
 use Modules\Transkript\Services\Istem;
 use Modules\Transkript\Services\Cleaner;
 use Modules\Transkript\Services\KaynakDurumu;
 use Modules\Transkript\Services\KayitYonetimi;
 use Modules\Transkript\Services\KuyrukDurumu;
+use Modules\Transkript\Services\ModelOzeti;
 use Modules\Transkript\Services\Parca;
 use Modules\Transkript\Services\Pipeline;
 use Modules\Transkript\Services\RaporVerisi;
 use Modules\Transkript\Services\ResultValidator;
 use Modules\Transkript\Services\Search;
+use Modules\Transkript\Services\ZamanYedegi;
 use Modules\Transkript\Transcript\AsrProvider;
 use Modules\Transkript\Transcript\ExternalTranscriptProvider;
 use Modules\Transkript\Transcript\GeminiVideoProvider;
@@ -2546,13 +2549,28 @@ dogrula('Şartlar kendiliğinden onaylanmaz: tek çağrı yeri yöneticinin form
 
 $sartSayfasi = App\Core\View::capture('Transkript::evren-sartlar', [
     'bilgi' => ['onayli' => false, 'guncel_surum' => 1, 'onaylanan_surum' => null], 'erisim' => true, 'hata' => null,
-    'metin' => "Madde 1 <script>alert(1)</script>\nMadde 2", 'kayit' => null,
+    'metin' => "# Şartlar\n\n![Versiyon](https://img.shields.io/badge/versiyon-1-blue)\n\n## 1. Kapsam\n\nMadde 1 <script>alert(1)</script>\nMadde 2", 'kayit' => null,
 ]);
 dogrula('Şart sayfası: metin HTML olarak basılmaz; form CSRF\'li, sürüm gizli alanda, "okudum" kutusu zorunlu',
     str_contains($sartSayfasi, '&lt;script&gt;alert(1)&lt;/script&gt;') && !str_contains($sartSayfasi, '<script>alert(1)')
     && preg_match('#action="[^"]*ayarlar/evren-sartlar"[^>]*>\s*<input type="hidden" name="csrf_token"#', $sartSayfasi) === 1
     && str_contains($sartSayfasi, 'name="surum" value="1"') && preg_match('#name="okudum" value="1" required#', $sartSayfasi) === 1
-    && str_contains($sartSayfasi, 'Okudum, onaylıyorum'));
+    && str_contains($sartSayfasi, 'Okudum, onaylıyorum') && str_contains($sartSayfasi, '<h5>1. Kapsam</h5>')
+    && !str_contains($sartSayfasi, 'img.shields.io') && !str_contains($sartSayfasi, '<img') && str_contains($sartSayfasi, '>Versiyon</span>'));
+
+$md = static fn (string $m): string => GuvenliMarkdown::html($m);
+$mdSart = $md("# Başlık\n\n> Bu belge **v1**'dir\n> (`is_material=true`)\n\n---\n\n## 2. Kullanım\n\n- Bir madde\n  devamı\n- İki\n\n1. Bir\n2. İki\n\n*Taslak sürüm.*\n\n![Durum](https://img.shields.io/badge/durum-esaslı%20(v1%2C%20ilk%20yayın)-orange)");
+dogrula('Güvenli Markdown: başlık (h4/h5), alıntı, kalın, satır içi kod, çizgi, madde ve numaralı liste (devam satırıyla), eğik; parantezli rozet adresi bile resim olmaz',
+    str_contains($mdSart, '<h4>Başlık</h4>') && str_contains($mdSart, '<h5>2. Kullanım</h5>') && str_contains($mdSart, '<blockquote><p>Bu belge <strong>v1</strong>')
+    && str_contains($mdSart, '<code>is_material=true</code>') && str_contains($mdSart, '<hr>') && str_contains($mdSart, '<ul><li>Bir madde devamı</li><li>İki</li></ul>')
+    && str_contains($mdSart, '<ol><li>Bir</li><li>İki</li></ol>') && str_contains($mdSart, '<em>Taslak sürüm.</em>')
+    && str_contains($mdSart, '<span class="tk-md-resim" title="Dış resim gösterilmez">Durum</span>') && !str_contains($mdSart, 'shields') && !str_contains($mdSart, '<img'));
+$mdKotu = $md("<script>alert(1)</script> <b onclick=x>k</b>\n\n[a](javascript:alert(1)) [b](data:text/html,x) [c](https://ornek.org/?q=1&r=2) <https://ornek.org/x>\n\n`<i>kod</i>` ![x](https://img/a.png \"t\")");
+dogrula('Güvenli Markdown: ham HTML kaçışlı; bağlantı yalnız http(s) / mailto, rel="noopener nofollow", yeni sekme; javascript: / data: yalnız metin',
+    !str_contains($mdKotu, '<script') && !str_contains($mdKotu, '<b ') && str_contains($mdKotu, '&lt;script&gt;') && !str_contains($mdKotu, 'javascript:')
+    && !str_contains($mdKotu, 'data:text') && str_contains($mdKotu, '<a href="https://ornek.org/?q=1&amp;r=2" target="_blank" rel="noopener nofollow noreferrer">c</a>')
+    && str_contains($mdKotu, '<a href="https://ornek.org/x"') && str_contains($mdKotu, '<code>&lt;i&gt;kod&lt;/i&gt;</code>') && !str_contains($mdKotu, '<img')
+    && GuvenliMarkdown::html("a\x01" . "0\x02b") === '<div class="tk-md"><p>a0b</p></div>');
 
 /* ---------------------------------------------------------------- */
 echo "\nGiriş sınırı ve kademeli birleştirme (uzun video; API'ye gidilmez)\n";
@@ -2569,18 +2587,20 @@ dogrula('Boyut tahmini karakter / 3,5; sınır config\'ten (groq 7000), .env <AD
     GirisSiniri::metinBoyutu(str_repeat('a', 350)) === 100 && GirisSiniri::tahmin('ab', [['content' => str_repeat('x', 68)]]) === 20
     && GirisSiniri::yapilandirilan('groq') === 7000 && $ortamSiniri === 12000 && GirisSiniri::sinir('test-a', 'm') === 0);
 
-GirisSiniri::ogren('test-a', 'm1', 5000);
+$ilkOgrenme = GirisSiniri::ogren('test-a', 'm1', 5000);
 GirisSiniri::ogren('test-a', 'm1', 8000);
-$ogrenme = [GirisSiniri::ogrenilen('test-a', 'm1'), GirisSiniri::sinir('test-a', 'm1'), GirisSiniri::sigar('test-a', 'm1', 4999), GirisSiniri::sigar('test-a', 'm1', 5000), GirisSiniri::ogrenilen('test-a', 'm2')];
+$ogrenme = [$ilkOgrenme, GirisSiniri::ogrenilen('test-a', 'm1'), GirisSiniri::sinir('test-a', 'm1'), GirisSiniri::sigar('test-a', 'm1', 4000), GirisSiniri::sigar('test-a', 'm1', 4001), GirisSiniri::ogrenilen('test-a', 'm2')];
 GirisSiniri::unut('test-a');
-dogrula('Öğrenilen sınır: reddedilen boyut (küçüğü kalır); o boyut ve üstü gönderilmez; model değişince geçersiz; unut() siler',
-    $ogrenme === [5000, 4999, true, false, null] && GirisSiniri::ogrenilen('test-a', 'm1') === null);
+DinlenmeDeposu::yaz('sinir:test-a', ['boyut' => 5000, 'model' => 'm1', 'zaman' => time(), 'sakla' => time() + 60]);
+$eskiKayit = GirisSiniri::ogrenilen('test-a', 'm1');
+GirisSiniri::unut('test-a');
+dogrula('Öğrenilen sınır: reddedilen boyutun %80\'i (küçüğü kalır); üstü gönderilmez; model değişince geçersiz; 0.9.1 kaydı okunur; unut() siler',
+    $ogrenme === [4000, 4000, 4000, true, false, null] && $eskiKayit === 4999 && GirisSiniri::ogrenilen('test-a', 'm1') === null);
 
 $tpm = static fn (int $istenen): string => 'İstek çok büyük. — Request too large for model `openai/gpt-oss-120b` in organization `org_x` service tier `on_demand` on tokens per minute (TPM): Limit 8000, Requested ' . $istenen . ', please reduce your message size and try again.';
-dogrula('Groq 413 "tokens per minute": istenen isteğin kendisinden çok büyükse dakika dolu (bekle), yaklaşık eşitse ya da sınırdan büyükse istek gerçekten büyük (öğren)',
-    GirisSiniri::dakikalikDoluluk($tpm(10438), 2050) && GirisSiniri::dakikalikDoluluk($tpm(14724), 6325)
-    && !GirisSiniri::dakikalikDoluluk($tpm(7600), 7300) && !GirisSiniri::dakikalikDoluluk($tpm(12100), 11500)
-    && !GirisSiniri::dakikalikDoluluk('Request too large', 100));
+dogrula('413 türü: Groq "tokens per minute (TPM)" dakikalık; "Request too large" ve bağlam aşımı değil',
+    GirisSiniri::dakikalik($tpm(10438)) && !GirisSiniri::dakikalik('Request too large')
+    && !GirisSiniri::dakikalik("This model's maximum context length is 8192 tokens. However, your messages resulted in 9000 tokens."));
 
 // Zincir: sığmayan halka çağrılmaz (dinlenmez), sıradaki yanıtlar.
 $buyukMesaj = [['role' => 'user', 'content' => str_repeat('ğ', 30000)]];   // ~8.572 token > groq 7000
@@ -2610,19 +2630,32 @@ dogrula('Hiçbir açık sağlayıcıya sığmıyor: "cok_buyuk" (birleştirme ka
     && Pipeline::buyukGirdi($bekleyenBuyuk) && !Pipeline::buyukGirdi(new AiHatasi('', 'zincir_dinleniyor', 0, null, 60)));
 
 $orta = [['role' => 'user', 'content' => str_repeat('a', 7000)]];   // ~2.000 token
+$ortaBoyut = GirisSiniri::tahmin('', $orta);
 $z413 = new YedekliSaglayici([['ad' => 'test-a', 'saglayici' => new SahteAi([new AiHatasi('413 Request too large', 'cok_buyuk', 413)])], ['ad' => 'test-b', 'saglayici' => new SahteAi([SahteAi::yanit('{"b":2}')])]]);
 $z413->sendJson($orta, '', ['type' => 'object']);
 $ogrenilen413 = GirisSiniri::ogrenilen('test-a', 'sahte-model');
+$kalan413     = YedekliSaglayici::dinlenmeKalan('test-a');
+// Aynı adım yeniden: aynı boyut 413 veren sağlayıcıya gitmez; küçültülmüş istek gider.
+$ikinciA = new SahteAi([SahteAi::yanit('{"a":1}')]);
+$z413b   = new YedekliSaglayici([['ad' => 'test-a', 'saglayici' => $ikinciA], ['ad' => 'test-b', 'saglayici' => new SahteAi([SahteAi::yanit('{"b":4}')])]]);
+$z413b->sendJson($orta, '', ['type' => 'object']);
+$ayniBoyutGitmedi = $ikinciA->istekler === [] && $z413b->atlananlar() === ['test-a'];
+$kucuk = [['role' => 'user', 'content' => str_repeat('a', (int) floor($ortaBoyut * 0.8 * 3.5) - 7)]];
+$z413c = new YedekliSaglayici([['ad' => 'test-a', 'saglayici' => $ikinciA], ['ad' => 'test-b', 'saglayici' => new SahteAi([])]]);
+$kucukYanit = $z413c->sendJson($kucuk, '', ['type' => 'object']);
 $zTpm = new YedekliSaglayici([['ad' => 'test-c', 'saglayici' => new SahteAi([new AiHatasi($tpm(10438), 'cok_buyuk', 413)])], ['ad' => 'test-b', 'saglayici' => new SahteAi([SahteAi::yanit('{"b":3}')])]]);
 $zTpm->sendJson($orta, '', ['type' => 'object']);
 $tpmKalan = YedekliSaglayici::dinlenmeKalan('test-c');
 $tpmOgrenilen = GirisSiniri::ogrenilen('test-c', 'sahte-model');
+$tpmOmur = (int) (DinlenmeDeposu::al('sinir:test-c')['sakla'] ?? 0) - time();
 GirisSiniri::unut('test-a');
 GirisSiniri::unut('test-c');
 YedekliSaglayici::dinlenmeyiBitir('test-c');
-dogrula('413: o boyut sağlayıcının sınırı olur (dinletmez); Groq dakika kotası 413\'ü ise hız sınırı sayılır (60 sn dinlenir, sınır öğrenilmez)',
-    $ogrenilen413 === GirisSiniri::tahmin('', $orta) && YedekliSaglayici::dinlenmeKalan('test-a') === 0
-    && ($zTpm->denemeler()[0]['kod'] ?? '') === 'rate_limit' && $tpmKalan > 50 && $tpmKalan <= 60 && $tpmOgrenilen === null
+dogrula('413: isteğin %80\'i sınır olur (dinletmez); aynı boyut o sağlayıcıya yeniden gitmez, küçük istek gider',
+    $ogrenilen413 === (int) floor($ortaBoyut * 0.8) && $kalan413 === 0 && $ayniBoyutGitmedi && $kucukYanit['text'] === '{"a":1}');
+dogrula('Groq dakikalık (TPM) 413: sınır yine %80 ama 1 saatlik, sağlayıcı 60 sn dinlenir (sıradaki küçük istek dolu dakikaya gitmez); bağlam aşımı 400 → cok_buyuk',
+    ($zTpm->denemeler()[0]['kod'] ?? '') === 'cok_buyuk' && $tpmKalan > 50 && $tpmKalan <= 60
+    && $tpmOgrenilen === (int) floor($ortaBoyut * 0.8) && $tpmOmur > 3500 && $tpmOmur <= 3600
     && korumali(new OpenAiCompatibleProvider('k', 'm'), 'errorCode', 400, '{"error":{"code":"context_length_exceeded","message":"x"}}') === 'cok_buyuk'
     && korumali(new OpenAiCompatibleProvider('k', 'm'), 'errorCode', 400, '{"error":{"message":"bozuk"}}') === 'istek_hatasi');
 
@@ -2665,6 +2698,77 @@ dogrula('Yeniden denemede biten ara özetler AI\'a gitmez; kapasite bilinmiyorsa
     count($aiT->istekler) === 1 && $rT['kademeli'] && count($aiN->istekler) === 1 && !$rN['kademeli']
     && count($aiY->istekler) === 4 && $rY['kademeli']);
 
+$eskiAra = array_map(static fn (array $k): array => $k['sonuc'], $kaydedilen);
+[$plE, $aiE] = sahtePipeline([SahteAi::yanit($gecerliRed)]);
+$rE = $plE->birlestirKademeli($uzunBolumler, 6 * 540000, $uzunBaslangic, $uzunBaglam, static fn (): int => 4500, $eskiAra);
+dogrula('Ara özet kaydı {sonuc, saglayici, model}; rapor sonucunda ara ve birleştirme modeli; 0.9.1\'in yalnız sonuçlu kaydı da yeniden kullanılır',
+    ($kaydedilen['s1:00:00:00-00:27:00']['saglayici'] ?? '') === 'gemini' && ($kaydedilen['s1:00:00:00-00:27:00']['sonuc']['topic'] ?? '') === 'Ara 1'
+    && $rK['saglayici'] === 'gemini' && count($rK['ara_modeller']) === 2 && $rK['ara_modeller'][0] === ['saglayici' => 'gemini', 'model' => 'sahte-model']
+    && count($aiE->istekler) === 1 && $rE['kademeli'] && $rE['ara_modeller'] === [] && str_contains($aiE->istekler[0]['messages'][0]['content'] ?? '', '"topic":"Ara 2"')
+    && str_contains($ilkSistem, 'HER maddenin "at" alanı ZORUNLUDUR'));
+
+/* Zaman yedeği: birleştirmede boş bırakılan "at" girdideki kaynaktan (analiz 3910: 11 noktanın 5'i zamansızdı). */
+$kaynakBolumler = [
+    ['chunk' => ['start' => '00:00:00', 'end' => '00:20:00'], 'topic' => 'Platform tanıtımı', 'summary' => 'EVREN platformu ve kamu desteği anlatılıyor.',
+     'important_points' => [['text' => 'Platform kamu kurumlarına ücretsiz açılıyor.', 'at' => '00:04:10', 'importance' => 'important']],
+     'technical_information' => [['name' => 'GLM 5.3', 'category' => 'model', 'description' => '16 GPU ile 450 eşzamanlı kullanıcı', 'at' => '00:12:40']],
+     'claims' => [], 'ideas' => [], 'timestamps' => [['at' => '00:00:00', 'label' => 'Giriş ve tanıtım']]],
+    ['chunk' => ['start' => '00:20:00', 'end' => '00:40:00'], 'topic' => 'Fiyatlandırma', 'summary' => 'Makul fiyatlandırma ve kredi sistemi tartışılıyor.',
+     'important_points' => [['text' => 'Kredi sistemiyle GPU kullanım hakkı dağıtılıyor.', 'at' => '00:31:05', 'importance' => 'useful']],
+     'technical_information' => [], 'claims' => [], 'ideas' => [], 'timestamps' => []],
+];
+$yedek = new ZamanYedegi($kaynakBolumler);
+$bulunan = [
+    $yedek->bul('Platformun kamu kurumları için ücretsiz açılması'),
+    $yedek->bul('GLM 5.3 modeli 450 eşzamanlı kullanıcıyı destekliyor'),
+    $yedek->bul('Makul fiyatlandırma kullanıcıları caydırmamalı'),
+    $yedek->bul('Kuantum bilgisayarların geleceği'),
+];
+dogrula('ZamanYedegi: en çok örtüşen kaynak maddenin zamanı; madde yoksa bölümün başlangıcı; ilgisiz metne zaman uydurmaz',
+    $bulunan === ['00:04:10', '00:12:40', '00:20:00', null] && $yedek->doldurulan() === 3
+    && isset(ZamanYedegi::kokler('Platformun GPU kümesi')['platf'], ZamanYedegi::kokler('GLM 5.3')['5.3']) && !isset(ZamanYedegi::kokler('ve bu için')['icin']));
+
+$zamansiz = ['summary' => 'Özet.', 'detailed_summary' => '', 'topics' => [],
+    'important_points' => [['text' => 'Platform kamu kurumlarına ücretsiz açılıyor', 'at' => null, 'importance' => 'important'],
+                           ['text' => 'Kredi sistemiyle GPU kullanım hakkı dağıtılması', 'at' => '', 'importance' => 'useful'],
+                           ['text' => 'Hiç geçmeyen bir konu', 'importance' => 'useful']],
+    'technical_information' => [['name' => 'GLM 5.3', 'category' => 'model', 'description' => '450 eşzamanlı kullanıcı', 'at' => '09:99:99']],
+    'claims' => [['text' => 'Makul fiyatlandırma şart', 'at' => null, 'speaker_confidence' => 'opinion']],
+    'ideas' => [['text' => 'Kredi sistemi ile GPU kullanım hakkı', 'type' => 'öneri']],
+    'timestamps' => [['label' => 'Giriş ve tanıtım'], ['at' => '00:31:05', 'label' => 'Kredi']], 'recommendations' => []];
+$zamanBaslangic = array_map(static fn (int $k): int => $k * 5000, range(0, 480));
+$zDogru = (new ResultValidator())->birlestirme($zamansiz, 2400000, $zamanBaslangic, new ZamanYedegi($kaynakBolumler));
+$zYedeksiz = (new ResultValidator())->birlestirme($zamansiz, 2400000, $zamanBaslangic);
+dogrula('Doğrulayıcı: boş / aralık dışı "at" kaynaktan tamamlanır (önemli nokta, teknik bilgi, iddia, fikir, zaman çizelgesi); bulunamazsa boş kalır; yedeksiz eski davranış',
+    array_column($zDogru['sonuc']['important_points'], 'at') === ['00:04:10', '00:31:05', null]
+    && $zDogru['sonuc']['technical_information'][0]['at'] === '00:12:40' && $zDogru['sonuc']['claims'][0]['at'] === '00:20:00'
+    && $zDogru['sonuc']['ideas'][0]['at'] === '00:31:05' && array_column($zDogru['sonuc']['timestamps'], 'at') === ['00:00:00', '00:31:05']
+    && in_array('6 maddenin boş zamanı kaynak bölümden tamamlandı.', $zDogru['uyarilar'], true)
+    && array_column($zYedeksiz['sonuc']['important_points'], 'at') === [null, null, null] && count($zYedeksiz['sonuc']['timestamps']) === 1);
+
+$araZamansiz = SahteAi::yanit((string) json_encode(['topic' => 'Ara', 'summary' => 'Ara özet.',
+    'important_points' => [['text' => 'Kredi sistemiyle GPU kullanım hakkı dağıtılıyor', 'importance' => 'useful']],
+    'technical_information' => [], 'claims' => [], 'ideas' => [], 'timestamps' => []]));
+[$plZ, $aiZ] = sahtePipeline([$araZamansiz]);
+$rZ = $plZ->araBirlestir($kaynakBolumler, $zamanBaslangic, $uzunBaglam);
+dogrula('Ara birleştirme: model "at" yazmasa da madde kaynağının zamanını alır (son rapora zamanla gider)',
+    ($rZ['sonuc']['important_points'][0]['at'] ?? null) === '00:31:05' && $rZ['sonuc']['chunk'] === ['start' => '00:00:00', 'end' => '00:40:00']);
+
+/* Raporun bütün modelleri (analiz 4378: bölümler qwen, birleştirme gemma; kutuda yalnız birleştirme görünüyordu). */
+$mo = ModelOzeti::olustur(
+    [['saglayici' => 'evren', 'model' => 'auto → qwen/qwen3.8-flash-next'], ['saglayici' => 'evren', 'model' => 'auto → qwen/qwen3.8-flash-next'], ['saglayici' => null, 'model' => null]],
+    [], 'evren', 'auto → google/gemma-4-31b');
+$moAyni = ModelOzeti::olustur([['saglayici' => 'evren', 'model' => 'glm-5.3']], [['saglayici' => 'evren', 'model' => 'glm-5.3']], 'evren', 'glm-5.3');
+$moKarisik = ModelOzeti::olustur([['saglayici' => 'evren', 'model' => 'glm-5.3'], ['saglayici' => 'evren', 'model' => 'glm-5.3'], ['saglayici' => 'groq', 'model' => 'openai/gpt-oss-120b']],
+    [['saglayici' => 'groq', 'model' => 'openai/gpt-oss-120b']], 'groq', 'openai/gpt-oss-120b');
+dogrula('Model özeti: aşama başına "EVREN · qwen3.8-flash-next"; hepsi aynıysa tek satır; karışıkta adetler; eski raporda "model"; JSON metni de okunur',
+    $mo['bolumler'] === [['saglayici' => 'evren', 'model' => 'auto → qwen/qwen3.8-flash-next', 'adet' => 2]] && $mo['ara'] === []
+    && ModelOzeti::satirlar($mo) === [['etiket' => 'Bölümler', 'deger' => 'EVREN · qwen3.8-flash-next'], ['etiket' => 'Birleştirme', 'deger' => 'EVREN · gemma-4-31b']]
+    && ModelOzeti::metin(json_encode($mo)) === 'Bölümler: EVREN · qwen3.8-flash-next — Birleştirme: EVREN · gemma-4-31b'
+    && ModelOzeti::satirlar($moAyni) === [['etiket' => '', 'deger' => 'EVREN · glm-5.3']]
+    && ModelOzeti::metin($moKarisik) === 'Bölümler: EVREN · glm-5.3 (2), Groq · gpt-oss-120b (1) — Ara özetler: Groq · gpt-oss-120b — Birleştirme: Groq · gpt-oss-120b'
+    && ModelOzeti::satirlar(null, 'auto → google/gemma-4-31b') === [['etiket' => '', 'deger' => 'auto → google/gemma-4-31b']] && ModelOzeti::satirlar(null, '') === []);
+
 dogrula('Ekran gerçek sebebi söyler: büyük girdi → "sınırını aşıyor … büyük bağlamlı servis", meşgul → "meşgul"; kademeli ilerleme (2 / 4)',
     str_contains(KaynakDurumu::ertelemeMetni(time() + 3600, null, AiHatasi::SEBEP_BUYUK_GIRDI), 'sınırını aşıyor')
     && str_contains(KaynakDurumu::ertelemeMetni(time() + 3600, null, AiHatasi::SEBEP_BUYUK_GIRDI), 'EVREN / Gemini')
@@ -2682,7 +2786,8 @@ $geriMaske();
 $ayrintiParam = (string) (array_values(array_filter(SahteSorgu::$calisan, static fn (array $p): bool => array_key_exists(':hata_ayrinti', $p)))[0][':hata_ayrinti'] ?? '');
 dogrula('Son hata ayrıntısı: anahtarlar maskelenir (.env değerleri ve bilinen biçimler), en çok 500 karakter',
     !str_contains($maskeli, 'gercekAnahtar') && !str_contains($maskeli, 'GercekGemini') && str_contains($maskeli, 'evren_llm_****')
-    && !str_contains($maskeli, '0123456789abcdef0123') && $ayrintiParam !== '' && !str_contains($ayrintiParam, 'gercekAnahtar') && mb_strlen($ayrintiParam) <= 500);
+    && !str_contains($maskeli, '0123456789abcdef0123') && $ayrintiParam !== '' && !str_contains($ayrintiParam, 'gercekAnahtar') && mb_strlen($ayrintiParam) <= 500
+    && Ai::maskele('organization `org_01ksrc7t1hfekvpzp925mn` tier') === 'organization `org_****` tier');
 
 /* ---------------------------------------------------------------- */
 echo "\nAna sayfa (çekirdeğin HomePage kancası, tanıtım sayfası)\n";
@@ -2980,6 +3085,16 @@ $tablo = AyarController::zincirTablosu([
     ['ad' => 'test-d', 'etiket' => 'Mistral', 'tanimli' => false, 'model' => 'm', 'ucretsiz' => true, 'konsol' => ''],
 ], ['test-c' => ['son_basari' => '2026-10-09 20:00:00', 'son_hata' => null, 'son_hata_kodu' => null, 'bugun_cagri' => 3, 'bugun_token' => 4200]]);
 $dinlenmeyiSil();
+$tabloAuto = AyarController::zincirTablosu([
+    ['ad' => 'test-e', 'etiket' => 'EVREN (SSYZ)', 'tanimli' => true, 'model' => 'auto', 'ucretsiz' => true, 'konsol' => ''],
+    ['ad' => 'test-f', 'etiket' => 'Groq', 'tanimli' => true, 'model' => 'q', 'ucretsiz' => true, 'konsol' => ''],
+], [
+    'test-e' => ['son_basari' => '2026-10-11 04:04:21', 'son_hata' => '2026-10-11 03:30:16', 'son_hata_kodu' => 'sartlar_onaylanmadi', 'son_model' => 'auto → google/gemma-4-31b'],
+    'test-f' => ['son_basari' => '2026-10-11 03:53:01', 'son_hata' => '2026-10-11 03:53:30', 'son_hata_kodu' => 'cok_buyuk', 'son_model' => 'q'],
+]);
+dogrula('Durum tablosu: "auto"da tek satır gerçek model; son başarıdan eski hata "çözüldü", yenisi değil',
+    $tabloAuto[0]['gorunen_model'] === 'auto → google/gemma-4-31b' && $tabloAuto[1]['gorunen_model'] === 'q'
+    && $tabloAuto[0]['hata_cozuldu'] === true && $tabloAuto[1]['hata_cozuldu'] === false);
 dogrula('Sağlayıcı tablosu: dinleniyor (açılış saati, kalan dk), devre dışı, hazır, anahtarsız atlandı; kullanım özeti eklenir',
     array_column($tablo, 'hal') === ['dinleniyor', 'devre_disi', 'hazir', 'atlandi']
     && $tablo[0]['acilis'] !== null && $tablo[0]['kalan_dk'] > 0 && $tablo[0]['sebep'] === 'günlük kota doldu'

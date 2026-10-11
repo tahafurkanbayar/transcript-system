@@ -366,11 +366,9 @@ $sayi     = static fn (int $n): string => number_format($n, 0, ',', '.');
                     <tr>
                         <td>
                             <strong><?= e(($sira + 1) . '. ' . $halka['etiket']) ?></strong>
-                            <span class="cy-mono small d-block cy-muted"><?= e($halka['model'] !== '' ? $halka['model'] : '—') ?></span>
-                            <?php /* "auto": gerçekte hangi model yanıtladı (son başarılı çağrı). */ ?>
-                            <?php if (($halka['son_model'] ?? null) !== null && $halka['son_model'] !== $halka['model'] && str_starts_with((string) $halka['son_model'], $halka['model'] . ' → ')): ?>
-                                <span class="cy-mono small d-block cy-muted" title="Son başarılı çağrıda yanıt veren model"><?= e((string) $halka['son_model']) ?></span>
-                            <?php endif; ?>
+                            <?php /* "auto": gerçekte hangi model yanıtladı (son başarılı çağrı), tek satır. */ ?>
+                            <?php $gorunenModel = (string) ($halka['gorunen_model'] ?? $halka['model']); ?>
+                            <span class="cy-mono small d-block cy-muted"<?= $gorunenModel !== $halka['model'] ? ' title="Son başarılı çağrıda yanıt veren model"' : '' ?>><?= e($gorunenModel !== '' ? $gorunenModel : '—') ?></span>
                         </td>
                         <td>
                             <span class="cy-pill <?= e($halRengi) ?>"><?= e($halMetni) ?></span>
@@ -393,8 +391,8 @@ $sayi     = static fn (int $n): string => number_format($n, 0, ',', '.');
                             <?php endif; ?>
                         </td>
                         <td><small><?= e($zaman($halka['son_basari'])) ?></small></td>
-                        <td<?= ($halka['son_hata_ayrinti'] ?? null) !== null ? ' title="' . e((string) $halka['son_hata_ayrinti']) . '"' : '' ?>>
-                            <small><?= e($zaman($halka['son_hata'])) ?></small>
+                        <td<?= ($halka['son_hata_ayrinti'] ?? null) !== null ? ' title="' . e((string) $halka['son_hata_ayrinti']) . '"' : '' ?><?= !empty($halka['hata_cozuldu']) ? ' class="tk-hata-cozuldu"' : '' ?>>
+                            <small><?= e($zaman($halka['son_hata'])) ?><?= !empty($halka['hata_cozuldu']) ? ' (çözüldü)' : '' ?></small>
                             <?php if ($halka['son_hata_kodu'] !== null): ?>
                                 <small class="d-block cy-muted"><?= e($sebepAdi($halka['son_hata_kodu'])) ?><?= ($halka['son_hata_ayrinti'] ?? null) !== null ? ' ' . icon('info', 'cy-icon cy-icon--sm') : '' ?></small>
                             <?php endif; ?>

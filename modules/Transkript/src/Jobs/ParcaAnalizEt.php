@@ -120,7 +120,7 @@ final class ParcaAnalizEt extends TranskriptIsi
             $this->baglam($analiz) + ['toplam' => $this->analizler()->parcaSayilari($this->analizId)['toplam']],
         );
 
-        $this->analizler()->parcayiBitir($this->analizId, $this->parca, $sonuc['sonuc']);
+        $this->analizler()->parcayiBitir($this->analizId, $this->parca, $sonuc['sonuc'], $sonuc['saglayici'] ?? null, $sonuc['model']);
 
         if ($sonuc['uyarilar'] !== []) {
             Logger::info('Parça sonucu düzeltildi', [

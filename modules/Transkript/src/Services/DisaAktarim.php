@@ -73,7 +73,9 @@ final class DisaAktarim
         // Raporun künyesi: ne zaman, hangi model ve istemle, hangi transcript'ten.
         $kunye = array_filter([
             ($analiz['bitti_at'] ?? null) !== null ? 'Hazırlandı: ' . date('d.m.Y H:i', (int) strtotime((string) $analiz['bitti_at'])) : null,
-            ($analiz['model'] ?? '') !== '' ? 'Model: ' . self::md((string) $analiz['model']) : null,
+            // Aşama başına modeller (RaporVerisi); yoksa yalnız "model".
+            ($modelMetni = ModelOzeti::satirMetni($analiz['modeller'] ?? ModelOzeti::satirlar(null, (string) ($analiz['model'] ?? '')))) !== ''
+                ? 'Model: ' . self::md($modelMetni) : null,
             ($analiz['prompt_surumu'] ?? '') !== '' ? 'İstem: ' . self::md((string) $analiz['prompt_surumu']) : null,
             $transcript !== null ? 'Transcript: ' . RaporVerisi::dilAdi((string) $transcript['dil']) . (!empty($transcript['otomatik_mi']) ? ' (otomatik altyazı)' : ' (altyazı)') : null,
         ]);

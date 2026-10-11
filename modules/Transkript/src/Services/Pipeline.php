@@ -134,7 +134,7 @@ final class Pipeline
      * @param list<Segment>       $bloklar      Cleaner::hazirla() çıktısı (istemin satırları)
      * @param list<int>           $baslangiclar parçadaki gerçek segment başlangıçları (zaman yaslama)
      * @param array<string,mixed> $baglam       baslik, kanal, dil, toplam (parça sayısı)
-     * @return array{sonuc: array<string,mixed>, model: string, uyarilar: list<string>}
+     * @return array{sonuc: array<string,mixed>, model: string, saglayici: string, uyarilar: list<string>}
      */
     public function parcaAnalizEt(array $parca, array $bloklar, array $baslangiclar, array $baglam): array
     {
@@ -173,14 +173,14 @@ final class Pipeline
      * @param list<array<string,mixed>> $parcaSonuclari doğrulanmış map sonuçları, zaman sırasıyla
      * @param list<int>                 $baslangiclar   transcript'in bütün segment başlangıçları
      * @param array<string,mixed>       $baglam         baslik, kanal, eksik (list<string> aralık)
-     * @return array{sonuc: array<string,mixed>, model: string, uyarilar: list<string>}
+     * @return array{sonuc: array<string,mixed>, model: string, saglayici: string, uyarilar: list<string>}
      */
     public function birlestir(array $parcaSonuclari, int $bitMs, array $baslangiclar, array $baglam): array
     {
         [$istem, $kullanici] = self::birlestirmeIstemi($parcaSonuclari, $bitMs, $baglam);
 
         return $this->jsonIste('reduce', $istem, $kullanici, self::BIRLESTIRME_SEMASI,
-            fn (array $veri): array => $this->dogrulayici->birlestirme($veri, $bitMs, $baslangiclar));
+            fn (array $veri): array => $this->dogrulayici->birlestirme($veri, $bitMs, $baslangiclar, new ZamanYedegi($parcaSonuclari)));
     }
 
     /**
@@ -237,7 +237,9 @@ final class Pipeline
      *  (AnalizBirlestir) ardışık bölümler gruplara ayrılır; her grup bir
      *  ARA ÖZETE çevrilir. Ara özet bölüm analiziyle aynı biçimdedir
      *  (chunk, topic, summary, listeler): son birleştirme onları bölüm gibi
-     *  okur, birleştirme istemi değişmez. İstem: ara_birlestirme.v1.
+     *  okur, birleştirme istemi değişmez. İstem: ara_birlestirme.v2 (her
+     *  maddede "at" zorunlu; boş kalırsa ZamanYedegi kaynaktan tamamlar).
+     *  Kayıt: "s1:…" => {sonuc, saglayici, model} (rapordaki model özeti).
      * ============================================================== */
 
     /**
@@ -251,7 +253,8 @@ final class Pipeline
      * @param  array<string, array<string,mixed>> $ara       önceki denemelerin ara özetleri
      * @param  ?Closure(array<string, array<string,mixed>>): void $araKaydet her ara özetten sonra
      * @param  ?Closure(int, int, int): void      $ilerleme  (seviye, biten grup, toplam grup)
-     * @return array{sonuc: array<string,mixed>, model: string, uyarilar: list<string>, kademeli: bool}
+     * @return array{sonuc: array<string,mixed>, model: string, saglayici: string, uyarilar: list<string>, kademeli: bool,
+     *               ara_modeller: list<array{saglayici: string, model: string}>}
      *
      * @throws AiHatasi
      */
@@ -259,15 +262,16 @@ final class Pipeline
         array $ara = [], ?Closure $araKaydet = null, ?Closure $ilerleme = null): array
     {
         for ($deneme = 1; ; $deneme++) {
-            $kap   = $kapasite();
-            $girdi = $sonuclar;
+            $kap      = $kapasite();
+            $girdi    = $sonuclar;
+            $modeller = [];
 
             try {
                 if ($kap !== null && count($girdi) > 1 && self::birlestirmeBoyutu($girdi, $bitMs, $baglam) > $kap) {
-                    $girdi = $this->araOzetler($girdi, $bitMs, $baslangiclar, $baglam, $kap, $ara, $araKaydet, $ilerleme);
+                    $girdi = $this->araOzetler($girdi, $bitMs, $baslangiclar, $baglam, $kap, $ara, $araKaydet, $ilerleme, $modeller);
                 }
 
-                return $this->birlestir($girdi, $bitMs, $baslangiclar, $baglam) + ['kademeli' => $girdi !== $sonuclar];
+                return $this->birlestir($girdi, $bitMs, $baslangiclar, $baglam) + ['kademeli' => $girdi !== $sonuclar, 'ara_modeller' => $modeller];
             } catch (AiHatasi $e) {
                 if (!self::buyukGirdi($e) || $deneme >= 4) {
                     throw $e;
@@ -287,10 +291,11 @@ final class Pipeline
      * sığana (ya da daha küçültülemeyene) kadar seviye seviye.
      *
      * @param  list<array<string,mixed>>          $girdi
-     * @param  array<string, array<string,mixed>> $ara
+     * @param  array<string, array<string,mixed>> $ara      "s1:…" => {sonuc, saglayici, model}
+     * @param  list<array{saglayici: string, model: string}> $modeller kullanılan ara özetlerin modelleri
      * @return list<array<string,mixed>>
      */
-    private function araOzetler(array $girdi, int $bitMs, array $baslangiclar, array $baglam, int $kap, array &$ara, ?Closure $araKaydet, ?Closure $ilerleme): array
+    private function araOzetler(array $girdi, int $bitMs, array $baslangiclar, array $baglam, int $kap, array &$ara, ?Closure $araKaydet, ?Closure $ilerleme, array &$modeller): array
     {
         $enCok       = max(2, (int) Ayarlar::get('ai.kademeli.grup_en_cok', 4));
         $seviyeEnCok = max(1, (int) Ayarlar::get('ai.kademeli.seviye_en_cok', 4));
@@ -320,14 +325,21 @@ final class Pipeline
                 $anahtar = 's' . $seviye . ':' . ($uyeler[0]['chunk']['start'] ?? '?') . '-' . ($uyeler[count($uyeler) - 1]['chunk']['end'] ?? '?');
 
                 if (!isset($ara[$anahtar])) {
-                    $ara[$anahtar] = $this->araBirlestir($uyeler, $baslangiclar, $baglam)['sonuc'];
+                    $ozet          = $this->araBirlestir($uyeler, $baslangiclar, $baglam);
+                    $ara[$anahtar] = ['sonuc' => $ozet['sonuc'], 'saglayici' => $ozet['saglayici'], 'model' => $ozet['model']];
 
                     if ($araKaydet !== null) {
                         $araKaydet($ara);
                     }
                 }
 
-                $yeni[] = $ara[$anahtar];
+                // 0.9.1 kaydı yalnız sonucu tutuyordu (model bilgisi yok).
+                $kayit  = $ara[$anahtar];
+                $yeni[] = is_array($kayit['sonuc'] ?? null) ? $kayit['sonuc'] : $kayit;
+
+                if (is_string($kayit['saglayici'] ?? null) && $kayit['saglayici'] !== '') {
+                    $modeller[] = ['saglayici' => $kayit['saglayici'], 'model' => (string) ($kayit['model'] ?? '')];
+                }
 
                 if ($ilerleme !== null) {
                     $ilerleme($seviye, ++$biten, $toplam);
@@ -344,14 +356,14 @@ final class Pipeline
      * @param  list<array<string,mixed>> $grup         ardışık bölüm (ya da ara özet) sonuçları
      * @param  list<int>                 $baslangiclar transcript'in segment başlangıçları
      * @param  array<string,mixed>       $baglam       baslik, kanal
-     * @return array{sonuc: array<string,mixed>, model: string, uyarilar: list<string>}
+     * @return array{sonuc: array<string,mixed>, model: string, saglayici: string, uyarilar: list<string>}
      */
     public function araBirlestir(array $grup, array $baslangiclar, array $baglam): array
     {
         [$istem, $kullanici, $basMs, $bitMs] = self::araBirlestirmeIstemi($grup, $baglam);
 
         return $this->jsonIste('reduce', $istem, $kullanici, self::PARCA_SEMASI,
-            fn (array $veri): array => $this->dogrulayici->parca($veri, $basMs, $bitMs, $baslangiclar));
+            fn (array $veri): array => $this->dogrulayici->parca($veri, $basMs, $bitMs, $baslangiclar, new ZamanYedegi($grup)));
     }
 
     /**
@@ -361,7 +373,7 @@ final class Pipeline
      */
     public static function araBirlestirmeIstemi(array $grup, array $baglam): array
     {
-        $istem = Istem::yukle('ara_birlestirme', 'v1');
+        $istem = Istem::yukle('ara_birlestirme', 'v2');
         $basMs = $grup === [] ? 0 : (int) (Zaman::oku((string) ($grup[0]['chunk']['start'] ?? '')) ?? 0);
         $bitMs = $grup === [] ? 0 : (int) (Zaman::oku((string) ($grup[count($grup) - 1]['chunk']['end'] ?? '')) ?? $basMs);
 
@@ -499,7 +511,7 @@ final class Pipeline
     /**
      * @param  array<string,mixed>                                          $sema
      * @param  Closure(array<string,mixed>): array{sonuc: array<string,mixed>, uyarilar: list<string>} $dogrula
-     * @return array{sonuc: array<string,mixed>, model: string, uyarilar: list<string>}
+     * @return array{sonuc: array<string,mixed>, model: string, saglayici: string, uyarilar: list<string>}
      *
      * @throws AiHatasi
      */
@@ -545,7 +557,7 @@ final class Pipeline
                 $sonuc = $dogrula($veri);
                 $durum = 'basarili';
 
-                return $sonuc + ['model' => $yanit['model']];
+                return $sonuc + ['model' => $yanit['model'], 'saglayici' => $ad];
             } catch (GecersizSonuc $e) {
                 if ($deneme >= 2) {
                     throw new AiHatasi(sprintf('%s yanıtı onarımdan sonra da geçersiz: %s', $asama, $e->getMessage()), 'yanit_cozulemedi');

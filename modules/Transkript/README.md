@@ -495,26 +495,37 @@ varsayılan (`Ai::varsayilanModel`).
   | 401/403 anahtar, 404 model | **devre dışı** 6 saat ya da "Dinlenmeleri sıfırla"; model hatası yalnız o modele bağlı |
   | EVREN 403 `terms_not_accepted` | **devre dışı** 1 saat (`sartlar_onaylanmadi`); yönetici Durum → "Şartları oku ve onayla" ile onaylar; kod kendiliğinden onaylamaz |
   | 5xx, ağ, zaman aşımı | 2 dk |
-  | 413 (çok büyük), 400, EVREN boş yanıt (`dusunme_butcesi`) | dinletmez, sıradakine geçilir |
+  | 413 (çok büyük), 400, EVREN boş yanıt (`dusunme_butcesi`) | dinletmez, sıradakine geçilir (Groq dakikalık 413: 60 sn) |
 
 - **Giriş sınırı (`Ai\GirisSiniri`):** her sağlayıcının en büyük isteği
   (yaklaşık giriş token'ı, karakter / 3,5) config `ai.giris_siniri`'nde
   (groq 7000, evren 200000, gemini 900000 …); `.env` `<AD>_MAX_INPUT_TOKENS`
   ezer. Sığmayan istek o sağlayıcıya hiç gitmez; sağlayıcı dinlenmez, "Hazır"
-  kalır. 413 / bağlam aşımı gelirse o boyut 7 gün sınır olur ("Dinlenmeleri
-  sıfırla" siler). Groq'un "tokens per minute … Requested N" 413'ü, istenen
-  isteğin kendisinden belirgin büyükse dakika kotasının dolmasıdır (Groq
-  reddettiği isteği de sayar): hız sınırı gibi 60 sn beklenir, sınır öğrenilmez.
+  kalır. 413 / bağlam aşımı gelirse isteğin %80'i 7 gün sınır olur
+  ("Dinlenmeleri sıfırla" siler): aynı boyut o sağlayıcıya yeniden gitmez,
+  birleştirme önce küçük gruplara böler. Groq'un "tokens per minute (TPM)"
+  413'ünde sınır 1 saatlik, sağlayıcı 60 sn dinlenir ("Requested", isteğin
+  kendisinden ~8.400 fazla; dakika boşken aynı boyut geçebiliyor).
 - **Kademeli birleştirme (`Pipeline::birlestirKademeli`, `AnalizBirlestir`):**
   birleştirme girdisi o an açık sağlayıcıların sınırını aşınca ardışık
-  bölümler en çok 4'lük gruplarda ara özete çevrilir (`prompts/ara_birlestirme.v1.txt`,
-  bölüm analiziyle aynı biçim), sonra ara özetler birleştirilir; gerekirse
+  bölümler en çok 4'lük gruplarda ara özete çevrilir (`prompts/ara_birlestirme.v2.txt`,
+  bölüm analiziyle aynı biçim, her maddede `at` zorunlu), sonra ara özetler birleştirilir; gerekirse
   birkaç seviye. Ara özetler `transkript_analizler.ara_sonuclar`'da; iş
   ertelenip dönerse biten grup AI'a yeniden gitmez. Ekran gerçek sebebi
   söyler ("Rapor girdisi uygun servislerin sınırını aşıyor; bölümler gruplar
   hâlinde birleştiriliyor (2 / 4)" ya da "büyük bağlamlı servis açılınca
   sürecek"); "meşgul" yalnız sağlayıcılar gerçekten dinlenirken. Canlı:
   1:17'lik video (10 bölüm) Groq'la tamamlandı (cowork testi 2026-10-11).
+- **Zaman yedeği (`Services\ZamanYedegi`):** ara ve son birleştirmede model
+  bir maddenin `at` alanını boş bırakır (ya da aralık dışı yazar) ise madde
+  metni girdideki maddelerle eşleştirilir (Türkçe harf katlanmış sözcük
+  kökleri). En çok örtüşen kaynak maddenin zamanı, yoksa maddenin geldiği
+  bölümün başlangıcı kullanılır; hiçbiri tutmazsa zaman uydurulmaz.
+- **Rapordaki modeller (`Services\ModelOzeti`):** her parçanın sağlayıcı ve
+  modeli `transkript_parcalar.saglayici` / `.model`'e, raporun aşama başına
+  modelleri `transkript_analizler.modeller`'e yazılır. "Bu rapor" kutusu:
+  "Bölümler: EVREN · qwen3.8-flash-next — Birleştirme: EVREN · gemma-4-31b"
+  (hepsi aynıysa tek satır; eski raporda yalnız `model`).
 - **Son hata ayrıntısı:** başarısız çağrıda sağlayıcının mesajı (anahtarlar
   maskeli, en çok 500 karakter) `ai_kullanim_kaydi.hata_ayrinti`'ye yazılır;
   Durum'da "Son hata"nın ve günlükteki sonucun üzerine gelince görünür.
@@ -523,8 +534,10 @@ varsayılan (`Ai::varsayilanModel`).
   öneki ve uzunluğu, maskeli başlık, `/terms/status`, `/quota`, `/models`,
   küçük bir sohbet isteği). Çekirdeğin `php cy` komut listesi sabit olduğundan
   betik modülde. **Şart onayı:** Durum → EVREN satırı → "Şartları oku ve
-  onayla" (metin EVREN'den, düz metin olarak; "Okudum" kutusu + güncel sürüm
-  denetimi; CSRF, yalnız yönetici). Kod kendiliğinden onaylamaz.
+  onayla" (metin EVREN'den, `Services\GuvenliMarkdown` ile: ham HTML kapalı,
+  bağlantı yalnız http(s) / mailto + `rel="noopener nofollow"`, dış resim
+  yüklenmez, yerine alt metni; "Okudum" kutusu + güncel sürüm denetimi;
+  CSRF, yalnız yönetici). Kod kendiliğinden onaylamaz.
 - **EVREN (`Ai\EvrenProvider`, `OpenAiCompatibleProvider`'dan):** düşünme ve
   yanıt aynı `max_tokens` havuzundan harcanır; bütçe en az 2048 (map 8192,
   reduce 24000), istek süresi en az 180 sn, bağlantı 10 sn. İçerik boş ve

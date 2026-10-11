@@ -169,7 +169,10 @@ final class AyarController extends Controller
         if ($bilgi['onayli'] === true) {
             // Başka yerden (EVREN Test Alanı) onaylanmış: kaydı eşitle, EVREN yeniden denensin.
             self::sartOnayiniYaz($this->db, (int) ($bilgi['guncel_surum'] ?? $bilgi['onaylanan_surum'] ?? 0), false);
-        } elseif ($durumYaniti->basarili()) {
+        }
+
+        // Metin onaydan sonra da okunabilsin (onaylanan metin).
+        if ($durumYaniti->basarili()) {
             $metinYaniti = $hesap->sartMetni();
             $metin       = $metinYaniti->basarili() ? self::sartMetniOku($metinYaniti->govde, $metinYaniti->json()) : null;
         }
@@ -276,7 +279,7 @@ final class AyarController extends Controller
             $kayit = YedekliSaglayici::dinlenmeKaydi($h['ad']);
             $kalan = YedekliSaglayici::dinlenmeKalan($h['ad'], $simdi, $h['model']);
 
-            return $h + [
+            $satir = $h + [
                 'hal'      => match (true) {
                     !$h['tanimli']                                                          => 'atlandi',
                     $kalan > 0 && in_array($kayit['kod'] ?? '', YedekliSaglayici::DEVRE_DISI, true) => 'devre_disi',
@@ -288,6 +291,16 @@ final class AyarController extends Controller
                 'acilis'   => $kalan > 0 ? YedekliSaglayici::saat($simdi + $kalan, $simdi) : null,
                 'kalan_dk' => $kalan > 0 ? max(1, (int) ceil($kalan / 60)) : 0,
             ] + ($ozet[$h['ad']] ?? []) + ['son_basari' => null, 'son_hata' => null, 'son_hata_kodu' => null, 'son_hata_ayrinti' => null, 'son_model' => null, 'bugun_cagri' => 0, 'bugun_token' => 0];
+
+            return $satir + [
+                /* "auto": son başarılı çağrıda yanıt veren model tek satır
+                 * ("auto → google/gemma-4-31b"); yoksa ayardaki model. */
+                'gorunen_model' => is_string($satir['son_model']) && str_starts_with($satir['son_model'], $satir['model'] . ' → ')
+                    ? $satir['son_model'] : (string) $satir['model'],
+                // Son hatadan sonra başarılı çağrı olduysa hata eskidi: soluk, "(çözüldü)".
+                'hata_cozuldu'  => $satir['son_hata'] !== null && $satir['son_basari'] !== null
+                    && strtotime((string) $satir['son_hata']) < strtotime((string) $satir['son_basari']),
+            ];
         }, $zincir);
     }
 
