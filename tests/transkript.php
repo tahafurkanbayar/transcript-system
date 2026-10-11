@@ -2325,13 +2325,13 @@ $evrenSahte = static fn (array $yanitlar, array &$gidenler): EvrenProvider => (n
 $geri = $ortamDegistir(['AI_PROVIDERS' => '', 'AI_PROVIDER' => '', 'AI_MODEL' => '', 'EVREN_API_KEY' => 'evren_llm_test', 'EVREN_MODEL' => '', 'EVREN_BASE_URL' => '']);
 $ev = Ai::make('evren', '', 256, 30);
 $evOzellik = static fn (object $p, string $ad): mixed => (new ReflectionProperty($p, $ad))->getValue($p);
-$evMakeDogru = $ev instanceof EvrenProvider && $ev->model() === 'glm-5.3' && $evOzellik($ev, 'maxTokens') === 2048 && $evOzellik($ev, 'timeout') === 180
+$evMakeDogru = $ev instanceof EvrenProvider && $ev->model() === 'qwen3.8-flash-next' && $evOzellik($ev, 'maxTokens') === 2048 && $evOzellik($ev, 'timeout') === 180
     && korumali($ev, 'endpoint') === 'https://evren-llmapi.ssyz.org.tr/v1/chat/completions' && in_array('authorization: Bearer evren_llm_test', korumali($ev, 'headers'), true);
 $geri();
 $geri = $ortamDegistir(['AI_PROVIDERS' => '', 'AI_PROVIDER' => '', 'EVREN_API_KEY' => 'evren_llm_test', 'EVREN_MODEL' => 'mimo-v2.6-pro', 'EVREN_BASE_URL' => 'https://ornek.test/v1/']);
 $evOrtam = Ai::make('evren');
 $geri();
-dogrula('make(): EVREN varsayılanı glm-5.3; bütçe en az 2048, süre en az 180 sn, Bearer anahtar, taban adres; bağlantı 15 sn',
+dogrula('make(): EVREN varsayılanı qwen3.8-flash-next (ölçümle); bütçe en az 2048, süre en az 180 sn, Bearer anahtar, taban adres; bağlantı 15 sn',
     $evMakeDogru && EvrenProvider::EN_AZ_TOKEN === 2048 && (new ReflectionClassConstant(EvrenProvider::class, 'BAGLANTI_ZAMAN_ASIMI'))->getValue() === 15);
 dogrula('EVREN_MODEL ve EVREN_BASE_URL .env\'den okunur', $evOrtam->model() === 'mimo-v2.6-pro' && korumali($evOrtam, 'endpoint') === 'https://ornek.test/v1/chat/completions');
 
@@ -2590,9 +2590,9 @@ $halka = static fn (Provider $z): array => $z instanceof YedekliSaglayici ? (new
 $hE = $zEvren instanceof YedekliSaglayici ? (new ReflectionProperty(YedekliSaglayici::class, 'halkalar'))->getValue($zEvren) : [];
 $hR = $zReduce instanceof YedekliSaglayici ? (new ReflectionProperty(YedekliSaglayici::class, 'halkalar'))->getValue($zReduce) : [];
 $hP = $zPanelEvren instanceof YedekliSaglayici ? (new ReflectionProperty(YedekliSaglayici::class, 'halkalar'))->getValue($zPanelEvren) : [];
-dogrula('Zincir evren,gemini,openrouter,groq: EVREN başta glm-5.3; kayıtlı Gemini modeli yalnız Gemini\'ye; thinkingConfig yalnız Gemini\'ye',
+dogrula('Zincir evren,gemini,openrouter,groq: EVREN başta qwen3.8-flash-next; kayıtlı Gemini modeli yalnız Gemini\'ye; thinkingConfig yalnız Gemini\'ye',
     $zEvrenAd === 'zincir' && $zEvren->adlar() === ['evren', 'evren', 'gemini', 'openrouter', 'groq']
-    && $hE[0]['saglayici'] instanceof EvrenProvider && $hE[0]['saglayici']->model() === 'glm-5.3' && $hE[0]['ek'] === []
+    && $hE[0]['saglayici'] instanceof EvrenProvider && $hE[0]['saglayici']->model() === 'qwen3.8-flash-next' && $hE[0]['ek'] === []
     && $hE[1]['saglayici']->model() === 'gemma-4-31b' && $hE[2]['saglayici']->model() === 'gemini-2.5-flash-lite' && $hE[2]['ek'] !== []
     && $evOzellik($hE[0]['saglayici'], 'maxTokens') === 8192 && $evOzellik($hR[0]['saglayici'], 'maxTokens') === 24000
     && $evOzellik($hE[0]['saglayici'], 'timeout') === 180 && $evOzellik($hR[0]['saglayici'], 'timeout') === 240
@@ -2605,7 +2605,7 @@ dogrula('EVREN: aşama modelleri (bölüm / rapor), analize sabitlenen model, h�
 dogrula('Ayarlar: model alanları zincir sırasıyla (EVREN en üstte); Durum\'da anahtarın yalnız adı',
     $evrenAlanlar === ['model_evren', 'ai_model', 'model_openrouter', 'model_groq']
     && array_column($evrenDurum, 'anahtar_adi') === ['EVREN_API_KEY', 'GEMINI_API_KEY', 'OPENROUTER_API_KEY', 'GROQ_API_KEY']
-    && $evrenDurum[0]['etiket'] === 'EVREN (SSYZ)' && $evrenDurum[0]['model'] === 'glm-5.3' && !str_contains((string) json_encode($evrenDurum), 'evren_llm_test'));
+    && $evrenDurum[0]['etiket'] === 'EVREN (SSYZ)' && $evrenDurum[0]['model'] === 'qwen3.8-flash-next' && !str_contains((string) json_encode($evrenDurum), 'evren_llm_test'));
 
 $geri = $ortamDegistir(['AI_PROVIDERS' => '', 'AI_PROVIDER' => '', 'AI_MODEL' => 'gemini-2.5-flash-lite', 'EVREN_MODEL' => '', 'GEMINI_MODEL' => '']);
 $eskiAiModel = [Ai::ortamModeli('evren'), Ai::ortamModeli('gemini'), Ai::zincir()];
@@ -2614,7 +2614,7 @@ $geri = $ortamDegistir(['AI_PROVIDERS' => '', 'AI_PROVIDER' => 'gemini', 'AI_MOD
 $tekZincir = Ai::zincir();
 $geri();
 dogrula('Eski düzen: AI_PROVIDER yazılmamışsa AI_MODEL Gemini\'nindir (EVREN\'e Gemini modeli gitmez); yalnız AI_PROVIDER varsa tek halka',
-    $eskiAiModel === ['glm-5.3', 'gemini-2.5-flash-lite', ['evren', 'gemini', 'openrouter', 'groq']] && $tekZincir === ['gemini']);
+    $eskiAiModel === ['qwen3.8-flash-next', 'gemini-2.5-flash-lite', ['evren', 'gemini', 'openrouter', 'groq']] && $tekZincir === ['gemini']);
 
 YedekliSaglayici::dinlendir('test-a', 'sartlar_onaylanmadi');
 $sartTablo = AyarController::zincirTablosu([['ad' => 'test-a', 'etiket' => 'EVREN (SSYZ)', 'tanimli' => true, 'model' => 'glm-5.3', 'ucretsiz' => true, 'konsol' => '']], []);

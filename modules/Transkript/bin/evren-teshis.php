@@ -7,7 +7,7 @@
  *
  *  Sırayla: anahtar (yalnız önek ve uzunluk), giden kimlik başlığı
  *  (maskeli), GET /v1/terms/status, GET /v1/quota, GET /v1/models,
- *  POST /v1/chat/completions ("Merhaba", glm-5.3, max_tokens 2048).
+ *  POST /v1/chat/completions ("Merhaba", varsayılan model, max_tokens 2048).
  *  Şartları ONAYLAMAZ (onay: Transkript ayarları → Durum → "Şartları oku
  *  ve onayla"). Anahtarın değeri hiçbir satıra yazılmaz.
  *
@@ -79,7 +79,7 @@ if (!is_array($liste)) {
 }
 
 $sohbet = $hesap->sohbetDene();
-$yaz('6. POST /chat/completions (glm-5.3, "Merhaba")', $sohbet, 300);
+$yaz('6. POST /chat/completions (' . Modules\Transkript\Ai\EvrenProvider::VARSAYILAN_MODEL . ', "Merhaba")', $sohbet, 300);
 $cevap = $sohbet->json()['choices'][0]['message']['content'] ?? null;
 if (is_string($cevap)) {
     printf("   yanıt: %s · gerçek model: %s\n", $hesap->maskele(trim($cevap)), (string) ($sohbet->json()['model'] ?? '?'));

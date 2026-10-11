@@ -12,6 +12,11 @@ Ayrıntı ve rakamlar: `docs/evren/01-kesif.md`, `02-olcum-raporu.md`,
 `03-gelistirme-raporu.md`; API: `docs/EVREN_LLM_API_Rehberi.md`.
 
 ### EVREN istemcisi
+- **Varsayılan model `qwen3.8-flash-next`** (önce `glm-5.3`): ölçümde kısa
+  videoda uçtan uca medyan 37 sn (glm-5.3 168, deepseek-v4.1-flash 115,
+  "auto" önce 128), 18/18 çağrı başarılı, JSON %100, kalite aynı bantta.
+  Panelde kayıtlı "auto" boşaltıldı (kod varsayılanı geçerli). Model
+  listesindeki açıklamalar ölçüme göre.
 - Akış (SSE, `Ai\SseAkisi`), bağlantı 15 sn / ilk token'a kadar 120 sn
   (keep-alive gelirken; hiç bayt yoksa 30 sn) / sonra boşta 60 sn / toplam
   girişle ölçekli (120 sn + 40 tok/sn, ≤900); `EVREN_STREAM`,

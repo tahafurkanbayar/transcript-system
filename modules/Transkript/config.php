@@ -95,7 +95,7 @@ return [
      *  saglayici boşsa zincirin ilki (.env AI_PROVIDERS; varsayılan EVREN).
      *  model boşsa sağlayıcının Transkript ayarlarındaki modeli (EVREN
      *  modeli, Gemini modeli …), yoksa .env <AD>_MODEL, yoksa varsayılanı
-     *  (EVREN: glm-5.3, Gemini: gemini-2.5-flash). Asıl sağlayıcıya aşama
+     *  (EVREN: qwen3.8-flash-next, Gemini: gemini-2.5-flash). Asıl sağlayıcıya aşama
      *  başı ayrı model vermek için buraya yazın, ör.
      *      'model' => 'deepseek-v4.1-flash'
      *

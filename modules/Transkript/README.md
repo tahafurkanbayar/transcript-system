@@ -459,7 +459,7 @@ GROQ_API_KEY=…
 
 | Sağlayıcı | Varsayılan model | Anahtar |
 |---|---|---|
-| `evren` | `glm-5.3` (panelde listeden: deepseek-v4.1-flash, mimo-v2.6-pro, qwen3.8-flash-next, gemma-4-31b, auto) | evren.ssyz.org.tr (`evren_llm_…`) |
+| `evren` | `qwen3.8-flash-next` (ölçümle; panelde listeden: glm-5.3, deepseek-v4.1-flash, mimo-v2.6-pro, gemma-4-31b, auto) | evren.ssyz.org.tr (`evren_llm_…`) |
 | `gemini` | `gemini-2.5-flash` (panel "Google Gemini modeli" / `GEMINI_MODEL`) | aistudio.google.com/apikey |
 | `openrouter` | `google/gemma-4-31b-it:free` | openrouter.ai/keys |
 | `mistral` | `mistral-small-latest` | console.mistral.ai/api-keys |

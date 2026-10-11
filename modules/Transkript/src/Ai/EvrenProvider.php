@@ -68,7 +68,13 @@ final class EvrenProvider extends OpenAiCompatibleProvider
 {
     public const TABAN_ADRES = 'https://evren-llmapi.ssyz.org.tr/v1';
 
-    public const VARSAYILAN_MODEL = 'glm-5.3';
+    /**
+     * Ölçümle seçildi (docs/evren/02, 11.10.2026, düşünme low + akış +
+     * json_schema): kısa videoda uçtan uca en hızlı, hata yok, kalite
+     * ötekilerle aynı bantta; en yüksek eşzamanlılık. glm-5.3 aynı işte 3–6
+     * kat yavaş, deepseek-v4.1-flash low'u yok sayıp uzun düşünüyor.
+     */
+    public const VARSAYILAN_MODEL = 'qwen3.8-flash-next';
 
     /**
      * Panelde seçilebilen sohbet modelleri: sunucu tarafında yalnız bunlar
@@ -78,11 +84,11 @@ final class EvrenProvider extends OpenAiCompatibleProvider
      * @var array<string,string> kimlik => kısa açıklama
      */
     public const MODELLER = [
-        'glm-5.3'             => 'amiral model, 512K bağlam',
-        'deepseek-v4.1-flash' => 'hızlı, 1M bağlam',
-        'mimo-v2.6-pro'       => 'filonun en büyüğü, 1M bağlam',
-        'qwen3.8-flash-next'  => 'en yüksek eşzamanlılık, 256K bağlam',
-        'gemma-4-31b'         => 'düşük gecikme, 256K bağlam',
+        'glm-5.3'             => 'amiral model, 512K bağlam — yavaş (kısa video 2,5–3 dk)',
+        'deepseek-v4.1-flash' => '1M bağlam — uzun düşünür (kısa video 1,5–3 dk)',
+        'mimo-v2.6-pro'       => 'filonun en büyüğü, 1M bağlam — süresi değişken',
+        'qwen3.8-flash-next'  => 'en hızlı (ölçüm), en yüksek eşzamanlılık, 256K bağlam',
+        'gemma-4-31b'         => 'düşük gecikme, düşünmez, 256K bağlam (EVREN içi yedek)',
         'auto'                => 'geçit seçer — yavaş / tutarsız olabilir, analiz başına sabitlenir',
     ];
 

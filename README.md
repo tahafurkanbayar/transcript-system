@@ -165,7 +165,8 @@ YOUTUBE_API_KEY=                      # isteğe bağlı; yoksa oEmbed
 ```
 
 **EVREN** (SSYZ, yurt içi H200 kümesi) varsayılan ilk sağlayıcıdır: OpenAI
-uyumlu, günlük 15M token, varsayılan model `glm-5.3`. LLM anahtarı
+uyumlu, günlük 15M token, varsayılan model `qwen3.8-flash-next`
+(ölçümle seçildi: `docs/evren/02-olcum-raporu.md`). LLM anahtarı
 `evren_llm_` ile başlar. Kullanım şartları ilk çağrıdan önce bir kez
 Transkript ayarları → Durum → **Şartları oku ve onayla** ile onaylanır (anahtar
 başına; yönetici metni okuyup onaylar, kod kendiliğinden onaylamaz);
