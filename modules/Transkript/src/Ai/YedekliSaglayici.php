@@ -26,7 +26,7 @@
  *                        model hatası o modele bağlıdır, .env'de model
  *                        değişince sağlayıcı yeniden denenir
  *      sartlar_onaylanmadi  DEVRE DIŞI 1 saat (EVREN kullanım şartları;
- *                        kod onaylamaz, yönetici onaylar)
+ *                        kod kendiliğinden onaylamaz, yönetici onaylar)
  *      cok_buyuk (413),
  *      dusunme_butcesi,
  *      istek_hatasi …    dinletmez: isteğe özgüdür, sıradakine geçilir
@@ -105,6 +105,9 @@ final class YedekliSaglayici implements Provider
     /** @var list<array{ad:string, model:string, kod:string, mesaj:string, sure_ms:int}> */
     private array $denemeler = [];
 
+    /** @var list<string> son çağrıda istek sığmadığı için hiç denenmeyenler (GirisSiniri) */
+    private array $atlananlar = [];
+
     /**
      * @param list<array{ad:string, saglayici:Provider, ek?:array<string,mixed>}> $halkalar öncelik sırasında
      * @param ?Closure(): int $saat test için zaman kaynağı
@@ -124,13 +127,13 @@ final class YedekliSaglayici implements Provider
 
     public function send(array $messages, string $system = ''): array
     {
-        return $this->dene(static fn (Provider $p, array $ek): array => $p->send($messages, $system));
+        return $this->dene(static fn (Provider $p, array $ek): array => $p->send($messages, $system), GirisSiniri::tahmin($system, $messages));
     }
 
     public function sendJson(array $messages, string $system, array $sema, array $ek = []): array
     {
         // $ek yok sayılır: her halkanın kendi eki vardır (Gemini thinkingConfig yalnız Gemini'ye).
-        return $this->dene(static fn (Provider $p, array $halkaEki): array => $p->sendJson($messages, $system, $sema, $halkaEki));
+        return $this->dene(static fn (Provider $p, array $halkaEki): array => $p->sendJson($messages, $system, $sema, $halkaEki), GirisSiniri::tahmin($system, $messages));
     }
 
     /** Son yanıtı veren sağlayıcının modeli; henüz yoksa ilk halkanınki. */
@@ -160,6 +163,12 @@ final class YedekliSaglayici implements Provider
     public function denemeler(): array
     {
         return $this->denemeler;
+    }
+
+    /** @return list<string> son çağrıda isteğe sığmadığı için atlananlar */
+    public function atlananlar(): array
+    {
+        return $this->atlananlar;
     }
 
     /* =================================================================
@@ -266,11 +275,13 @@ final class YedekliSaglayici implements Provider
 
     /**
      * @param Closure(Provider, array<string,mixed>): array<string,mixed> $cagri
+     * @param int $boyut isteğin yaklaşık token sayısı (GirisSiniri::tahmin)
      * @return array<string,mixed>
      */
-    private function dene(Closure $cagri): array
+    private function dene(Closure $cagri, int $boyut = 0): array
     {
-        $this->denemeler = [];
+        $this->denemeler  = [];
+        $this->atlananlar = [];
         $simdi = $this->saat !== null ? ($this->saat)() : time();
         $son   = null;
 
@@ -278,6 +289,13 @@ final class YedekliSaglayici implements Provider
             $model = $halka['saglayici']->model();
 
             if (self::dinlenmeKalan($halka['ad'], $simdi, $model) > 0) {
+                continue;
+            }
+
+            // İstek bu sağlayıcının sınırını aşıyor: hiç gönderilmez, sağlayıcı dinlenmez.
+            if ($boyut > 0 && !GirisSiniri::sigar($halka['ad'], $model, $boyut)) {
+                $this->atlananlar[] = $halka['ad'];
+
                 continue;
             }
 
@@ -290,45 +308,70 @@ final class YedekliSaglayici implements Provider
 
                 return $yanit;
             } catch (AiHatasi $e) {
-                $son = $e;
+                $kod     = $e->kod;
+                $bekleme = $e->bekleme;
+
+                // Groq'un 413'ü dakikalık kotanın dolması olabilir: hız sınırı gibi bekle, sınır öğrenme.
+                if (GirisSiniri::buyukIstekHatasi($e) && GirisSiniri::dakikalikDoluluk($e->getMessage(), $boyut)) {
+                    $kod     = 'rate_limit';
+                    $bekleme = 60;
+                } elseif (GirisSiniri::buyukIstekHatasi($e)) {
+                    GirisSiniri::ogren($halka['ad'], $model, $boyut, $simdi);
+                }
+
+                $son = $kod === $e->kod ? $e : new AiHatasi($e->getMessage(), $kod, $e->httpDurumu, $e, $bekleme);
                 $this->denemeler[] = [
                     'ad'      => $halka['ad'],
                     'model'   => $model,
-                    'kod'     => $e->kod,
+                    'kod'     => $kod,
                     'mesaj'   => $e->getMessage(),
                     'sure_ms' => (int) ((hrtime(true) - $bas) / 1_000_000),
                 ];
 
-                self::dinlendir($halka['ad'], $e->kod, $simdi, $e->bekleme, $model);
+                self::dinlendir($halka['ad'], $kod, $simdi, $bekleme, $model);
             }
         }
 
-        throw $this->sonuc($son, $simdi);
+        throw $this->sonuc($son, $simdi, $boyut);
     }
 
     /**
-     * Hiçbir halka yanıt vermedi. Geçici olarak dinlenen biri varsa iş
-     * ertelenir ("zincir_dinleniyor", en erken açılış); yoksa son hata.
+     * Hiçbir halka yanıt vermedi. Bu isteği alabilecek (sınırı yeten) ve
+     * geçici olarak dinlenen biri varsa iş ertelenir ("zincir_dinleniyor",
+     * en erken açılış). İstek açık olanların hepsine büyükse ve alabilecek
+     * kimse yoksa "cok_buyuk" (birleştirme kademeliye geçer); yoksa son hata.
      */
-    private function sonuc(?AiHatasi $son, int $simdi): AiHatasi
+    private function sonuc(?AiHatasi $son, int $simdi, int $boyut = 0): AiHatasi
     {
         $acilis = [];
 
         foreach ($this->halkalar as $halka) {
+            $model = $halka['saglayici']->model();
             $kayit = self::dinlenmeKaydi($halka['ad']);
-            $kalan = self::dinlenmeKalan($halka['ad'], $simdi, $halka['saglayici']->model());
+            $kalan = self::dinlenmeKalan($halka['ad'], $simdi, $model);
 
-            if ($kalan > 0 && !in_array($kayit['kod'] ?? '', self::DEVRE_DISI, true)) {
+            if ($kalan > 0 && !in_array($kayit['kod'] ?? '', self::DEVRE_DISI, true) && ($boyut === 0 || GirisSiniri::sigar($halka['ad'], $model, $boyut))) {
                 $acilis[] = $kalan;
             }
         }
 
-        $ozet = self::teknikOzet($this->denemeler);
+        $ozet  = self::teknikOzet($this->denemeler);
+        $buyuk = $this->atlananlar !== [] || in_array('cok_buyuk', array_column($this->denemeler, 'kod'), true);
 
         if ($acilis !== []) {
             return new AiHatasi(
-                'Yedek zincirindeki sağlayıcılar dinleniyor; en erken ' . min($acilis) . ' sn sonra açılıyor.' . ($ozet !== '' ? ' ' . $ozet : ''),
-                'zincir_dinleniyor', $son?->httpDurumu ?? 0, $son, min($acilis)
+                'Yedek zincirindeki sağlayıcılar dinleniyor; en erken ' . min($acilis) . ' sn sonra açılıyor.'
+                    . ($buyuk ? ' İstek (~' . $boyut . ' token) açık sağlayıcıların sınırını aşıyor: ' . implode(', ', $this->atlananlar) . '.' : '')
+                    . ($ozet !== '' ? ' ' . $ozet : ''),
+                'zincir_dinleniyor', $son?->httpDurumu ?? 0, $son, min($acilis), $buyuk ? AiHatasi::SEBEP_BUYUK_GIRDI : null
+            );
+        }
+
+        if ($buyuk) {
+            return new AiHatasi(
+                'İstek (~' . $boyut . ' token) bu işi alabilecek sağlayıcıların sınırını aşıyor'
+                    . ($this->atlananlar !== [] ? ' (atlanan: ' . implode(', ', $this->atlananlar) . ')' : '') . '.' . ($ozet !== '' ? ' ' . $ozet : ''),
+                'cok_buyuk', $son?->httpDurumu ?? 413, $son, null, AiHatasi::SEBEP_BUYUK_GIRDI
             );
         }
 
@@ -419,6 +462,9 @@ final class YedekliSaglayici implements Provider
         $sifirlanan = [];
 
         foreach ($adlar as $ad) {
+            // Öğrenilen giriş sınırı da silinir (katman yükseltildiyse büyük istek yeniden denensin).
+            GirisSiniri::unut((string) $ad);
+
             $kayit = self::dinlenmeKaydi((string) $ad);
 
             if (!$kotaDahil && $kayit !== null && $kayit['kod'] === 'kota_doldu' && self::dinlenmeKalan((string) $ad) > 0) {

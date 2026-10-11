@@ -473,6 +473,30 @@ final class Ai
         return (string) (self::PROVIDERS[$ad]['label'] ?? $ad);
     }
 
+    /**
+     * Metinden API anahtarlarını çıkarır: .env'deki gerçek değerler ve
+     * bilinen anahtar biçimleri (AIza…, sk-…, gsk_…, evren_llm_…). Sağlayıcı
+     * mesajı kayda / ekrana (yalnız yönetici) böyle girer.
+     */
+    public static function maskele(string $metin): string
+    {
+        foreach (self::PROVIDERS as $tanim) {
+            foreach ((array) $tanim['key_names'] as $ad) {
+                $deger = trim(Env::get((string) $ad, ''));
+
+                if (strlen($deger) >= 8) {
+                    $metin = str_replace($deger, '****', $metin);
+                }
+            }
+        }
+
+        return (string) preg_replace(
+            ['/evren_llm_[A-Za-z0-9_\-]{4,}/', '/AIza[0-9A-Za-z_\-]{20,}/', '/sk-(?:or-v1-|ant-)?[A-Za-z0-9_\-]{16,}/', '/gsk_[A-Za-z0-9]{16,}/'],
+            ['evren_llm_****', 'AIza****', 'sk-****', 'gsk_****'],
+            $metin
+        );
+    }
+
     /** Anahtarın .env'deki adı (değeri değil): "EVREN_API_KEY". */
     public static function anahtarAdi(string $ad): string
     {

@@ -90,7 +90,8 @@ SQL'de `KaynakRepository::gorunurluk()`).
 
 **Yapay zekâ zinciri** (`Ai\YedekliSaglayici`, sıra `.env` `AI_PROVIDERS`): varsayılan
 `evren,gemini,openrouter,groq` (2026-10-11, kullanıcı isteği: yerli EVREN başta).
-`Ai\EvrenProvider` OpenAI uyumludur. Kullanım şartlarını kod ONAYLAMAZ; 403
+`Ai\EvrenProvider` OpenAI uyumludur. Kullanım şartlarını kod kendiliğinden ONAYLAMAZ;
+yalnız yönetici Durum → "Şartları oku ve onayla" ile onaylar (`Ai\EvrenHesap`). 403
 gelirse 1 saat atlanır. Maliyet 0 (1 Kasım 2026'ya kadar). Her sağlayıcının
 modeli panelden (`model_evren`, Gemini için `ai_model`).
 

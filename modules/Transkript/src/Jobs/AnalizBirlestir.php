@@ -9,6 +9,11 @@
  *  olarak yazılır (model o aralık için bir şey uydurmasın). Hiçbir
  *  parça tamamlanamadıysa analiz kalıcı hatayla biter. Kişisel filtre
  *  MVP sonrası (4b. aşama).
+ *
+ *  KADEMELİ (2026-10-11, cowork testi: 1:17'lik video %80'de takıldı,
+ *  girdi Groq'a sığmadı): girdi o an açık sağlayıcıların sınırını
+ *  aşıyorsa bölümler gruplar hâlinde ara özete çevrilir, sonra ara
+ *  özetler birleştirilir. Ara özetler transkript_analizler.ara_sonuclar'da.
  * =====================================================================
  */
 
@@ -16,6 +21,7 @@ declare(strict_types=1);
 
 namespace Modules\Transkript\Jobs;
 
+use App\Core\Cache\Cache;
 use App\Core\Log\Logger;
 use App\Core\Queue\Queue;
 use Modules\Transkript\Ai\AiHatasi;
@@ -26,6 +32,9 @@ use Modules\Transkript\Zaman;
 final class AnalizBirlestir extends TranskriptIsi
 {
     protected const ASAMA = 'birlestirme';
+
+    /** Kademeli birleştirmenin ilerlemesi (Cache; KaynakDurumu gösterir). */
+    public const KADEMELI_ONEKI = 'transkript.kademeli.';
 
     public function tries(): int
     {
@@ -53,15 +62,25 @@ final class AnalizBirlestir extends TranskriptIsi
             throw new AiHatasi('Hiçbir parça analiz edilemedi.', 'istek_hatasi');
         }
 
-        $sonuc = $this->pipeline()->birlestir(
+        /* Girdi o an açık sağlayıcılara sığmıyorsa kademeli: bölümler gruplar
+         * hâlinde ara özete, sonra son rapora (Pipeline::birlestirKademeli).
+         * Ara özetler veritabanında; iş ertelenip dönerse baştan üretilmez. */
+        $sonuc = $this->pipeline()->birlestirKademeli(
             $sonuclar,
             $bitMs,
             $this->segmentler()->baslangiclar((int) $analiz['metin_id']),
             $this->baglam($analiz) + ['eksik' => $eksik, 'kelime' => $this->kelimeSayisi((int) $analiz['metin_id'])],
+            static fn (): ?int => Pipeline::kapasite(),
+            $this->analizler()->araSonuclar($this->analizId),
+            fn (array $ara) => $this->analizler()->araSonucYaz($this->analizId, $ara),
+            function (int $seviye, int $biten, int $toplam): void {
+                Cache::put(self::KADEMELI_ONEKI . $this->analizId, ['seviye' => $seviye, 'biten' => $biten, 'toplam' => $toplam], 86400);
+                $this->analizler()->ilerlemeYaz($this->analizId, 80 + min(14, $seviye * 3 + intdiv(4 * $biten, max(1, $toplam))));
+            },
         );
 
-        if ($sonuc['uyarilar'] !== []) {
-            Logger::info('Birleştirme sonucu düzeltildi', [
+        if ($sonuc['uyarilar'] !== [] || $sonuc['kademeli']) {
+            Logger::info($sonuc['kademeli'] ? 'Birleştirme kademeli yapıldı' : 'Birleştirme sonucu düzeltildi', [
                 'analiz' => $this->analizId, 'model' => $sonuc['model'], 'uyarilar' => $sonuc['uyarilar'],
             ], 'transkript');
         }
@@ -71,9 +90,12 @@ final class AnalizBirlestir extends TranskriptIsi
                 'sonuc_json'    => $sonuc['sonuc'],
                 'model'         => $sonuc['model'],
                 'prompt_surumu' => (string) Ayarlar::get('ai.istem_surumu', 'v1'),
+                'ara_sonuclar'  => null,
             ]);
             Queue::push(new RaporuTamamla($this->analizId));
         });
+
+        Cache::forget(self::KADEMELI_ONEKI . $this->analizId);
     }
 
     /** Transcript'in toplam kelime sayısı (istemdeki uzunluk kuralı için). */

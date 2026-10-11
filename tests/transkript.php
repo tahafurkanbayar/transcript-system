@@ -51,8 +51,10 @@ use App\Models\User;
 use Modules\Transkript\Ai\Ai;
 use Modules\Transkript\Ai\AiHatasi;
 use Modules\Transkript\Ai\ClaudeProvider;
+use Modules\Transkript\Ai\EvrenHesap;
 use Modules\Transkript\Ai\EvrenProvider;
 use Modules\Transkript\Ai\GeminiProvider;
+use Modules\Transkript\Ai\GirisSiniri;
 use Modules\Transkript\Ai\HttpProvider;
 use Modules\Transkript\Ai\OpenAiCompatibleProvider;
 use Modules\Transkript\Ai\DinlenmeDeposu;
@@ -312,6 +314,8 @@ $beklenen = [
     'GET panel/transkript/ayarlar'                           => 'Y',
     'POST panel/transkript/ayarlar'                          => 'Y',
     'POST panel/transkript/ayarlar/dinlenme-sifirla'         => 'Y',
+    'GET panel/transkript/ayarlar/evren-sartlar'             => 'Y',
+    'POST panel/transkript/ayarlar/evren-sartlar'            => 'Y',
     'POST panel/transkript/yeniden-dene'                     => 'Y',
     'POST panel/transkript/kuyruk/tik'                       => 'UEY',
     'GET panel/transkript/varlik/{dosya}'                    => 'UEY',
@@ -2351,7 +2355,7 @@ try {
     $e403 = $e;
 }
 dogrula('403 terms_not_accepted → "sartlar_onaylanmadi", Türkçe yönlendirme; şartlar otomatik onaylanmaz (tek istek, kodda terms/accept yok)',
-    $e403?->kod === 'sartlar_onaylanmadi' && str_contains($e403->getMessage(), 'Test Alanı') && str_contains($e403->getMessage(), 'required_terms_version')
+    $e403?->kod === 'sartlar_onaylanmadi' && str_contains($e403->getMessage(), 'Şartları oku ve onayla') && str_contains($e403->getMessage(), 'required_terms_version')
     && count($giden) === 1 && !str_contains((string) file_get_contents(MODUL_YOLU . '/src/Ai/EvrenProvider.php'), "'/terms/accept'")
     && YedekliSaglayici::dinlenmeSuresi('sartlar_onaylanmadi') === 3600 && in_array('sartlar_onaylanmadi', YedekliSaglayici::DEVRE_DISI, true)
     && TranskriptIsi::kaliciKod(new AiHatasi('', 'sartlar_onaylanmadi', 403)) === 'ai_ayar_eksik');
@@ -2482,6 +2486,203 @@ dogrula('Yanıttaki kalan günlük token Durum için saklanır (panel isteğinde
 $oncekiEvrenKota === null
     ? \App\Core\Cache\Cache::forget(EvrenProvider::KOTA_ONBELLEK)
     : \App\Core\Cache\Cache::put(EvrenProvider::KOTA_ONBELLEK, $oncekiEvrenKota, 2 * 86400);
+
+$giden = [];
+$autoYanit = (string) json_encode(['model' => 'zai/glm-5.3-fp8', 'choices' => [['message' => ['content' => 'Merhaba'], 'finish_reason' => 'stop']], 'usage' => ['prompt_tokens' => 5, 'completion_tokens' => 2]]);
+$autoModel = (new EvrenProvider('k', 'auto'))->tasiyici($sahteHttp([[200, $autoYanit]], $giden))->send([['role' => 'user', 'content' => 'x']])['model'];
+$giden = [];
+$sabitModel = (new EvrenProvider('k', 'glm-5.3'))->tasiyici($sahteHttp([[200, $autoYanit]], $giden))->send([['role' => 'user', 'content' => 'x']])['model'];
+dogrula('"auto"da kayda ve rapora gerçek model girer ("auto → zai/glm-5.3-fp8"); seçili modelde seçilen ad kalır',
+    $autoModel === 'auto → zai/glm-5.3-fp8' && $sabitModel === 'glm-5.3');
+
+/** Sahte HTTP istemcisi (EvrenHesap): istekleri saklar, sırayla yanıt verir. */
+$sahteIstemci = new class implements HttpIstemci {
+    /** @var list<array{yontem:string, adres:string, govde:?string, basliklar:array<int,string>}> */
+    public array $istekler = [];
+    /** @var list<HttpYanit> */
+    public array $yanitlar = [];
+
+    public function get(string $adres, array $basliklar = []): HttpYanit
+    {
+        $this->istekler[] = ['yontem' => 'GET', 'adres' => $adres, 'govde' => null, 'basliklar' => $basliklar];
+
+        return array_shift($this->yanitlar) ?? new HttpYanit(500, '');
+    }
+
+    public function post(string $adres, string $govde, array $basliklar = []): HttpYanit
+    {
+        $this->istekler[] = ['yontem' => 'POST', 'adres' => $adres, 'govde' => $govde, 'basliklar' => $basliklar];
+
+        return array_shift($this->yanitlar) ?? new HttpYanit(500, '');
+    }
+};
+$sahteIstemci->yanitlar = [new HttpYanit(200, '{"current_version":1,"is_material":true,"accepted":false}'), new HttpYanit(200, '{"accepted":true,"version":1}')];
+$hesap = new EvrenHesap('evren_llm_gizlianahtar1234', 'https://ornek.test/v1/', $sahteIstemci);
+$sartDurumu = EvrenHesap::sartBilgisi($hesap->sartDurumu()->json());
+$hesap->sartlariOnayla(1);
+dogrula('EvrenHesap: şart durumu okunur; onay POST /terms/accept {"version":1} + Bearer; başlık örneği ve metin maskeli',
+    $sartDurumu === ['onayli' => false, 'guncel_surum' => 1, 'onaylanan_surum' => null]
+    && $sahteIstemci->istekler[0]['adres'] === 'https://ornek.test/v1/terms/status'
+    && $sahteIstemci->istekler[1]['yontem'] === 'POST' && $sahteIstemci->istekler[1]['adres'] === 'https://ornek.test/v1/terms/accept'
+    && json_decode((string) $sahteIstemci->istekler[1]['govde'], true) === ['version' => 1]
+    && in_array('Authorization: Bearer evren_llm_gizlianahtar1234', $sahteIstemci->istekler[1]['basliklar'], true)
+    && $hesap->baslikOrnegi() === 'Authorization: Bearer evren_llm_****' && $hesap->maskele('a evren_llm_gizlianahtar1234 b') === 'a evren_llm_**** b'
+    && EvrenHesap::sartBilgisi(json_decode($sartlarGovdesi, true))['guncel_surum'] === 1
+    && $hesap->anahtarBilgisi() === ['onek_dogru' => true, 'uzunluk' => 26, 'onek' => 'evren_llm_']);
+
+// Şart onayı yalnız yöneticinin POST'unda: modülde tek çağrı yeri (AyarController::evrenSartOnayla).
+$onayYerleri = [];
+foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator(MODUL_YOLU . '/src', FilesystemIterator::SKIP_DOTS)) as $dosya) {
+    $icerik = (string) file_get_contents((string) $dosya);
+    if (str_contains($icerik, '->sartlariOnayla(')) {
+        $onayYerleri[basename((string) $dosya)] = substr_count($icerik, '->sartlariOnayla(');
+    }
+}
+$onayKodu = (string) file_get_contents(MODUL_YOLU . '/src/Controllers/AyarController.php');
+dogrula('Şartlar kendiliğinden onaylanmaz: tek çağrı yeri yöneticinin formu ("okudum" kutusu ve güncel sürüm denetimiyle); rota CSRF ve transkript.admin',
+    $onayYerleri === ['AyarController.php' => 1] && str_contains($onayKodu, "\$request->bool('okudum')")
+    && str_contains((string) file_get_contents(MODUL_YOLU . '/routes.php'), "'evrenSartOnayla',\n    ['installed', 'auth', 'csrf', 'can:transkript.admin']")
+    && AyarController::sartMetniOku('{"text":"Madde 1"}', ['text' => 'Madde 1']) === 'Madde 1' && AyarController::sartMetniOku('# Şartlar', null) === '# Şartlar');
+
+$sartSayfasi = App\Core\View::capture('Transkript::evren-sartlar', [
+    'bilgi' => ['onayli' => false, 'guncel_surum' => 1, 'onaylanan_surum' => null], 'erisim' => true, 'hata' => null,
+    'metin' => "Madde 1 <script>alert(1)</script>\nMadde 2", 'kayit' => null,
+]);
+dogrula('Şart sayfası: metin HTML olarak basılmaz; form CSRF\'li, sürüm gizli alanda, "okudum" kutusu zorunlu',
+    str_contains($sartSayfasi, '&lt;script&gt;alert(1)&lt;/script&gt;') && !str_contains($sartSayfasi, '<script>alert(1)')
+    && preg_match('#action="[^"]*ayarlar/evren-sartlar"[^>]*>\s*<input type="hidden" name="csrf_token"#', $sartSayfasi) === 1
+    && str_contains($sartSayfasi, 'name="surum" value="1"') && preg_match('#name="okudum" value="1" required#', $sartSayfasi) === 1
+    && str_contains($sartSayfasi, 'Okudum, onaylıyorum'));
+
+/* ---------------------------------------------------------------- */
+echo "\nGiriş sınırı ve kademeli birleştirme (uzun video; API'ye gidilmez)\n";
+
+$dinlenmeyiSil();
+foreach (['test-a', 'test-b', 'groq'] as $ad) {
+    GirisSiniri::unut($ad);
+}
+$geri = $ortamDegistir(['GROQ_MAX_INPUT_TOKENS' => '12000']);
+$ortamSiniri = GirisSiniri::yapilandirilan('groq');
+$geri();
+$geri = $ortamDegistir(['GROQ_MAX_INPUT_TOKENS' => '']);
+dogrula('Boyut tahmini karakter / 3,5; sınır config\'ten (groq 7000), .env <AD>_MAX_INPUT_TOKENS ezer; bilinmeyen sağlayıcıda sınır yok',
+    GirisSiniri::metinBoyutu(str_repeat('a', 350)) === 100 && GirisSiniri::tahmin('ab', [['content' => str_repeat('x', 68)]]) === 20
+    && GirisSiniri::yapilandirilan('groq') === 7000 && $ortamSiniri === 12000 && GirisSiniri::sinir('test-a', 'm') === 0);
+
+GirisSiniri::ogren('test-a', 'm1', 5000);
+GirisSiniri::ogren('test-a', 'm1', 8000);
+$ogrenme = [GirisSiniri::ogrenilen('test-a', 'm1'), GirisSiniri::sinir('test-a', 'm1'), GirisSiniri::sigar('test-a', 'm1', 4999), GirisSiniri::sigar('test-a', 'm1', 5000), GirisSiniri::ogrenilen('test-a', 'm2')];
+GirisSiniri::unut('test-a');
+dogrula('Öğrenilen sınır: reddedilen boyut (küçüğü kalır); o boyut ve üstü gönderilmez; model değişince geçersiz; unut() siler',
+    $ogrenme === [5000, 4999, true, false, null] && GirisSiniri::ogrenilen('test-a', 'm1') === null);
+
+$tpm = static fn (int $istenen): string => 'İstek çok büyük. — Request too large for model `openai/gpt-oss-120b` in organization `org_x` service tier `on_demand` on tokens per minute (TPM): Limit 8000, Requested ' . $istenen . ', please reduce your message size and try again.';
+dogrula('Groq 413 "tokens per minute": istenen isteğin kendisinden çok büyükse dakika dolu (bekle), yaklaşık eşitse ya da sınırdan büyükse istek gerçekten büyük (öğren)',
+    GirisSiniri::dakikalikDoluluk($tpm(10438), 2050) && GirisSiniri::dakikalikDoluluk($tpm(14724), 6325)
+    && !GirisSiniri::dakikalikDoluluk($tpm(7600), 7300) && !GirisSiniri::dakikalikDoluluk($tpm(12100), 11500)
+    && !GirisSiniri::dakikalikDoluluk('Request too large', 100));
+
+// Zincir: sığmayan halka çağrılmaz (dinlenmez), sıradaki yanıtlar.
+$buyukMesaj = [['role' => 'user', 'content' => str_repeat('ğ', 30000)]];   // ~8.572 token > groq 7000
+$kucukGroq  = new SahteAi([SahteAi::yanit('{"g":1}')]);
+$zSigmaz    = new YedekliSaglayici([['ad' => 'groq', 'saglayici' => $kucukGroq], ['ad' => 'test-b', 'saglayici' => new SahteAi([SahteAi::yanit('{"b":1}')])]]);
+$ySigmaz    = $zSigmaz->sendJson($buyukMesaj, 's', ['type' => 'object']);
+dogrula('Zincir: isteğe sığmayan sağlayıcı hiç çağrılmaz ve dinlenmez ("Hazır" kalır); sıradaki yanıtlar',
+    $kucukGroq->istekler === [] && $ySigmaz['text'] === '{"b":1}' && $zSigmaz->atlananlar() === ['groq'] && YedekliSaglayici::dinlenmeKalan('groq') === 0);
+
+$hepsiKucuk = null;
+try {
+    (new YedekliSaglayici([['ad' => 'groq', 'saglayici' => new SahteAi([])], ['ad' => 'cerebras', 'saglayici' => new SahteAi([])]]))->sendJson($buyukMesaj, 's', ['type' => 'object']);
+} catch (AiHatasi $e) {
+    $hepsiKucuk = $e;
+}
+YedekliSaglayici::dinlendir('test-a', 'kota_doldu', null, 3600);
+$bekleyenBuyuk = null;
+try {
+    (new YedekliSaglayici([['ad' => 'test-a', 'saglayici' => new SahteAi([])], ['ad' => 'groq', 'saglayici' => new SahteAi([])]]))->sendJson($buyukMesaj, 's', ['type' => 'object']);
+} catch (AiHatasi $e) {
+    $bekleyenBuyuk = $e;
+}
+$dinlenmeyiSil();
+dogrula('Hiçbir açık sağlayıcıya sığmıyor: "cok_buyuk" (birleştirme kademeliye geçer); yalnız dinlenen büyük sağlayıcı alabiliyorsa erteleme, sebep "büyük girdi" (meşgul değil)',
+    $hepsiKucuk?->kod === 'cok_buyuk' && $hepsiKucuk->sebep === AiHatasi::SEBEP_BUYUK_GIRDI
+    && $bekleyenBuyuk?->kod === 'zincir_dinleniyor' && $bekleyenBuyuk->sebep === AiHatasi::SEBEP_BUYUK_GIRDI && $bekleyenBuyuk->bekleme > 3500
+    && Pipeline::buyukGirdi($bekleyenBuyuk) && !Pipeline::buyukGirdi(new AiHatasi('', 'zincir_dinleniyor', 0, null, 60)));
+
+$orta = [['role' => 'user', 'content' => str_repeat('a', 7000)]];   // ~2.000 token
+$z413 = new YedekliSaglayici([['ad' => 'test-a', 'saglayici' => new SahteAi([new AiHatasi('413 Request too large', 'cok_buyuk', 413)])], ['ad' => 'test-b', 'saglayici' => new SahteAi([SahteAi::yanit('{"b":2}')])]]);
+$z413->sendJson($orta, '', ['type' => 'object']);
+$ogrenilen413 = GirisSiniri::ogrenilen('test-a', 'sahte-model');
+$zTpm = new YedekliSaglayici([['ad' => 'test-c', 'saglayici' => new SahteAi([new AiHatasi($tpm(10438), 'cok_buyuk', 413)])], ['ad' => 'test-b', 'saglayici' => new SahteAi([SahteAi::yanit('{"b":3}')])]]);
+$zTpm->sendJson($orta, '', ['type' => 'object']);
+$tpmKalan = YedekliSaglayici::dinlenmeKalan('test-c');
+$tpmOgrenilen = GirisSiniri::ogrenilen('test-c', 'sahte-model');
+GirisSiniri::unut('test-a');
+GirisSiniri::unut('test-c');
+YedekliSaglayici::dinlenmeyiBitir('test-c');
+dogrula('413: o boyut sağlayıcının sınırı olur (dinletmez); Groq dakika kotası 413\'ü ise hız sınırı sayılır (60 sn dinlenir, sınır öğrenilmez)',
+    $ogrenilen413 === GirisSiniri::tahmin('', $orta) && YedekliSaglayici::dinlenmeKalan('test-a') === 0
+    && ($zTpm->denemeler()[0]['kod'] ?? '') === 'rate_limit' && $tpmKalan > 50 && $tpmKalan <= 60 && $tpmOgrenilen === null
+    && korumali(new OpenAiCompatibleProvider('k', 'm'), 'errorCode', 400, '{"error":{"code":"context_length_exceeded","message":"x"}}') === 'cok_buyuk'
+    && korumali(new OpenAiCompatibleProvider('k', 'm'), 'errorCode', 400, '{"error":{"message":"bozuk"}}') === 'istek_hatasi');
+
+dogrula('Gruplama: sıra korunur; bütçe ve grup başına en çok öğe; bütçeyi tek başına aşan kendi grubunda (3910\'un bölüm boyutlarıyla)',
+    Pipeline::gruplar([1216, 1645, 1198, 1450, 1047, 422, 498, 463, 800, 498], 6250, 4) === [[0, 1, 2, 3], [4, 5, 6, 7], [8, 9]]
+    && Pipeline::gruplar([100, 9000, 100], 5000, 4) === [[0], [1], [2]]
+    && Pipeline::gruplar([10, 10, 10, 10, 10], 1000, 2) === [[0, 1], [2, 3], [4]]);
+
+// Kademeli: 6 bölüm (her biri ~1.000 token), kapasite 4.500 → 3'lük iki grup → iki ara özet + son birleştirme.
+$uzunBolumler = [];
+for ($i = 0; $i < 6; $i++) {
+    $uzunBolumler[] = ['chunk' => ['start' => Zaman::yaz($i * 540000), 'end' => Zaman::yaz(($i + 1) * 540000)], 'topic' => 'Bölüm ' . ($i + 1),
+        'summary' => str_repeat('Uzun bir bölüm özeti cümlesi. ', 117), 'important_points' => [], 'technical_information' => [], 'claims' => [], 'ideas' => [], 'timestamps' => []];
+}
+$araYanit = static fn (string $konu): array => SahteAi::yanit((string) json_encode(['topic' => $konu, 'summary' => 'Ara özet.', 'important_points' => [],
+    'technical_information' => [], 'claims' => [], 'ideas' => [], 'timestamps' => []]));
+$uzunBaslangic = array_map(static fn (int $k): int => $k * 60000, range(0, 53));
+$uzunBaglam    = ['baslik' => 'Uzun video', 'kanal' => 'K', 'eksik' => [], 'kelime' => 9000];
+$kaydedilen = [];
+$adimlar    = [];
+[$plK, $aiK] = sahtePipeline([$araYanit('Ara 1'), $araYanit('Ara 2'), SahteAi::yanit($gecerliRed)]);
+$rK = $plK->birlestirKademeli($uzunBolumler, 6 * 540000, $uzunBaslangic, $uzunBaglam, static fn (): int => 4500, [],
+    static function (array $ara) use (&$kaydedilen): void { $kaydedilen = $ara; },
+    static function (int $s, int $b, int $t) use (&$adimlar): void { $adimlar[] = [$s, $b, $t]; });
+$ilkSistem = $aiK->istekler[0]['system'] ?? '';
+$sonIstek  = $aiK->istekler[2]['messages'][0]['content'] ?? '';
+dogrula('Kademeli birleştirme: girdi kapasiteyi aşınca 3\'lük gruplar ara özete, sonra son rapor; ara özetler saklanır, ilerleme bildirilir',
+    count($aiK->istekler) === 3 && str_contains($ilkSistem, 'ara bir adımdır') && $rK['kademeli'] === true && $rK['sonuc']['summary'] === 'Kısa özet.'
+    && array_keys($kaydedilen) === ['s1:00:00:00-00:27:00', 's1:00:27:00-00:54:00'] && $adimlar === [[1, 1, 2], [1, 2, 2]]
+    && str_contains($sonIstek, 'Bölüm sayısı: 2') && str_contains($sonIstek, '"topic":"Ara 1"') && !str_contains($sonIstek, 'Bölüm 4'));
+
+[$plT, $aiT] = sahtePipeline([SahteAi::yanit($gecerliRed)]);
+$rT = $plT->birlestirKademeli($uzunBolumler, 6 * 540000, $uzunBaslangic, $uzunBaglam, static fn (): int => 4500, $kaydedilen);
+[$plN, $aiN] = sahtePipeline([SahteAi::yanit($gecerliRed)]);
+$rN = $plN->birlestirKademeli($uzunBolumler, 6 * 540000, $uzunBaslangic, $uzunBaglam, static fn (): ?int => null);
+$kapasiteler = [100000, 4500];
+[$plY, $aiY] = sahtePipeline([new AiHatasi('413', 'cok_buyuk', 413, null, null, AiHatasi::SEBEP_BUYUK_GIRDI), $araYanit('A'), $araYanit('B'), SahteAi::yanit($gecerliRed)]);
+$rY = $plY->birlestirKademeli($uzunBolumler, 6 * 540000, $uzunBaslangic, $uzunBaglam, static function () use (&$kapasiteler): ?int { return array_shift($kapasiteler); });
+dogrula('Yeniden denemede biten ara özetler AI\'a gitmez; kapasite bilinmiyorsa (hepsi dinleniyor) tek istek; "büyük girdi" gelince yeniden ölçülüp kademeliye geçilir',
+    count($aiT->istekler) === 1 && $rT['kademeli'] && count($aiN->istekler) === 1 && !$rN['kademeli']
+    && count($aiY->istekler) === 4 && $rY['kademeli']);
+
+dogrula('Ekran gerçek sebebi söyler: büyük girdi → "sınırını aşıyor … büyük bağlamlı servis", meşgul → "meşgul"; kademeli ilerleme (2 / 4)',
+    str_contains(KaynakDurumu::ertelemeMetni(time() + 3600, null, AiHatasi::SEBEP_BUYUK_GIRDI), 'sınırını aşıyor')
+    && str_contains(KaynakDurumu::ertelemeMetni(time() + 3600, null, AiHatasi::SEBEP_BUYUK_GIRDI), 'EVREN / Gemini')
+    && str_contains(KaynakDurumu::ertelemeMetni(time() + 600), 'meşgul') && !str_contains(KaynakDurumu::ertelemeMetni(time() + 600, null, ''), 'sınırını')
+    && str_contains(KaynakDurumu::kademeliMetni(['seviye' => 1, 'biten' => 2, 'toplam' => 4]), '(2 / 4)'));
+
+// Sahte değerler parça parça kurulur: depoda anahtar biçimli dize durmasın (gizli bilgi taraması).
+$sahteGroq = 'gsk' . '_' . 'gercekAnahtar1234567890abcd';
+$geriMaske = $ortamDegistir(['GROQ_API_KEY' => $sahteGroq, 'GEMINI_API_KEY' => 'AIzaGercekGeminiAnahtari123456789']);
+$maskeli = Ai::maskele('a ' . $sahteGroq . ' b AIzaGercekGeminiAnahtari123456789 c evren_llm_abcdefghij d ' . 'sk-or' . '-v1-' . '0123456789abcdef0123 e');
+SahteSorgu::$calisan = [];
+(new AiKullanimRepository(new KayitPdo()))->kaydet(['saglayici' => 'groq', 'model' => 'm', 'giris_token' => 0, 'cikis_token' => 0, 'maliyet_usd' => 0.0, 'sure_ms' => 1],
+    'analiz', 1, 'hata', 'cok_buyuk', 'Request too large ' . $sahteGroq . ' ' . str_repeat('x', 900));
+$geriMaske();
+$ayrintiParam = (string) (array_values(array_filter(SahteSorgu::$calisan, static fn (array $p): bool => array_key_exists(':hata_ayrinti', $p)))[0][':hata_ayrinti'] ?? '');
+dogrula('Son hata ayrıntısı: anahtarlar maskelenir (.env değerleri ve bilinen biçimler), en çok 500 karakter',
+    !str_contains($maskeli, 'gercekAnahtar') && !str_contains($maskeli, 'GercekGemini') && str_contains($maskeli, 'evren_llm_****')
+    && !str_contains($maskeli, '0123456789abcdef0123') && $ayrintiParam !== '' && !str_contains($ayrintiParam, 'gercekAnahtar') && mb_strlen($ayrintiParam) <= 500);
 
 /* ---------------------------------------------------------------- */
 echo "\nAna sayfa (çekirdeğin HomePage kancası, tanıtım sayfası)\n";
@@ -2816,14 +3017,15 @@ dogrula('Ayarlar: "EVREN modeli" Yapay zekâ sekmesinde en üstte (Gemini\'nin �
     && str_contains($ayarSayfasi, 'günlük 15M token') && !str_contains($ayarSayfasi, 'ilk sıradaki'));
 dogrula('Durum: "1. EVREN (SSYZ)" ilk satır, anahtar listesinde EVREN_API_KEY (değer yok), kalan günlük kota',
     str_contains($ayarSayfasiEvren, '1. EVREN (SSYZ)') && str_contains($ayarSayfasiEvren, 'EVREN_API_KEY')
-    && str_contains($ayarSayfasiEvren, 'Kalan günlük kota: 14.250.000 / 15.000.000 token') && str_contains($ayarSayfasiEvren, 'Test Alanı'));
+    && str_contains($ayarSayfasiEvren, 'Kalan günlük kota: 14.250.000 / 15.000.000 token') && str_contains($ayarSayfasiEvren, 'Şartları oku ve onayla')
+    && str_contains($ayarSayfasiEvren, 'ayarlar/evren-sartlar'));
 dogrula('Ayarlar: sağlayıcı tablosu, "Dinlenmeleri sıfırla" (CSRF\'li), son 50 çağrı günlüğü; anahtarsız "Atlandı", hata Türkçe',
     str_contains($ayarSayfasi, 'Yapay zekâ sağlayıcıları') && str_contains($ayarSayfasi, 'Dinlenmeleri sıfırla')
     && preg_match('#action="[^"]*ayarlar/dinlenme-sifirla"[^>]*>\s*<input type="hidden" name="csrf_token"#', $ayarSayfasi) === 1
     && str_contains($ayarSayfasi, 'name="kota_dahil"') && str_contains($ayarSayfasi, 'kutuyu işaretlemediyseniz o sıfırlanmaz')
     && str_contains($ayarSayfasi, 'Atlandı (anahtar yok)') && str_contains($ayarSayfasi, 'Son 50 yapay zekâ çağrısı')
     && str_contains($ayarSayfasi, 'model yok (404)') && str_contains($ayarSayfasi, 'açılış ') && str_contains($ayarSayfasi, '2.502')
-    && preg_match('#href="[^"]*/panel/transkript/27">\#28</a>#', $ayarSayfasi) === 1
+    && preg_match('#href="[^"]*/panel/transkript/27" title="İş no: 28">\#27</a>#', $ayarSayfasi) === 1
     && str_contains($ayarSayfasi, 'name="tarayici_kuyruk"'));
 dogrula('Ayarlar: "Dinlenmeleri sıfırla" onay ister; günlük kotası dolan sağlayıcıyı açılış saatiyle uyarır',
     $tablo[0]['kod'] === 'kota_doldu' && str_contains($ayarSayfasi, 'js-tk-form-onay')

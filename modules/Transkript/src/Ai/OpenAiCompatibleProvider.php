@@ -183,6 +183,20 @@ class OpenAiCompatibleProvider extends HttpProvider
      *  HATALAR
      * ============================================================== */
 
+    /**
+     * Bağlam aşımı çoğu serviste 413 değil 400 döner ("context_length_exceeded",
+     * "maximum context length"); o da "istek bu sağlayıcıya büyük" demektir:
+     * sıradakine geçilir ve sınır öğrenilir (GirisSiniri).
+     */
+    protected function errorCode(int $status, string $raw): string
+    {
+        if ($status === 400 && preg_match('/context_length_exceeded|maximum context length|context length|too many tokens|prompt is too long/i', $raw) === 1) {
+            return 'cok_buyuk';
+        }
+
+        return parent::errorCode($status, $raw);
+    }
+
     protected function describeError(int $status, string $raw): string
     {
         $decoded = json_decode($raw, true);

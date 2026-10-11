@@ -79,6 +79,9 @@ abstract class TranskriptIsi extends Job
     /** Ertelenen analizin devam zamanı (Cache; KaynakDurumu gösterir). */
     public const ERTELEME_ONEKI = 'transkript.ertelendi.';
 
+    /** Ertelemenin sebebi (AiHatasi::$sebep; '' = sağlayıcılar meşgul). */
+    public const ERTELEME_SEBEBI_ONEKI = 'transkript.erteleme_sebebi.';
+
     /** İlk erteleme zamanı: erteleme_gun aşılınca iş hatayla biter. */
     private const ILK_ERTELEME_ONEKI = 'transkript.ilk_erteleme.';
 
@@ -233,6 +236,8 @@ abstract class TranskriptIsi extends Job
         });
 
         Cache::put(self::ERTELEME_ONEKI . $this->analizId, $simdi + $sn, $sn + 3600);
+        // Ekrandaki gerçek sebep: "meşgul" mü, yoksa girdi açık sağlayıcılara büyük mü?
+        Cache::put(self::ERTELEME_SEBEBI_ONEKI . $this->analizId, $e instanceof AiHatasi ? (string) $e->sebep : '', $sn + 3600);
 
         Logger::info('Analiz ertelendi: yapay zekâ servisleri dinleniyor', [
             'analiz'  => $this->analizId,
@@ -249,6 +254,7 @@ abstract class TranskriptIsi extends Job
     {
         Cache::forget(self::ILK_ERTELEME_ONEKI . $analizId);
         Cache::forget(self::ERTELEME_ONEKI . $analizId);
+        Cache::forget(self::ERTELEME_SEBEBI_ONEKI . $analizId);
     }
 
     /** Yapay zekâ hatasında yöneticiye zincirin özeti (sağlayıcı mesajı yok); değilse null. */

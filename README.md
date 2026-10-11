@@ -167,7 +167,8 @@ YOUTUBE_API_KEY=                      # isteğe bağlı; yoksa oEmbed
 **EVREN** (SSYZ, yurt içi H200 kümesi) varsayılan ilk sağlayıcıdır: OpenAI
 uyumlu, günlük 15M token, varsayılan model `glm-5.3`. LLM anahtarı
 `evren_llm_` ile başlar. Kullanım şartları ilk çağrıdan önce bir kez
-evren.ssyz.org.tr → Test Alanı'ndan onaylanmalıdır (kod onaylamaz);
+Transkript ayarları → Durum → **Şartları oku ve onayla** ile onaylanır (anahtar
+başına; yönetici metni okuyup onaylar, kod kendiliğinden onaylamaz);
 onaylanmamışsa EVREN bir saat atlanır, sıradaki çalışır.
 
 Her sağlayıcının modeli Transkript ayarlarından seçilir (EVREN modeli en

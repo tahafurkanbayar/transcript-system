@@ -3,6 +3,48 @@
 Starter'ın sürüm geçmişi kökteki `CHANGELOG.md`'dedir; bu dosya yalnız
 `modules/Transkript/` içindir. Biçim [Keep a Changelog](https://keepachangelog.com/tr/1.1.0/).
 
+## 0.9.1 (2026-10-11): cowork test bulguları — EVREN şartları, uzun videoda birleştirme
+
+Kullanıcı isteği: cowork'ün test bulgularını düzelt (EVREN 403, 1:17'lik
+videonun %80'de takılması, "auto" modeli, arayüz).
+
+### EVREN 403
+- Teşhis: `php modules/Transkript/bin/evren-teshis.php`. Sonuç: anahtar doğru
+  türde (`evren_llm_`), `/terms/status` → `accepted:false`. Şartlar anahtar
+  başına; Test Alanı'ndaki onay bu anahtara gitmemiş.
+- Durum → EVREN satırı → **Şartları oku ve onayla**: metin EVREN'den gelir,
+  düz metin olarak gösterilir. "Okudum" kutusu ve güncel sürüm denetimiyle
+  `POST /terms/accept` gönderilir (CSRF, yalnız yönetici). Onaydan sonra EVREN
+  dinlenmesi biter; sürüm ve tarih Durum'da görünür. Kod kendiliğinden
+  onaylamaz (`Ai\EvrenHesap`).
+- Başarısız çağrının mesajı (anahtarlar maskeli, 500 karakter) kayda girer:
+  `ai_kullanim_kaydi.hata_ayrinti`. "Son hata"nın üzerine gelince görünür.
+
+### Uzun videoda birleştirme (413/429 döngüsü)
+- Sağlayıcı başına giriş sınırı (`Ai\GirisSiniri`, config
+  `ai.giris_siniri`, `.env` `<AD>_MAX_INPUT_TOKENS`). Sığmayan istek o
+  sağlayıcıya gitmez ve sağlayıcı dinlenmez; 413 ya da bağlam aşımında sınır
+  öğrenilir.
+- Groq'un dakika kotası 413'ü (Requested ≫ istek) hız sınırı sayılır:
+  60 sn beklenir, sınır öğrenilmez.
+- Kademeli birleştirme: girdi açık sağlayıcılara sığmazsa bölümler gruplar
+  hâlinde ara özete, sonra son rapora gider. Ara özetler
+  `transkript_analizler.ara_sonuclar`'da (migration `…030017`), yeniden
+  denemede korunur.
+- Ekran gerçek sebebi söyler: kademeli ilerleme ya da "büyük bağlamlı servis
+  açılınca sürecek". "Meşgul" yalnız sağlayıcılar gerçekten dinlenirken.
+- Canlı: analiz 3910 (1:17:08, 10 bölüm) Groq'la tamamlandı (3 ara özet +
+  son rapor).
+
+### Diğer
+- EVREN `auto`: kayda, rapora ve sağlayıcı tablosuna gerçek model girer
+  (`auto → zai/glm-5.3-fp8`).
+- OpenAI uyumlu servislerde 400 + bağlam aşımı `cok_buyuk` sayılır.
+- "Dinlenmeleri sıfırla" sonrası sayfa Durum sekmesinde kalır.
+- Çağrı günlüğünde "Analiz" sütunu analiz sayfasının numarasını gösterir (iş
+  no üzerine gelince).
+- Testler: `tests/transkript.php` 444.
+
 ## 0.9.0 (2026-10-11): EVREN yapay zekâ sağlayıcısı (varsayılan ilk sırada)
 
 Kullanıcı isteği: "Yerli EVREN modelini yapay zekâ ayarlarına ekle; varsayılan

@@ -14,8 +14,8 @@
  *
  *  İlk dört sekme TEK formdur (bir "Kaydet"). Form PanelAyarlari::ALANLAR'dan
  *  çizilir; boş alan config.php'deki varsayılana döner (yer tutucuda
- *  yazar). Sağlayıcının kendi hata mesajı gösterilmez; yalnız kod ve
- *  Türkçe karşılığı.
+ *  yazar). Sağlayıcının kendi hata mesajı satırda gösterilmez (kod ve
+ *  Türkçe karşılığı); maskeli kısa hali yalnız "Son hata"nın üzerinde.
  *
  *  @var array<string,string>  $degerler
  *  @var array<string,string>  $varsayilanlar
@@ -305,8 +305,9 @@ $sayi     = static fn (int $n): string => number_format($n, 0, ',', '.');
                 Kullanılabilecek adlar: <span class="cy-mono"><?= e(implode(', ', Ai::saglayiciAdlari())) ?></span>.
             </p>
             <p class="cy-panel__note mb-0 mt-2">
-                EVREN'in LLM anahtarı <span class="cy-mono">evren_llm_</span> ile başlar. Kullanım şartları ilk çağrıdan önce bir kez
-                evren.ssyz.org.tr → Test Alanı'ndan onaylanmalı; onaylanmamışsa EVREN bir saat atlanır, sıradaki çalışır.
+                EVREN'in LLM anahtarı <span class="cy-mono">evren_llm_</span> ile başlar. Kullanım şartları anahtar başınadır ve ilk
+                çağrıdan önce bir kez onaylanır: aşağıdaki sağlayıcı tablosunda EVREN satırındaki <strong>Şartları oku ve onayla</strong>.
+                Onaylanmamışsa EVREN bir saat atlanır, sıradaki çalışır.
             </p>
         </section>
     </div>
@@ -366,18 +367,36 @@ $sayi     = static fn (int $n): string => number_format($n, 0, ',', '.');
                         <td>
                             <strong><?= e(($sira + 1) . '. ' . $halka['etiket']) ?></strong>
                             <span class="cy-mono small d-block cy-muted"><?= e($halka['model'] !== '' ? $halka['model'] : '—') ?></span>
+                            <?php /* "auto": gerçekte hangi model yanıtladı (son başarılı çağrı). */ ?>
+                            <?php if (($halka['son_model'] ?? null) !== null && $halka['son_model'] !== $halka['model'] && str_starts_with((string) $halka['son_model'], $halka['model'] . ' → ')): ?>
+                                <span class="cy-mono small d-block cy-muted" title="Son başarılı çağrıda yanıt veren model"><?= e((string) $halka['son_model']) ?></span>
+                            <?php endif; ?>
                         </td>
                         <td>
                             <span class="cy-pill <?= e($halRengi) ?>"><?= e($halMetni) ?></span>
                             <?php if ($halka['acilis'] !== null): ?>
                                 <small class="d-block"><?= e($halka['sebep']) ?> · açılış <?= e($halka['acilis']) ?> (kalan <?= e((string) $halka['kalan_dk']) ?> dk)</small>
                             <?php endif; ?>
+                            <?php if ($halka['ad'] === 'evren'): ?>
+                                <?php
+                                /* Şartlar: panelden onaylandıysa sürüm ve tarih; değilse (ya da son
+                                 * çağrı şart yüzünden reddedildiyse) "Şartları oku ve onayla". */
+                                $sartKaydi = $durum['evren_sart'] ?? null;
+                                $sartReddi = ($halka['kod'] ?? '') === 'sartlar_onaylanmadi';
+                                ?>
+                                <?php if ($sartKaydi !== null && !$sartReddi): ?>
+                                    <small class="tk-sart-durum">Şartlar: <span class="cy-pill is-ok">Onaylı</span> v<?= (int) $sartKaydi['surum'] ?><?= $sartKaydi['tarih'] !== '' ? ' · ' . e(date('d.m.Y H:i', (int) strtotime($sartKaydi['tarih']))) : '' ?>
+                                        · <a class="cy-link" href="<?= e(url('panel/transkript/ayarlar/evren-sartlar')) ?>">kontrol et</a></small>
+                                <?php elseif ($halka['tanimli']): ?>
+                                    <a class="btn cy-btn cy-btn--primary cy-btn--sm mt-2" href="<?= e(url('panel/transkript/ayarlar/evren-sartlar')) ?>"><?= icon('lock', 'cy-icon cy-icon--sm') ?> Şartları oku ve onayla</a>
+                                <?php endif; ?>
+                            <?php endif; ?>
                         </td>
                         <td><small><?= e($zaman($halka['son_basari'])) ?></small></td>
-                        <td>
+                        <td<?= ($halka['son_hata_ayrinti'] ?? null) !== null ? ' title="' . e((string) $halka['son_hata_ayrinti']) . '"' : '' ?>>
                             <small><?= e($zaman($halka['son_hata'])) ?></small>
                             <?php if ($halka['son_hata_kodu'] !== null): ?>
-                                <small class="d-block cy-muted"><?= e($sebepAdi($halka['son_hata_kodu'])) ?></small>
+                                <small class="d-block cy-muted"><?= e($sebepAdi($halka['son_hata_kodu'])) ?><?= ($halka['son_hata_ayrinti'] ?? null) !== null ? ' ' . icon('info', 'cy-icon cy-icon--sm') : '' ?></small>
                             <?php endif; ?>
                         </td>
                         <td>
@@ -427,16 +446,17 @@ $sayi     = static fn (int $n): string => number_format($n, 0, ',', '.');
                                 <small class="cy-mono d-block cy-muted"><?= e((string) $c['model']) ?></small>
                             </td>
                             <td>
+                                <?php /* Analiz sayfasının adresindeki numara (kaynak); iş (analiz) no üzerine gelince. */ ?>
                                 <?php if ($c['kaynak_id'] !== null): ?>
-                                    <a class="cy-link" href="<?= e(url('panel/transkript/' . (int) $c['kaynak_id'])) ?>">#<?= (int) $c['ref_id'] ?></a>
+                                    <a class="cy-link" href="<?= e(url('panel/transkript/' . (int) $c['kaynak_id'])) ?>" title="İş no: <?= (int) $c['ref_id'] ?>">#<?= (int) $c['kaynak_id'] ?></a>
                                 <?php else: ?>
-                                    <span class="cy-muted"><?= $c['ref_id'] !== null ? '#' . (int) $c['ref_id'] : '—' ?></span>
+                                    <span class="cy-muted" title="İş no"><?= $c['ref_id'] !== null ? 'İş #' . (int) $c['ref_id'] : '—' ?></span>
                                 <?php endif; ?>
                             </td>
                             <td><small><?= e(number_format(((int) $c['sure_ms']) / 1000, 1, ',', '.')) ?> sn</small></td>
                             <td><small><?= e($sayi((int) $c['giris_token'] + (int) $c['cikis_token'])) ?></small></td>
                             <td>
-                                <span class="cy-pill <?= $basarili ? 'is-ok' : 'is-danger' ?>">
+                                <span class="cy-pill <?= $basarili ? 'is-ok' : 'is-danger' ?>"<?= !$basarili && ($c['hata_ayrinti'] ?? null) !== null ? ' title="' . e((string) $c['hata_ayrinti']) . '"' : '' ?>>
                                     <?= e($basarili ? 'Başarılı' : $sebepAdi((string) ($c['hata_kodu'] ?? $c['durum']))) ?>
                                 </span>
                             </td>

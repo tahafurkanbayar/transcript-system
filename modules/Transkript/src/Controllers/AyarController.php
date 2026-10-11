@@ -20,14 +20,17 @@ use App\Core\Flash;
 use App\Core\Log\Logger;
 use App\Core\Request;
 use App\Core\Response;
+use App\Core\Setting;
 use App\Http\Controller;
 use Modules\Transkript\Ai\Ai;
+use Modules\Transkript\Ai\EvrenHesap;
 use Modules\Transkript\Ai\EvrenProvider;
 use Modules\Transkript\Ai\YedekliSaglayici;
 use Modules\Transkript\Ayarlar;
 use Modules\Transkript\PanelAyarlari;
 use Modules\Transkript\Repositories\AiKullanimRepository;
 use Modules\Transkript\Services\KuyrukDurumu;
+use PDO;
 
 final class AyarController extends Controller
 {
@@ -108,6 +111,8 @@ final class AyarController extends Controller
                 'ai_anahtar'  => Ai::isConfigured(),
                 // Son EVREN yanıtının bildirdiği kalan günlük token (API'ye gidilmez).
                 'evren_kota'  => EvrenProvider::sonKota(),
+                // Panelden verilen şart onayı (sürüm, tarih); yoksa null.
+                'evren_sart'  => self::sartOnayi(),
                 'yt_anahtar'  => trim(Env::get('YOUTUBE_API_KEY')) !== '',
                 'transcript'  => implode(' → ', (array) Ayarlar::get('transcript.saglayicilar', [])),
                 'istem'       => (string) Ayarlar::get('ai.istem_surumu', 'v1'),
@@ -132,7 +137,126 @@ final class AyarController extends Controller
             ? 'Dinlenmeler sıfırlandı; bütün sağlayıcılar bir sonraki çağrıda yeniden denenecek.'
             : 'Dinlenmeler sıfırlandı. Günlük kotası dolan ' . implode(', ', array_map([Ai::class, 'etiket'], $korunan))
                 . ' açılış saatine kadar dinlenmeye devam ediyor (sıfırlamak için kutuyu işaretleyin).');
-        Response::redirect(url('panel/transkript/ayarlar'));
+        // Düğme Durum sekmesinde: sayfa oraya dönsün (cowork testi 2026-10-11).
+        Response::redirect(url('panel/transkript/ayarlar') . '#durum');
+    }
+
+    /* =================================================================
+     *  EVREN KULLANIM ŞARTLARI
+     * =================================================================
+     *  Şartlar anahtar başınadır ve onaylanmadan her çağrı 403 alır.
+     *  Onay YALNIZ burada, yöneticinin metni okuyup "Okudum, onaylıyorum"
+     *  kutusunu işaretleyip göndermesiyle verilir (kullanıcı kararı,
+     *  2026-10-11). Kod kendiliğinden ya da arka planda onaylamaz.
+     *  Sayfa EVREN'e iki kısa istek atar (durum + metin); yöneticinin
+     *  açıkça istediği tek seferlik bir işlemdir.
+     * ============================================================== */
+
+    /** GET panel/transkript/ayarlar/evren-sartlar — şart durumu ve metni. */
+    public function evrenSartlar(Request $request): void
+    {
+        $hesap = EvrenHesap::ortamdan();
+
+        if ($hesap === null) {
+            Flash::error('.env içinde EVREN_API_KEY tanımlı değil.');
+            Response::redirect(url('panel/transkript/ayarlar') . '#durum');
+        }
+
+        $durumYaniti = $hesap->sartDurumu();
+        $bilgi       = EvrenHesap::sartBilgisi($durumYaniti->json());
+        $metin       = null;
+
+        if ($bilgi['onayli'] === true) {
+            // Başka yerden (EVREN Test Alanı) onaylanmış: kaydı eşitle, EVREN yeniden denensin.
+            self::sartOnayiniYaz($this->db, (int) ($bilgi['guncel_surum'] ?? $bilgi['onaylanan_surum'] ?? 0), false);
+        } elseif ($durumYaniti->basarili()) {
+            $metinYaniti = $hesap->sartMetni();
+            $metin       = $metinYaniti->basarili() ? self::sartMetniOku($metinYaniti->govde, $metinYaniti->json()) : null;
+        }
+
+        $this->view('Transkript::evren-sartlar', [
+            'title'    => 'EVREN kullanım şartları',
+            'subtitle' => 'EVREN LLM API, şartlar onaylanmadan istek kabul etmez. Şartlar anahtar başınadır.',
+            'bilgi'    => $bilgi,
+            'erisim'   => $durumYaniti->basarili(),
+            'hata'     => $durumYaniti->basarili() ? null : $hesap->maskele(mb_strimwidth($durumYaniti->hata !== '' ? $durumYaniti->hata : $durumYaniti->govde, 0, 300, '…')),
+            'metin'    => $metin,
+            'kayit'    => self::sartOnayi(),
+        ]);
+    }
+
+    /** POST panel/transkript/ayarlar/evren-sartlar — yöneticinin onayı. */
+    public function evrenSartOnayla(Request $request): void
+    {
+        $geri  = url('panel/transkript/ayarlar/evren-sartlar');
+        $hesap = EvrenHesap::ortamdan();
+
+        if (Demo::enabled() && Demo::isDemoUser(Auth::user())) {
+            Flash::error('Demo hesabında ayarlar kilitli.');
+            Response::redirect($geri);
+        }
+
+        if ($hesap === null) {
+            Flash::error('.env içinde EVREN_API_KEY tanımlı değil.');
+            Response::redirect(url('panel/transkript/ayarlar') . '#durum');
+        }
+
+        if (!$request->bool('okudum')) {
+            Flash::error('Onaylamak için "Okudum, onaylıyorum" kutusunu işaretleyin.');
+            Response::redirect($geri);
+        }
+
+        // Okunan sürüm hâlâ güncel mi? (Metin sayfa açıkken değiştiyse yeniden okunsun.)
+        $surum = (int) $request->input('surum');
+        $guncel = EvrenHesap::sartBilgisi($hesap->sartDurumu()->json())['guncel_surum'];
+
+        if ($surum < 1 || $guncel === null || $surum !== $guncel) {
+            Flash::error('Şartların sürümü değişmiş ya da okunamadı; metni yeniden okuyup onaylayın.');
+            Response::redirect($geri);
+        }
+
+        $yanit = $hesap->sartlariOnayla($surum);
+
+        if (!$yanit->basarili()) {
+            Logger::warning('EVREN şart onayı reddedildi', ['kullanici' => Auth::id(), 'durum' => $yanit->durum, 'ayrinti' => $hesap->maskele(mb_substr($yanit->govde, 0, 300))], 'transkript');
+            Flash::error('EVREN onayı kabul etmedi (HTTP ' . $yanit->durum . '): ' . $hesap->maskele(mb_strimwidth((string) ($yanit->json()['error']['message'] ?? $yanit->hata ?: $yanit->govde), 0, 200, '…')));
+            Response::redirect($geri);
+        }
+
+        self::sartOnayiniYaz($this->db, $surum, true);
+        Logger::info('EVREN kullanım şartları onaylandı', ['kullanici' => Auth::id(), 'surum' => $surum], 'transkript');
+        Flash::success('EVREN kullanım şartları (v' . $surum . ') onaylandı. EVREN bir sonraki yapay zekâ çağrısında kullanılacak.');
+        Response::redirect(url('panel/transkript/ayarlar') . '#durum');
+    }
+
+    /** Kayıtlı onay: sürüm ve tarih (Durum sekmesi); yoksa null. @return array{surum:int, tarih:string}|null */
+    public static function sartOnayi(): ?array
+    {
+        $kayit = json_decode((string) (Setting::all()[PanelAyarlari::ONEK . 'evren_sart'] ?? ''), true);
+
+        return is_array($kayit) && (int) ($kayit['surum'] ?? 0) > 0
+            ? ['surum' => (int) $kayit['surum'], 'tarih' => (string) ($kayit['tarih'] ?? '')]
+            : null;
+    }
+
+    /** Onayı kaydeder ve EVREN'in dinlenmesini (şartlar yüzünden devre dışı) bitirir. */
+    private static function sartOnayiniYaz(PDO $db, int $surum, bool $yeni): void
+    {
+        $eski = self::sartOnayi();
+
+        if ($yeni || $eski === null || $eski['surum'] !== $surum) {
+            Setting::set($db, PanelAyarlari::ONEK . 'evren_sart', (string) json_encode(['surum' => $surum, 'tarih' => date('Y-m-d H:i:s')]), PanelAyarlari::GRUP, false);
+        }
+
+        YedekliSaglayici::dinlenmeyiBitir('evren');
+    }
+
+    /** Şart metni: JSON gövdede text / content / markdown alanı, yoksa gövdenin kendisi (200 KB'a kadar). */
+    public static function sartMetniOku(string $govde, ?array $json): string
+    {
+        $metin = $json !== null ? ($json['text'] ?? $json['content'] ?? $json['markdown'] ?? $json['body'] ?? null) : null;
+
+        return mb_substr(is_string($metin) ? $metin : $govde, 0, 200000);
     }
 
     /**
@@ -163,7 +287,7 @@ final class AyarController extends Controller
                 'kod'      => $kalan > 0 ? (string) ($kayit['kod'] ?? '') : '',
                 'acilis'   => $kalan > 0 ? YedekliSaglayici::saat($simdi + $kalan, $simdi) : null,
                 'kalan_dk' => $kalan > 0 ? max(1, (int) ceil($kalan / 60)) : 0,
-            ] + ($ozet[$h['ad']] ?? ['son_basari' => null, 'son_hata' => null, 'son_hata_kodu' => null, 'bugun_cagri' => 0, 'bugun_token' => 0]);
+            ] + ($ozet[$h['ad']] ?? []) + ['son_basari' => null, 'son_hata' => null, 'son_hata_kodu' => null, 'son_hata_ayrinti' => null, 'son_model' => null, 'bugun_cagri' => 0, 'bugun_token' => 0];
         }, $zincir);
     }
 

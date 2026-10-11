@@ -19,7 +19,8 @@
  *      parametresiz denenir; JSON metinden ayıklanır (ResultValidator,
  *      ``` çitleri dahil).
  *    · 403 + terms_not_accepted: kullanım şartları onaylanmamış. Kod
- *      ONAYLAMAZ (sözleşme kullanıcının); 1 saat devre dışı.
+ *      kendiliğinden ONAYLAMAZ (sözleşme kullanıcının; yönetici Durum →
+ *      "Şartları oku ve onayla", EvrenHesap); 1 saat devre dışı.
  *    · 401: anahtar geçersiz ("yetkisiz", uzun dinlenme).
  *    · 429: x-evren-daily-remaining-tokens 0 ise (ya da gövdedeki
  *      error.evren kalan kotayı 0 gösteriyorsa) günlük hesap kotası
@@ -131,6 +132,15 @@ final class EvrenProvider extends OpenAiCompatibleProvider
         // Düşünme metni kullanılmaz; rapor yalnız message.content'ten.
         $sonuc['thinking'] = '';
 
+        /* "auto"da geçit modeli kendisi seçer; yanıtın "model" alanı (ya da
+         * x-evren-routed-model) gerçek modeli söyler. Kayıtta ve raporda
+         * "auto → zai/glm-5.3-fp8" görünsün (cowork testi 2026-10-11). */
+        $gercek = trim((string) ($response['model'] ?? $this->basliklar['x-evren-routed-model'] ?? ''));
+
+        if ($this->modelName === 'auto' && $gercek !== '' && $gercek !== 'auto') {
+            $sonuc['model'] = mb_substr('auto → ' . $gercek, 0, 100);
+        }
+
         if ($sonuc['text'] === '' && $sonuc['stop_reason'] === 'max_tokens') {
             throw new AiHatasi(sprintf(
                 'EVREN yanıtı boş: düşünme bütçesi yetmedi (max_tokens %d, model %s). Bütçeyi artırın ya da daha hızlı bir model seçin.',
@@ -191,7 +201,7 @@ final class EvrenProvider extends OpenAiCompatibleProvider
         $kod   = $this->errorCode($status, $raw);
 
         $ipucu = match (true) {
-            $kod === 'sartlar_onaylanmadi' => 'EVREN kullanım şartları onaylanmamış — evren.ssyz.org.tr → Test Alanı\'ndan onaylayın.',
+            $kod === 'sartlar_onaylanmadi' => 'EVREN kullanım şartları bu anahtar için onaylanmamış — Transkript ayarları → Durum → "Şartları oku ve onayla".',
             $status === 401                => 'EVREN API anahtarı geçersiz. .env içindeki EVREN_API_KEY değerini kontrol edin (LLM anahtarı "evren_llm_" ile başlar).',
             $status === 403                => 'EVREN bu anahtara erişim izni vermedi (403). Hesabı ve anahtarı kontrol edin.',
             $kod === 'kota_doldu'          => 'EVREN günlük hesap kotası (15M token) doldu; 03:00\'te (İstanbul) yenilenir.',
