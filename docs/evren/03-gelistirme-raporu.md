@@ -21,7 +21,7 @@ kuyruk işçisi ve çağrı günlüğü (`ai_kullanim_kaydi`).
 | Kısa video medyanı | ≥ %50 hızlı | ölçüm `auto` 128 sn; üretim AI süresi 142 sn | ölçüm 37 sn (**−%71**); üretim 8 analiz 43,5 sn (**−%69**) | ✔ |
 | Analiz başına tek model | evet | 4445'te 4 model (auto, OpenRouter, Groq, görsel qwen3-vl), 4447'de 2 | 8 / 8 tek model | ✔ |
 | OpenRouter / Groq boşa çağrı | −%80 | 02:00–06:00, 17 analiz: OpenRouter 33 / 33, Groq 17 / 39 boşa (50) | 06:00 sonrası 9 analiz: OpenRouter / Groq'a **0 çağrı**, EVREN 20 / 20 | ✔ (−%100) |
-| Kota sapması | ≤ %3 | ölçülemedi (eşzamanlı ölçümler aynı kotayı kullandı) | %2,7 (önbellekten okunan token kotadan düşmüyor) | ✔ |
+| Kota sapması | ≤ %3 | ölçülemedi (eşzamanlı ölçümler aynı kotayı kullandı) | ölçüm %2,7 (`/quota`; önbellekten okunan token kotadan düşmüyor); üretim 23 qwen çağrısı **%0,25** | ✔ |
 | JSON geçerliliği | ≥ %98 | qwen bölüm %67, auto bölüm %86 | varsayılan model %100; `stop` ile biten 77 / 77 | ✔ |
 | Testler | geçer | — | transkript 468, unit 342, yetki 31, smoke 31 | ✔ |
 
@@ -201,7 +201,11 @@ sağlayıcılarda gerileme yok. Canlı: `EVREN_LIVE_TESTS=1 php tests/evren-canl
    yalnız bu sistemin payıdır.
 2. **Önbellek ve kota:** ölçüm, önbellekten okunan girişin kotadan
    düşmediğini gösteriyor (sapma %2,7). Tek ölçüm; ücretli dönemde
-   faturayla karşılaştırın.
+   faturayla karşılaştırın. Önbelleksiz qwen'de günlüğümüz EVREN'le %0,25
+   içinde (23 çağrı); aylık tahmin günlükten hesaplandığı için şişkin
+   değil. Durum'daki "kalan günlük kota" son yanıtın başlığından gelir,
+   o çağrının kendi token'ı henüz düşülmemiştir (bir çağrı geriden gelir;
+   karşılaştırma yöntemi 02, bulgu 8).
 3. **Sunucu yükü:** aynı model farklı saatte 2–3 kat yavaş olabiliyor
    (mimo 42–157 sn, glm ilk token 3–52 sn). İlk token 120 sn ve yedek halka
    (gemma) bunu karşılıyor. Durum → "EVREN model sağlığı" izlenmeli.

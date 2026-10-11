@@ -438,7 +438,7 @@ $sayi     = static fn (int $n): string => number_format($n, 0, ',', '.');
                                 </small>
                             <?php endif; ?>
                             <?php if ($kota !== null): ?>
-                                <small class="d-block cy-muted" title="Son EVREN yanıtının bildirdiği; 03:00'te yenilenir">
+                                <small class="d-block cy-muted" title="Son EVREN yanıtının başlığındaki değer: o çağrının kendi token'ı henüz düşülmemiştir (bir çağrı geriden gelir). 03:00'te yenilenir.">
                                     Kalan günlük kota: <?= e($sayi((int) $kota['kalan'])) ?><?= (int) $kota['limit'] > 0 ? ' / ' . e($sayi((int) $kota['limit'])) : '' ?> token
                                     (<?= e(date('H:i', (int) $kota['zaman'])) ?> itibarıyla)
                                 </small>

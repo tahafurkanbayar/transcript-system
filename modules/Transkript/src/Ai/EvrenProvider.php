@@ -534,6 +534,8 @@ final class EvrenProvider extends OpenAiCompatibleProvider
             'bitis_nedeni'   => (string) ($response['choices'][0]['finish_reason'] ?? ''),
             'dusunme_token'  => isset($usage['completion_tokens_details']['reasoning_tokens']) ? (int) $usage['completion_tokens_details']['reasoning_tokens'] : null,
             'onbellek_token' => isset($usage['prompt_tokens_details']['cached_tokens']) ? (int) $usage['prompt_tokens_details']['cached_tokens'] : null,
+            // Başlıktaki kalan kota bu çağrının kullanımı DÜŞÜLMEDEN önceki değerdir: iki çağrının farkı
+            // öncekinin kullanımıdır (11.10.2026, 23 çağrıda bizim toplamımızla %0,25 fark).
             'kalan_kota'     => is_numeric($this->basliklar['x-evren-daily-remaining-tokens'] ?? null) ? (int) $this->basliklar['x-evren-daily-remaining-tokens'] : null,
             'giris_token'    => (int) ($usage['prompt_tokens'] ?? 0),
             'cikis_token'    => (int) ($usage['completion_tokens'] ?? 0),

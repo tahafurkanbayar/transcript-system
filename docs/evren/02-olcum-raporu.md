@@ -225,7 +225,18 @@ Bulgular:
    çalıştırmada tahmini kullanım yazılmıyordu) ve aynı dakikalarda yapılan
    düşünme keşfi çağrıları açıklıyor. **Önbellekten okunan token kotadan
    düşmüyor görünüyor.** Bu tek ölçüme dayanıyor; 1 Kasım sonrası
-   fiyatlandırmada doğrulanmalı.
+   fiyatlandırmada doğrulanmalı. (Ölçüm aracı kotayı `GET /v1/quota` ile
+   çalıştırmanın başında ve sonunda okur.)
+
+   **Üretimde doğrulama (cowork kabul testi, 11.10):** çağrı günlüğündeki
+   `kalan_kota`, yanıt başlığından (`x-evren-daily-remaining-tokens`) gelir
+   ve **o çağrının kendi kullanımı düşülmeden önceki** değerdir. Bu yüzden
+   bir dizi çağrının kotadan düşeni = ilk çağrının değeri − dizinin
+   **ardından gelen** çağrının değeri. Son çağrının kendi değeriyle
+   karşılaştırınca bir çağrı kayar (cowork bu yüzden %6,4 buldu). Doğru
+   karşılaştırmayla 13:04–13:45 arası 23 qwen3.8-flash-next çağrısında (önbellek
+   0) EVREN 84.183, biz 84.393 token saydık: **fark %0,25**. Tek tek
+   çağrılarda ±%3 oynuyor, toplamda kapanıyor.
 
 ## 5. Öneri tablosu
 
