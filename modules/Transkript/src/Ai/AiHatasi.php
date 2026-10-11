@@ -38,12 +38,16 @@ final class AiHatasi extends RuntimeException
     /** Yeniden denendiğinde geçebilecek hatalar. */
     private const GECICI = ['rate_limit', 'sunucu', 'baglanti', 'zaman_asimi'];
 
+    /** $sebep: istek açık sağlayıcılara sığmadı; büyük bağlamlı biri açılınca sürer (ekranda bu söylenir). */
+    public const SEBEP_BUYUK_GIRDI = 'buyuk_girdi';
+
     public function __construct(
         string $message,
         public readonly string $kod,
         public readonly int $httpDurumu = 0,
         ?Throwable $previous = null,
         public readonly ?int $bekleme = null,
+        public readonly ?string $sebep = null,
     ) {
         parent::__construct($message, $httpDurumu, $previous);
     }

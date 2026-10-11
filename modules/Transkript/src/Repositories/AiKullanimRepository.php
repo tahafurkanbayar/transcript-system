@@ -14,6 +14,7 @@ declare(strict_types=1);
 
 namespace Modules\Transkript\Repositories;
 
+use Modules\Transkript\Ai\Ai;
 use PDO;
 
 final class AiKullanimRepository
@@ -26,16 +27,20 @@ final class AiKullanimRepository
 
     /**
      * @param array{saglayici:string,model:string,giris_token:int,cikis_token:int,maliyet_usd:float,sure_ms:int} $kayit
-     * @param ?string $hataKodu başarısız çağrının kodu (AiHatasi::$kod); günlük ekranı için
+     * @param ?string $hataKodu    başarısız çağrının kodu (AiHatasi::$kod); günlük ekranı için
+     * @param ?string $hataAyrinti sağlayıcının mesajı; anahtarlar maskelenir, 500 karakter (yalnız yönetici görür)
      */
-    public function kaydet(array $kayit, string $refTur, ?int $refId, string $durum = 'basarili', ?string $hataKodu = null): void
+    public function kaydet(array $kayit, string $refTur, ?int $refId, string $durum = 'basarili', ?string $hataKodu = null, ?string $hataAyrinti = null): void
     {
+        $ayrinti = $hataAyrinti !== null ? trim(mb_substr(Ai::maskele(preg_replace('/\s+/u', ' ', $hataAyrinti) ?? ''), 0, 500)) : '';
+
         $this->db->prepare(
             'INSERT INTO ai_kullanim_kaydi
-                (modul, ref_tur, ref_id, saglayici, model, giris_token, cikis_token, maliyet_usd, sure_ms, durum, hata_kodu)
-             VALUES (:modul, :ref_tur, :ref_id, :saglayici, :model, :giris, :cikis, :maliyet, :sure, :durum, :hata_kodu)'
+                (modul, ref_tur, ref_id, saglayici, model, giris_token, cikis_token, maliyet_usd, sure_ms, durum, hata_kodu, hata_ayrinti)
+             VALUES (:modul, :ref_tur, :ref_id, :saglayici, :model, :giris, :cikis, :maliyet, :sure, :durum, :hata_kodu, :hata_ayrinti)'
         )->execute([
             ':hata_kodu' => $hataKodu !== null && $hataKodu !== '' ? mb_substr($hataKodu, 0, 40) : null,
+            ':hata_ayrinti' => $ayrinti !== '' ? $ayrinti : null,
             ':modul'     => self::MODUL,
             ':ref_tur'   => $refTur,
             ':ref_id'    => $refId,
@@ -82,13 +87,15 @@ final class AiKullanimRepository
                 'son_basari'    => $satir['son_basari'] !== null ? (string) $satir['son_basari'] : null,
                 'son_hata'      => $satir['son_hata'] !== null ? (string) $satir['son_hata'] : null,
                 'son_hata_kodu' => null,
+                'son_hata_ayrinti' => null,
+                'son_model'     => null,
                 'bugun_cagri'   => (int) $satir['bugun_cagri'],
                 'bugun_token'   => (int) $satir['bugun_token'],
             ];
         }
 
         $kodlar = $this->db->prepare(
-            "SELECT u.saglayici, u.hata_kodu, u.durum
+            "SELECT u.saglayici, u.hata_kodu, u.hata_ayrinti, u.durum
                FROM ai_kullanim_kaydi u
                JOIN (SELECT saglayici, MAX(id) AS id FROM ai_kullanim_kaydi
                       WHERE modul = :modul AND durum <> 'basarili' GROUP BY saglayici) s ON s.id = u.id"
@@ -97,7 +104,23 @@ final class AiKullanimRepository
 
         foreach ($kodlar->fetchAll(PDO::FETCH_ASSOC) as $satir) {
             if (isset($ozet[(string) $satir['saglayici']])) {
-                $ozet[(string) $satir['saglayici']]['son_hata_kodu'] = (string) ($satir['hata_kodu'] ?? $satir['durum']);
+                $ozet[(string) $satir['saglayici']]['son_hata_kodu']    = (string) ($satir['hata_kodu'] ?? $satir['durum']);
+                $ozet[(string) $satir['saglayici']]['son_hata_ayrinti'] = $satir['hata_ayrinti'] !== null ? (string) $satir['hata_ayrinti'] : null;
+            }
+        }
+
+        // Son başarılı çağrının modeli ("auto → zai/glm-5.3-fp8": gerçekte hangi model yanıtladı).
+        $modeller = $this->db->prepare(
+            "SELECT u.saglayici, u.model
+               FROM ai_kullanim_kaydi u
+               JOIN (SELECT saglayici, MAX(id) AS id FROM ai_kullanim_kaydi
+                      WHERE modul = :modul AND durum = 'basarili' GROUP BY saglayici) s ON s.id = u.id"
+        );
+        $modeller->execute([':modul' => self::MODUL]);
+
+        foreach ($modeller->fetchAll(PDO::FETCH_ASSOC) as $satir) {
+            if (isset($ozet[(string) $satir['saglayici']])) {
+                $ozet[(string) $satir['saglayici']]['son_model'] = (string) $satir['model'];
             }
         }
 
@@ -114,7 +137,7 @@ final class AiKullanimRepository
     {
         $statement = $this->db->prepare(
             "SELECT u.id, u.created_at, u.saglayici, u.model, u.ref_tur, u.ref_id, u.giris_token, u.cikis_token,
-                    u.sure_ms, u.durum, u.hata_kodu, a.kaynak_id
+                    u.sure_ms, u.durum, u.hata_kodu, u.hata_ayrinti, a.kaynak_id
                FROM ai_kullanim_kaydi u
                LEFT JOIN transkript_analizler a ON u.ref_tur = 'analiz' AND a.id = u.ref_id
               WHERE u.modul = :modul

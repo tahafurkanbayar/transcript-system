@@ -199,6 +199,10 @@ a.tk-zaman.is-oynuyor { background: var(--cy-brand); color: #fff; }
 .tk-zincir .cy-pill { margin-left: .25rem; }
 /* Ayarlar: model alanının sıra rozeti ("Asıl sağlayıcı · 1. sırada"); dar ekranda alta kayar */
 .tk-ayar-rozet { display: inline-block; margin-left: .35rem; font-size: .6875rem; vertical-align: .1em; }
+/* EVREN kullanım şartları: uzun metin kendi kutusunda kayar; telefonda tam genişlik */
+.tk-sart-metni { max-height: 60vh; overflow: auto; padding: .9rem 1rem; border: 1px solid var(--cy-border); border-radius: var(--cy-radius, .5rem);
+    background: var(--cy-surface-soft); white-space: pre-wrap; overflow-wrap: anywhere; font-size: .875rem; line-height: 1.55; }
+.tk-sart-durum { display: block; margin-top: .3rem; }
 /* Durum: zincirdeki her sağlayıcının anahtarı (yalnız tanımlı mı) */
 .tk-anahtarlar { list-style: none; margin: 0; padding: 0; }
 .tk-anahtarlar li { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem; margin-bottom: .3rem; }

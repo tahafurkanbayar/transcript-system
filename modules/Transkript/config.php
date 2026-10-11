@@ -150,6 +150,29 @@ return [
 
         'istem_surumu' => 'v3',
 
+        /* Sağlayıcı başına en büyük istek, yaklaşık GİRİŞ token'ı (Ai\GirisSiniri).
+         * Bundan büyük istek o sağlayıcıya gönderilmez (sıradakine geçilir,
+         * sağlayıcı dinlenmez). 0 = bilinmiyor / sınır yok. .env'de
+         * <AD>_MAX_INPUT_TOKENS (ör. GROQ_MAX_INPUT_TOKENS=12000) bunu ezer.
+         * Sağlayıcı 413 / bağlam aşımı verirse o boyut 7 gün sınır olur. */
+        'giris_siniri' => [
+            'evren'      => 200000,   // modeller 256K–1M bağlam; en küçüğe göre pay bırakıldı
+            'gemini'     => 900000,   // 1M bağlam
+            'openrouter' => 100000,   // ücretsiz modellerin çoğu 128K
+            'groq'       => 7000,     // ücretsiz katman: dakikada 8000 token (TPM), istek başına da geçerli
+            'mistral'    => 100000,
+            'cerebras'   => 7000,     // ücretsiz katman bağlamı 8K
+            'claude'     => 180000,
+        ],
+
+        /* Kademeli birleştirme (Jobs\AnalizBirlestir): birleştirme girdisi açık
+         * sağlayıcıların sınırını aşınca bölümler en çok grup_en_cok'luk
+         * gruplarda ara özete çevrilir, sonra ara özetler birleştirilir. */
+        'kademeli' => [
+            'grup_en_cok' => 4,
+            'seviye_en_cok' => 4,
+        ],
+
         /* Sağlayıcı başına model (Ai::varsayilanModel), ör. 'evren' =>
          * 'deepseek-v4.1-flash'. Boşsa .env <AD>_MODEL, o da yoksa
          * sağlayıcının varsayılanı. Panelden: Transkript ayarları → Yapay

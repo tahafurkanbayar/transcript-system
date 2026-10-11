@@ -34,7 +34,7 @@ final class AnalizRepository
     private const CALISIYOR = ':calisiyor';
 
     /** ilerle() ile yazılabilecek ek sütunlar. */
-    private const EK_SUTUNLAR = ['metin_id', 'sonuc_json', 'kisa_ozet', 'detayli_ozet', 'prompt_surumu', 'model'];
+    private const EK_SUTUNLAR = ['metin_id', 'sonuc_json', 'kisa_ozet', 'detayli_ozet', 'prompt_surumu', 'model', 'ara_sonuclar'];
 
     public function __construct(private readonly PDO $db)
     {
@@ -101,6 +101,34 @@ final class AnalizRepository
 
         // Bitmiş (iptal edilmiş, hata almış) analiz geç gelen bir işle canlanmasın.
         $this->db->prepare($sql . " WHERE id = :id AND durum NOT IN ('tamamlandi', 'hata')")->execute($parametreler);
+    }
+
+    /**
+     * Kademeli birleştirmenin ara özetleri: "s1:00:00:00-00:26:30" => bölüm
+     * biçimli sonuç (AnalizBirlestir). Yoksa boş.
+     *
+     * @return array<string, array<string,mixed>>
+     */
+    public function araSonuclar(int $id): array
+    {
+        $statement = $this->db->prepare('SELECT ara_sonuclar FROM transkript_analizler WHERE id = :id');
+        $statement->execute([':id' => $id]);
+        $veri = json_decode((string) $statement->fetchColumn(), true);
+
+        return is_array($veri) ? array_filter($veri, 'is_array') : [];
+    }
+
+    /**
+     * Ara özetleri yazar (her grup bitince; iş ertelenirse biten grup AI'a
+     * yeniden gitmez). updated_at da yenilenir: uzun süren kademeli
+     * birleştirmenin aşama kilidi bayat sayılmaz.
+     *
+     * @param array<string, array<string,mixed>> $sonuclar
+     */
+    public function araSonucYaz(int $id, array $sonuclar): void
+    {
+        $this->db->prepare("UPDATE transkript_analizler SET ara_sonuclar = :veri, updated_at = NOW() WHERE id = :id AND durum NOT IN ('tamamlandi', 'hata')")
+            ->execute([':veri' => json_encode($sonuclar, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE), ':id' => $id]);
     }
 
     /** Yalnız ilerleme yüzdesi (parçalar bittikçe). */

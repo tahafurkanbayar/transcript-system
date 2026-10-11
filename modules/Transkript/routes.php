@@ -80,6 +80,13 @@ $router->post('panel/transkript/ayarlar', AyarController::class, 'kaydet',
 $router->post('panel/transkript/ayarlar/dinlenme-sifirla', AyarController::class, 'dinlenmeSifirla',
     ['installed', 'auth', 'csrf', 'can:transkript.admin']);
 
+// EVREN kullanım şartları: metni oku, yönetici onaylasın (onay yalnız bu POST ile).
+$router->get('panel/transkript/ayarlar/evren-sartlar', AyarController::class, 'evrenSartlar',
+    ['installed', 'auth', 'can:transkript.admin']);
+
+$router->post('panel/transkript/ayarlar/evren-sartlar', AyarController::class, 'evrenSartOnayla',
+    ['installed', 'auth', 'csrf', 'can:transkript.admin']);
+
 /* Üyelik planları (Uyelik\Planlar; plan = rol). Üyeliğim herkese,
  * yönetim yalnız yöneticiye. {kaynak_id} rotalarından ÖNCE; ikinci
  * parçası "iptal", "sil" … olan adres kullanılmaz (kaynak rotasıyla

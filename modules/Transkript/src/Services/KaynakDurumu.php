@@ -26,8 +26,10 @@ declare(strict_types=1);
 namespace Modules\Transkript\Services;
 
 use App\Core\Cache\Cache;
+use Modules\Transkript\Ai\AiHatasi;
 use Modules\Transkript\Ai\YedekliSaglayici;
 use Modules\Transkript\HataKodlari;
+use Modules\Transkript\Jobs\AnalizBirlestir;
 use Modules\Transkript\Jobs\TranskriptIsi;
 use Modules\Transkript\Repositories\AnalizRepository;
 use Modules\Transkript\Repositories\KaynakRepository;
@@ -68,6 +70,9 @@ final class KaynakDurumu
         // Yapay zekâ dinleniyor: iş ertelendi, devam saati (TranskriptIsi::erteleyebilir).
         $devam    = $suruyor ? Cache::get(TranskriptIsi::ERTELEME_ONEKI . $analiz['analiz_id']) : null;
         $devam    = is_int($devam) && $devam > time() ? $devam : null;
+        $sebep    = $devam !== null ? (string) Cache::get(TranskriptIsi::ERTELEME_SEBEBI_ONEKI . $analiz['analiz_id'], '') : '';
+        // Uzun video: birleştirme girdisi büyük, ara özetler yazılıyor (AnalizBirlestir).
+        $kademeli = $suruyor && ($analiz['asama'] ?? '') === 'birlestirme' ? Cache::get(AnalizBirlestir::KADEMELI_ONEKI . $analiz['analiz_id']) : null;
 
         return [
             'kaynak_id'     => $kaynakId,
@@ -83,7 +88,11 @@ final class KaynakDurumu
             'asama'         => $analiz['asama'] ?? null,
             'ilerleme'      => $analiz['ilerleme'] ?? 0,
             'parca'         => $analiz['parca'] ?? ['toplam' => 0, 'biten' => 0, 'hatali' => 0],
-            'etiket'        => $devam !== null ? self::ertelemeMetni($devam) : self::etiket($analiz, $ayrinti, $yonetici),
+            'etiket'        => match (true) {
+                $devam !== null      => self::ertelemeMetni($devam, null, $sebep),
+                is_array($kademeli)  => self::kademeliMetni($kademeli),
+                default              => self::etiket($analiz, $ayrinti, $yonetici),
+            },
             'hata'          => $hataKodu !== null
                 ? ['kod' => $hataKodu, 'mesaj' => HataKodlari::gorunenMesaj($analiz['hata_kodu'], $ayrinti, $yonetici)]
                     // Zincirin özeti ("Gemini: günlük kota … · OpenRouter: model yok …") yalnız yöneticiye.
@@ -134,10 +143,24 @@ final class KaynakDurumu
         return $metin;
     }
 
-    /** Ertelenen analizin satırı: "… saat 10:01 civarında kendiliğinden sürecek." */
-    public static function ertelemeMetni(int $devam, ?int $simdi = null): string
+    /**
+     * Ertelenen analizin satırı: "… saat 10:01 civarında kendiliğinden sürecek."
+     * Sebep "büyük girdi"yse (istek açık sağlayıcıların sınırını aşıyor,
+     * yalnız büyük bağlamlı biri alabilir) "meşgul" denmez.
+     */
+    public static function ertelemeMetni(int $devam, ?int $simdi = null, string $sebep = ''): string
     {
-        return 'Yapay zekâ servisleri şu an meşgul; analiz ' . (str_starts_with(YedekliSaglayici::saat($devam, $simdi), 'yarın') ? '' : 'saat ')
-            . YedekliSaglayici::saat($devam, $simdi) . ' civarında kendiliğinden sürecek.';
+        $saat = (str_starts_with(YedekliSaglayici::saat($devam, $simdi), 'yarın') ? '' : 'saat ') . YedekliSaglayici::saat($devam, $simdi);
+
+        return $sebep === AiHatasi::SEBEP_BUYUK_GIRDI
+            ? 'Rapor girdisi şu an açık yapay zekâ servislerinin sınırını aşıyor; büyük bağlamlı servis (EVREN / Gemini) açılınca, ' . $saat . ' civarında kendiliğinden sürecek.'
+            : 'Yapay zekâ servisleri şu an meşgul; analiz ' . $saat . ' civarında kendiliğinden sürecek.';
+    }
+
+    /** @param array{seviye?:int, biten?:int, toplam?:int} $durum */
+    public static function kademeliMetni(array $durum): string
+    {
+        return sprintf('Rapor girdisi uygun servislerin sınırını aşıyor; bölümler gruplar hâlinde birleştiriliyor (%d / %d)',
+            (int) ($durum['biten'] ?? 0), max(1, (int) ($durum['toplam'] ?? 1)));
     }
 }

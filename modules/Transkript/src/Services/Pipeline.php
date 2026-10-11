@@ -32,6 +32,7 @@ namespace Modules\Transkript\Services;
 use Closure;
 use Modules\Transkript\Ai\Ai;
 use Modules\Transkript\Ai\AiHatasi;
+use Modules\Transkript\Ai\GirisSiniri;
 use Modules\Transkript\Ai\Provider;
 use Modules\Transkript\Ai\YedekliSaglayici;
 use Modules\Transkript\Ayarlar;
@@ -176,20 +177,26 @@ final class Pipeline
      */
     public function birlestir(array $parcaSonuclari, int $bitMs, array $baslangiclar, array $baglam): array
     {
+        [$istem, $kullanici] = self::birlestirmeIstemi($parcaSonuclari, $bitMs, $baglam);
+
+        return $this->jsonIste('reduce', $istem, $kullanici, self::BIRLESTIRME_SEMASI,
+            fn (array $veri): array => $this->dogrulayici->birlestirme($veri, $bitMs, $baslangiclar));
+    }
+
+    /**
+     * Birleştirme istemi: sistem + kullanıcı metni.
+     *
+     * @param  list<array<string,mixed>> $parcaSonuclari
+     * @param  array<string,mixed>       $baglam
+     * @return array{0: Istem, 1: string}
+     */
+    public static function birlestirmeIstemi(array $parcaSonuclari, int $bitMs, array $baglam): array
+    {
         $istem = Istem::yukle('birlestirme');
-
-        // Bölüm başına bir JSON satırı. JSON_HEX_TAG "<" ">" işaretlerini
-        // <'ye çevirir: AI çıktısı veri bloğunu kapatamaz.
-        $bolumler = array_map(
-            static fn (array $s): string => (string) json_encode($s, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_INVALID_UTF8_SUBSTITUTE),
-            $parcaSonuclari
-        );
-
         $eksik = array_values(array_filter((array) ($baglam['eksik'] ?? []), 'is_string'));
-
         $kelime = (int) ($baglam['kelime'] ?? 0);
 
-        $kullanici = $istem->kullanici([
+        return [$istem, $istem->kullanici([
             'baslik'       => Istem::veri(self::bilgi($baglam['baslik'] ?? null)),
             'kanal'        => Istem::veri(self::bilgi($baglam['kanal'] ?? null)),
             'sure'         => Zaman::yaz($bitMs),
@@ -197,11 +204,239 @@ final class Pipeline
             'uzunluk'      => self::raporUzunlugu(intdiv($bitMs, 1000), $kelime),
             'bolum_sayisi' => count($parcaSonuclari),
             'eksik'        => $eksik === [] ? 'yok' : implode(', ', $eksik),
-            'bolumler'     => implode("\n", $bolumler),
-        ]);
+            'bolumler'     => self::bolumSatirlari($parcaSonuclari),
+        ])];
+    }
 
-        return $this->jsonIste('reduce', $istem, $kullanici, self::BIRLESTIRME_SEMASI,
-            fn (array $veri): array => $this->dogrulayici->birlestirme($veri, $bitMs, $baslangiclar));
+    /** Birleştirme isteğinin yaklaşık token sayısı (GirisSiniri). @param list<array<string,mixed>> $parcaSonuclari */
+    public static function birlestirmeBoyutu(array $parcaSonuclari, int $bitMs, array $baglam): int
+    {
+        [$istem, $kullanici] = self::birlestirmeIstemi($parcaSonuclari, $bitMs, $baglam);
+
+        return GirisSiniri::tahmin($istem->sistem, [['content' => $kullanici]]);
+    }
+
+    /**
+     * Bölüm başına bir JSON satırı. JSON_HEX_TAG "<" ">" işaretlerini
+     * <'ye çevirir: AI çıktısı veri bloğunu kapatamaz.
+     *
+     * @param list<array<string,mixed>> $sonuclar
+     */
+    private static function bolumSatirlari(array $sonuclar): string
+    {
+        return implode("\n", array_map(
+            static fn (array $s): string => (string) json_encode($s, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_INVALID_UTF8_SUBSTITUTE),
+            $sonuclar
+        ));
+    }
+
+    /* =================================================================
+     *  KADEMELİ BİRLEŞTİRME (uzun video, küçük bağlamlı sağlayıcı)
+     * =================================================================
+     *  Birleştirme girdisi o an açık sağlayıcıların sınırını aşınca
+     *  (AnalizBirlestir) ardışık bölümler gruplara ayrılır; her grup bir
+     *  ARA ÖZETE çevrilir. Ara özet bölüm analiziyle aynı biçimdedir
+     *  (chunk, topic, summary, listeler): son birleştirme onları bölüm gibi
+     *  okur, birleştirme istemi değişmez. İstem: ara_birlestirme.v1.
+     * ============================================================== */
+
+    /**
+     * Birleştirme; girdi o an açık sağlayıcılara sığmıyorsa önce ara özetler.
+     * Bir istek sırasında "büyük girdi" hatası gelirse (sınır o an öğrenildi
+     * ya da büyük bağlamlı sağlayıcı dinlenmeye girdi) kapasite yeniden
+     * ölçülüp yeniden gruplanır; biten ara özetler korunur ($ara / $araKaydet).
+     *
+     * @param  list<array<string,mixed>>          $sonuclar  bölüm sonuçları, zaman sırasıyla
+     * @param  Closure(): ?int                     $kapasite  Pipeline::kapasite (testte sabit)
+     * @param  array<string, array<string,mixed>> $ara       önceki denemelerin ara özetleri
+     * @param  ?Closure(array<string, array<string,mixed>>): void $araKaydet her ara özetten sonra
+     * @param  ?Closure(int, int, int): void      $ilerleme  (seviye, biten grup, toplam grup)
+     * @return array{sonuc: array<string,mixed>, model: string, uyarilar: list<string>, kademeli: bool}
+     *
+     * @throws AiHatasi
+     */
+    public function birlestirKademeli(array $sonuclar, int $bitMs, array $baslangiclar, array $baglam, Closure $kapasite,
+        array $ara = [], ?Closure $araKaydet = null, ?Closure $ilerleme = null): array
+    {
+        for ($deneme = 1; ; $deneme++) {
+            $kap   = $kapasite();
+            $girdi = $sonuclar;
+
+            try {
+                if ($kap !== null && count($girdi) > 1 && self::birlestirmeBoyutu($girdi, $bitMs, $baglam) > $kap) {
+                    $girdi = $this->araOzetler($girdi, $bitMs, $baslangiclar, $baglam, $kap, $ara, $araKaydet, $ilerleme);
+                }
+
+                return $this->birlestir($girdi, $bitMs, $baslangiclar, $baglam) + ['kademeli' => $girdi !== $sonuclar];
+            } catch (AiHatasi $e) {
+                if (!self::buyukGirdi($e) || $deneme >= 4) {
+                    throw $e;
+                }
+            }
+        }
+    }
+
+    /** İstek açık sağlayıcılara büyük mü (413 / bağlam aşımı ya da yalnız büyük bağlamlı biri bekleniyor)? */
+    public static function buyukGirdi(AiHatasi $e): bool
+    {
+        return $e->kod === 'cok_buyuk' || $e->sebep === AiHatasi::SEBEP_BUYUK_GIRDI;
+    }
+
+    /**
+     * Ardışık sonuçları gruplayıp ara özete çevirir; toplam kapasiteye
+     * sığana (ya da daha küçültülemeyene) kadar seviye seviye.
+     *
+     * @param  list<array<string,mixed>>          $girdi
+     * @param  array<string, array<string,mixed>> $ara
+     * @return list<array<string,mixed>>
+     */
+    private function araOzetler(array $girdi, int $bitMs, array $baslangiclar, array $baglam, int $kap, array &$ara, ?Closure $araKaydet, ?Closure $ilerleme): array
+    {
+        $enCok       = max(2, (int) Ayarlar::get('ai.kademeli.grup_en_cok', 4));
+        $seviyeEnCok = max(1, (int) Ayarlar::get('ai.kademeli.seviye_en_cok', 4));
+        $butce       = max(1, $kap - self::araBirlestirmeBoyutu([], $baglam));
+
+        for ($seviye = 1; $seviye <= $seviyeEnCok && count($girdi) > 1 && self::birlestirmeBoyutu($girdi, $bitMs, $baglam) > $kap; $seviye++) {
+            $boyutlar = array_map(static fn (array $s): int => GirisSiniri::metinBoyutu(self::bolumSatirlari([$s])) + 1, $girdi);
+            $gruplar  = self::gruplar($boyutlar, $butce, $enCok);
+
+            // Her grup tek öğe: daha küçültülemez (tek bölüm bile sınırı aşıyor).
+            if (count($gruplar) === count($girdi)) {
+                break;
+            }
+
+            $toplam = count(array_filter($gruplar, static fn (array $g): bool => count($g) > 1));
+            $biten  = 0;
+            $yeni   = [];
+
+            foreach ($gruplar as $grup) {
+                if (count($grup) === 1) {
+                    $yeni[] = $girdi[$grup[0]];
+
+                    continue;
+                }
+
+                $uyeler  = array_map(static fn (int $k): array => $girdi[$k], $grup);
+                $anahtar = 's' . $seviye . ':' . ($uyeler[0]['chunk']['start'] ?? '?') . '-' . ($uyeler[count($uyeler) - 1]['chunk']['end'] ?? '?');
+
+                if (!isset($ara[$anahtar])) {
+                    $ara[$anahtar] = $this->araBirlestir($uyeler, $baslangiclar, $baglam)['sonuc'];
+
+                    if ($araKaydet !== null) {
+                        $araKaydet($ara);
+                    }
+                }
+
+                $yeni[] = $ara[$anahtar];
+
+                if ($ilerleme !== null) {
+                    $ilerleme($seviye, ++$biten, $toplam);
+                }
+            }
+
+            $girdi = $yeni;
+        }
+
+        return $girdi;
+    }
+
+    /**
+     * @param  list<array<string,mixed>> $grup         ardışık bölüm (ya da ara özet) sonuçları
+     * @param  list<int>                 $baslangiclar transcript'in segment başlangıçları
+     * @param  array<string,mixed>       $baglam       baslik, kanal
+     * @return array{sonuc: array<string,mixed>, model: string, uyarilar: list<string>}
+     */
+    public function araBirlestir(array $grup, array $baslangiclar, array $baglam): array
+    {
+        [$istem, $kullanici, $basMs, $bitMs] = self::araBirlestirmeIstemi($grup, $baglam);
+
+        return $this->jsonIste('reduce', $istem, $kullanici, self::PARCA_SEMASI,
+            fn (array $veri): array => $this->dogrulayici->parca($veri, $basMs, $bitMs, $baslangiclar));
+    }
+
+    /**
+     * @param  list<array<string,mixed>> $grup
+     * @param  array<string,mixed>       $baglam
+     * @return array{0: Istem, 1: string, 2: int, 3: int} istem, kullanıcı metni, başlangıç ve bitiş (ms)
+     */
+    public static function araBirlestirmeIstemi(array $grup, array $baglam): array
+    {
+        $istem = Istem::yukle('ara_birlestirme', 'v1');
+        $basMs = $grup === [] ? 0 : (int) (Zaman::oku((string) ($grup[0]['chunk']['start'] ?? '')) ?? 0);
+        $bitMs = $grup === [] ? 0 : (int) (Zaman::oku((string) ($grup[count($grup) - 1]['chunk']['end'] ?? '')) ?? $basMs);
+
+        return [$istem, $istem->kullanici([
+            'baslik'       => Istem::veri(self::bilgi($baglam['baslik'] ?? null)),
+            'kanal'        => Istem::veri(self::bilgi($baglam['kanal'] ?? null)),
+            'baslangic'    => Zaman::yaz($basMs),
+            'bitis'        => Zaman::yaz($bitMs),
+            'bolum_sayisi' => count($grup),
+            'bolumler'     => self::bolumSatirlari($grup),
+        ]), $basMs, $bitMs];
+    }
+
+    /** Ara birleştirme isteğinin yaklaşık token sayısı. @param list<array<string,mixed>> $grup */
+    public static function araBirlestirmeBoyutu(array $grup, array $baglam): int
+    {
+        [$istem, $kullanici] = self::araBirlestirmeIstemi($grup, $baglam);
+
+        return GirisSiniri::tahmin($istem->sistem, [['content' => $kullanici]]);
+    }
+
+    /**
+     * Ardışık öğeleri boyut bütçesine göre gruplar (sıra korunur). Bir grup
+     * en çok $enCok öğe alır ve toplamı $butce'yi aşmaz; tek başına bütçeyi
+     * aşan öğe kendi grubunda kalır (AnalizBirlestir onu olduğu gibi geçirir).
+     *
+     * @param  list<int> $boyutlar öğe başına yaklaşık token
+     * @return list<list<int>>     öğe indisleri
+     */
+    public static function gruplar(array $boyutlar, int $butce, int $enCok = 4): array
+    {
+        $gruplar = [];
+        $grup    = [];
+        $toplam  = 0;
+        $enCok   = max(2, $enCok);
+
+        foreach (array_values($boyutlar) as $i => $boyut) {
+            if ($grup !== [] && ($toplam + $boyut > $butce || count($grup) >= $enCok)) {
+                $gruplar[] = $grup;
+                $grup      = [];
+                $toplam    = 0;
+            }
+
+            $grup[]  = $i;
+            $toplam += $boyut;
+        }
+
+        if ($grup !== []) {
+            $gruplar[] = $grup;
+        }
+
+        return $gruplar;
+    }
+
+    /**
+     * Şu an birleştirme isteği alabilecek sağlayıcıların en büyük sınırı
+     * (yaklaşık giriş token'ı): zincirde anahtarı tanımlı, dinlenmeyen ve
+     * devre dışı olmayanlar. Sınırı bilinmeyen (0) varsa PHP_INT_MAX; hiçbiri
+     * açık değilse null (hepsi dinleniyor: iş zaten ertelenir).
+     */
+    public static function kapasite(?int $simdi = null): ?int
+    {
+        $simdi ??= time();
+        $enBuyuk = null;
+
+        foreach (Ai::zincirDurumu() as $halka) {
+            if (!$halka['tanimli'] || YedekliSaglayici::dinlenmeKalan($halka['ad'], $simdi, $halka['model']) > 0) {
+                continue;
+            }
+
+            $sinir   = GirisSiniri::sinir($halka['ad'], $halka['model']);
+            $enBuyuk = max($enBuyuk ?? 0, $sinir === 0 ? PHP_INT_MAX : $sinir);
+        }
+
+        return $enBuyuk;
     }
 
     /* =================================================================
@@ -285,7 +520,7 @@ final class Pipeline
                 if ($saglayici instanceof YedekliSaglayici) {
                     $this->denemeleriKaydet($saglayici);
                 } else {
-                    $this->kaydet($ad, $saglayici->model(), null, $baslangic, 'hata', $e->kod);
+                    $this->kaydet($ad, $saglayici->model(), null, $baslangic, 'hata', $e->kod, $e->getMessage());
                 }
 
                 throw $e;
@@ -344,12 +579,12 @@ final class Pipeline
                 'cikis_token' => 0,
                 'maliyet_usd' => 0.0,
                 'sure_ms'     => $d['sure_ms'],
-            ], 'analiz', $this->analizId, 'hata', $d['kod']);
+            ], 'analiz', $this->analizId, 'hata', $d['kod'], $d['mesaj']);
         }
     }
 
     /** @param array<string,mixed>|null $yanit */
-    private function kaydet(string $saglayici, string $model, ?array $yanit, int|float $baslangic, string $durum, ?string $hataKodu = null): void
+    private function kaydet(string $saglayici, string $model, ?array $yanit, int|float $baslangic, string $durum, ?string $hataKodu = null, ?string $hataAyrinti = null): void
     {
         $this->kullanim->kaydet([
             'saglayici'   => $saglayici,
@@ -358,7 +593,7 @@ final class Pipeline
             'cikis_token' => (int) ($yanit['usage']['output_tokens'] ?? 0),
             'maliyet_usd' => self::maliyet($yanit, $saglayici),
             'sure_ms'     => (int) ((hrtime(true) - $baslangic) / 1_000_000),
-        ], 'analiz', $this->analizId, $durum, $hataKodu ?? ($durum === 'basarili' ? null : $durum));
+        ], 'analiz', $this->analizId, $durum, $hataKodu ?? ($durum === 'basarili' ? null : $durum), $hataAyrinti);
     }
 
     /**
