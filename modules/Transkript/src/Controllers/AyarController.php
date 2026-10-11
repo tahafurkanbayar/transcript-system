@@ -118,6 +118,7 @@ final class AyarController extends Controller
                 'evren_ucretsiz_son' => EvrenModelleri::ucretsizSon(),
                 'evren_ucretli'      => EvrenModelleri::ucretliMi(),
                 'evren_aylik_tahmin' => $kullanim->evrenTahmini(),
+                'evren_saglik'       => $kullanim->modelSagligi('evren', 7, static fn (string $m): string => EvrenProvider::kisaAd($m)),
                 // Panelden verilen şart onayı (sürüm, tarih); yoksa null.
                 'evren_sart'  => self::sartOnayi(),
                 // 403'ün istediği sürüm (EVREN yeni esaslı sürüm yayımladıysa onaylı sürümden büyük).

@@ -180,6 +180,77 @@ final class AiKullanimRepository
     }
 
     /**
+     * Sağlayıcının modelleri, son $gun günün çağrılarından (Durum → "EVREN
+     * model sağlığı"): çağrı, başarı oranı, ortalama / p95 süre, zaman aşımı,
+     * düşünme bütçesi, ortalama ilk token, token ve önbellek oranı. "auto"
+     * çağrıları yanıt veren modele göre sayılır (yanıt yoksa "auto").
+     *
+     * @param  ?Closure(string): string $kisalt model adını sadeleştirir (EvrenProvider::kisaAd)
+     * @return list<array<string,mixed>> çağrı sayısına göre azalan
+     */
+    public function modelSagligi(string $saglayici, int $gun = 7, ?\Closure $kisalt = null): array
+    {
+        $statement = $this->db->prepare(
+            'SELECT model, durum, hata_kodu, sure_ms, giris_token, cikis_token, onbellek_token, ilk_token_ms
+               FROM ai_kullanim_kaydi
+              WHERE modul = :modul AND saglayici = :saglayici AND created_at >= NOW() - INTERVAL :gun DAY
+              ORDER BY id DESC LIMIT 5000'
+        );
+        $statement->bindValue(':modul', self::MODUL);
+        $statement->bindValue(':saglayici', $saglayici);
+        $statement->bindValue(':gun', max(1, $gun), PDO::PARAM_INT);
+        $statement->execute();
+
+        return self::saglikOzeti($statement->fetchAll(PDO::FETCH_ASSOC), $kisalt);
+    }
+
+    /**
+     * Saf özet (test edilir).
+     *
+     * @param  list<array<string,mixed>>  $satirlar
+     * @param  ?Closure(string): string   $kisalt
+     * @return list<array<string,mixed>>
+     */
+    public static function saglikOzeti(array $satirlar, ?\Closure $kisalt = null): array
+    {
+        $gruplar = [];
+
+        foreach ($satirlar as $r) {
+            $model = (string) $r['model'];
+            $ad    = $kisalt !== null ? $kisalt($model) : $model;
+            $gruplar[$ad !== '' ? $ad : '?'][] = $r;
+        }
+
+        $sonuc = [];
+
+        foreach ($gruplar as $ad => $g) {
+            $sureler = array_map(static fn (array $r): int => (int) $r['sure_ms'], $g);
+            sort($sureler);
+            $basarili = array_values(array_filter($g, static fn (array $r): bool => $r['durum'] === 'basarili'));
+            $ttft     = array_values(array_filter(array_map(static fn (array $r) => $r['ilk_token_ms'] ?? null, $basarili), 'is_numeric'));
+            $giris    = array_sum(array_map(static fn (array $r): int => (int) $r['giris_token'], $basarili));
+            $onbellek = array_sum(array_map(static fn (array $r): int => (int) ($r['onbellek_token'] ?? 0), $basarili));
+
+            $sonuc[] = [
+                'model'        => (string) $ad,
+                'cagri'        => count($g),
+                'basari'       => round(count($basarili) / count($g), 3),
+                'ort_ms'       => (int) (array_sum($sureler) / count($g)),
+                'p95_ms'       => $sureler[(int) floor(0.95 * (count($sureler) - 1))],
+                'zaman_asimi'  => count(array_filter($g, static fn (array $r): bool => $r['hata_kodu'] === 'zaman_asimi')),
+                'butce'        => count(array_filter($g, static fn (array $r): bool => $r['hata_kodu'] === 'dusunme_butcesi')),
+                'ilk_token_ms' => $ttft !== [] ? (int) (array_sum($ttft) / count($ttft)) : null,
+                'token'        => $giris + array_sum(array_map(static fn (array $r): int => (int) $r['cikis_token'], $basarili)),
+                'onbellek'     => $giris > 0 ? round($onbellek / $giris, 3) : null,
+            ];
+        }
+
+        usort($sonuc, static fn (array $a, array $b): int => $b['cagri'] <=> $a['cagri']);
+
+        return $sonuc;
+    }
+
+    /**
      * EVREN'in son 7 günlük token'ı ve 30 güne ölçeklenmiş tahmini
      * (1 Kasım 2026 sonrası maliyet planı için; Durum sekmesi).
      *

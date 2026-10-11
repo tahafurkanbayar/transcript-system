@@ -451,6 +451,44 @@ $sayi     = static fn (int $n): string => number_format($n, 0, ',', '.');
     </div>
 </section>
 
+<?php if (!empty($durum['evren_saglik'])): ?>
+<!-- EVREN MODEL SAĞLIĞI (son 7 gün, çağrı günlüğünden) -->
+<section class="cy-card mt-3" aria-labelledby="tk-saglik-baslik">
+    <header class="cy-card__header">
+        <h3 class="cy-section-title mb-1" id="tk-saglik-baslik"><?= icon('activity', 'cy-icon cy-icon--sm') ?> EVREN model sağlığı (son 7 gün)</h3>
+        <p class="cy-muted small mb-0">Üretimdeki çağrılardan. "auto" çağrıları yanıt veren modele göre sayılır. Ayrıntılı karşılaştırma: <span class="cy-mono">docs/evren/02-olcum-raporu.md</span>.</p>
+    </header>
+    <div class="cy-table-wrap">
+        <table class="table cy-table cy-table--cards w-100 tk-saglik">
+            <thead>
+                <tr>
+                    <th scope="col" data-kart="ana">Model</th>
+                    <th scope="col">Çağrı</th>
+                    <th scope="col">Başarı</th>
+                    <th scope="col">Süre (ort. / p95)</th>
+                    <th scope="col">Zaman aşımı</th>
+                    <th scope="col">İlk token</th>
+                    <th scope="col">Token · önbellek</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php foreach ($durum['evren_saglik'] as $m): ?>
+                    <tr>
+                        <td class="cy-mono"><?= e($m['model']) ?></td>
+                        <td><?= e($sayi((int) $m['cagri'])) ?></td>
+                        <td><span class="cy-pill <?= $m['basari'] >= 0.95 ? 'is-ok' : ($m['basari'] >= 0.8 ? 'is-warn' : 'is-danger') ?>">%<?= (int) round(100 * $m['basari']) ?></span></td>
+                        <td><small><?= e(number_format($m['ort_ms'] / 1000, 1, ',', '.')) ?> / <?= e(number_format($m['p95_ms'] / 1000, 1, ',', '.')) ?> sn</small></td>
+                        <td><?= (int) $m['zaman_asimi'] ?><?= $m['butce'] > 0 ? ' <small class="cy-muted">(+' . (int) $m['butce'] . ' bütçe)</small>' : '' ?></td>
+                        <td><small><?= $m['ilk_token_ms'] !== null ? e(number_format($m['ilk_token_ms'] / 1000, 1, ',', '.')) . ' sn' : '—' ?></small></td>
+                        <td><small><?= e($sayi((int) $m['token'])) ?><?= $m['onbellek'] !== null && $m['onbellek'] > 0 ? ' · %' . (int) round(100 * $m['onbellek']) : '' ?></small></td>
+                    </tr>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
+    </div>
+</section>
+<?php endif; ?>
+
 <!-- ÇAĞRI GÜNLÜĞÜ (son 50) -->
 <section class="cy-card mt-3" aria-labelledby="tk-gunluk-baslik">
     <header class="cy-card__header">

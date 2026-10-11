@@ -686,17 +686,42 @@ zamanlayıcının durum dosyasındaki son çalışma da sayılır. İlerleme JSO
 | Windows / XAMPP, deneme | proje kökündeki `kuyruk-isci.bat`'ı çift tıklayın (her dakika `schedule:run`; pencere kapanınca durur) |
 | Tek seferlik | `php cy queue:work --queue=transkript` (sıradaki işleri bitirip çıkar) |
 
-**Windows'ta oturum açılınca kendiliğinden başlasın.** Proje kökündeki
-`kuyruk-isci-kur.bat`'a bir kez çift tıklayın: işçi Görev Zamanlayıcı'ya
-"oturum açılınca, gizli pencerede, aynı anda tek örnek" olarak kaydedilir ve
-hemen başlar (yönetici izni gerekmez). Kaldırmak: `kuyruk-isci-kur.bat kaldir`.
-PHP yolu farklıysa `CY_PHP` ortam değişkeniyle verin.
+**Windows'ta (XAMPP, Laragon) kendiliğinden başlasın ve ölürse yeniden
+başlasın.** Proje kökündeki `kuyruk-isci-kur.bat`'a bir kez çift tıklayın:
+işçi Görev Zamanlayıcı'ya "oturum açılınca ve 5 dakikada bir, gizli
+pencerede, aynı anda tek örnek" olarak kaydedilir ve hemen başlar (yönetici
+izni gerekmez). İşçi çalışırken 5 dakikalık tetik bir şey yapmaz; pencere
+kapandıysa ya da PHP çöktüyse en geç 5 dakikada yeniden başlar. PowerShell'den
+denetim: `Get-ScheduledTask 'Transkript kuyruk iscisi'`, durdurmak:
+`Stop-ScheduledTask 'Transkript kuyruk iscisi'`, kaldırmak:
+`kuyruk-isci-kur.bat kaldir`. PHP yolu farklıysa (Laragon:
+`C:\laragon\bin\php\php-8.x\php.exe`) `CY_PHP` ortam değişkeniyle verin:
+`setx CY_PHP "C:\laragon\bin\php\php-8.3.0-Win32-vs16-x64\php.exe"`.
+
+**Takılan iş kurtarılır (iş nabzı, 0.10.0).** Çalışan iş, uzun yapay zekâ
+çağrısı sürerken bile 30 sn'de bir nabız atar (`Jobs\IsNabzi`): kuyruk
+satırının `ayrildi_at`'i, analizin aşama kilidi ve parça kilidi tazelenir.
+Süreç ölürse (pencere kapandı, PHP çöktü) nabız durur; 5 dakika sonra
+(`QUEUE_TIMEOUT`) çekirdeğin `Queue::releaseStuck`'ı işi kuyruğa geri
+bırakır ve hem işçi hem tarayıcı onu alabilir. Biten parçalar ve kayıtlı
+birleştirme yeniden AI'a gitmez; iş kaldığı yerden sürer. Durum sekmesi
+işçinin son görülmesini, bekleyen / çalışan / takılı iş sayısını ve
+kopyalanabilir başlatma komutlarını gösterir.
+
+**11.10.2026 olayı (cowork 3. tur):** dört analiz %80–95'te 13 dakika
+bekledi. Sebep: Görev Zamanlayıcı'da işçi kayıtlı değildi; tarayıcıdan
+işleme ise yalnız açık sayfanın ilerleme yoklamasıyla tetikleniyordu ve
+sayfanın kendi analizi bitince / sekme gizlenince duruyordu. İşçi
+başlayınca üç analiz de EVREN'e yeniden gitmeden tamamlandı.
 
 **Komut satırı hiç açmadan: tarayıcı üzerinden.** Transkript ayarları →
 "Kuyruğu tarayıcı üzerinden işle" açıkken (geliştirme ortamında varsayılan
 açık, yayında kapalı; `kuyruk.tarayicidan_isle`) işçi görülmüyor ve iş
-bekliyorsa, açık liste / rapor sayfasının ilerleme yoklaması arka planda
-`POST panel/transkript/kuyruk/tik` atar (CSRF'li, analiz yetkisi olan). Sunucu
+bekliyorsa, açık herhangi bir Transkript sayfası (liste, rapor, ayarlar,
+üyelik) arka planda `POST panel/transkript/kuyruk/tik` atar. Yanıt
+`bekleyen` iş söyledikçe sayfa bir sonrakini hemen atar (TİK DÖNGÜSÜ,
+0.10.0): sayfanın kendi analizi bitse ya da sekme arka plana geçse de kuyruk
+boşalana kadar sürer (CSRF'li, analiz yetkisi olan). Sunucu
 veritabanı kilidiyle (`GET_LOCK`) aynı anda tek işleyici bırakır, kilit
 doluysa hemen 202 döner; kilidi alan TEK bir işi (bir adım ya da bir parça)
 çalıştırır, sekme kapansa da onu bitirir (`ignore_user_abort`). Oturum kilidi
@@ -712,6 +737,36 @@ ortamında (`APP_ENV` yayın değilse) açıktır, yayında yalnız `config.php`
 `kuyruk.panelden_isle = true` ile. Panelden çalışan iş nabız yazmaz; uyarı
 işçi gelene kadar kalır.
 
+### EVREN (`Ai\EvrenProvider`, 0.10.0)
+
+API ayrıntısı: [`docs/EVREN_LLM_API_Rehberi.md`](../../docs/EVREN_LLM_API_Rehberi.md);
+ölçüm ve kararlar: [`docs/evren/`](../../docs/evren/).
+
+- **Akış (SSE)**, varsayılan açık (`EVREN_STREAM`). Üç ayrı süre sınırı:
+  bağlantı 15 sn, **boşta kalma** 60 sn (`EVREN_BOSTA_SN`; `: keep-alive`
+  veri sayılmaz), toplam süre giriş boyutuyla (120 sn + giriş token / 40,
+  en çok 900; `EVREN_TOPLAM_SN`). Akış ayrıştırıcı `Ai\SseAkisi`.
+- **Düşünme** (`EVREN_THINKING` = off | low | default, varsayılan low):
+  `reasoning_effort` destekleyen modellere gider. Düşünme bütçesi yetmezse
+  (boş içerik + `length`) aynı modelde bir kez `max_tokens` ×2.
+- **JSON:** `json_schema` (strict, `EVREN_JSON_SCHEMA`); model reddederse
+  `json_object`, o da olmazsa biçimsiz (öğrenilir).
+- **Model seçimi:** Transkript ayarları → Yapay zekâ: EVREN modeli + bölüm
+  analizi ve rapor birleştirme için ayrı model (boş: EVREN modeli). Liste
+  `GET /v1/models`'ten günde bir (`Ai\EvrenModelleri`, görev
+  `transkript-evren-modeller`); görsel / OCR / ses modelleri ve kalkan
+  `deepseek-v4-flash` listede yok (kayıtlıysa `deepseek-v4.1-flash`'a taşınır).
+- **`auto` sabitlenir:** analizin ilk başarılı yanıtındaki METİN modeli
+  `transkript_analizler.evren_model`'e yazılır; bölümler ve birleştirme o
+  modelle sürer (görsel modele çözülürse sabitlenmez).
+- **EVREN içi yedek:** asıl model zaman aşımı / düşünme bütçesi / 503
+  verince başka sağlayıcıdan önce hızlı bir EVREN modeli bir kez denenir
+  (`EVREN_YEDEK_MODEL`, varsayılan `gemma-4-31b`; "yok" kapatır). 503'te aynı
+  model 2 / 4 / 8 sn arayla 3 kez denenir.
+- **Ölçüm:** `php modules/Transkript/bin/evren-olcum.php --suite=… [--dry-run]`
+  (üretim istemcisiyle; bütçe ve kota korumalı); canlı deneme
+  `EVREN_LIVE_TESTS=1 php tests/evren-canli.php`.
+
 ## Komutlar
 
 ```bash
@@ -721,6 +776,9 @@ php cy schedule:run                  # cron'un her dakika çalıştırdığı ko
 php cy schedule:run --list           # görevler (transkript-kuyrugu dahil)
 php cy queue:work --queue=transkript --max=30   # yalnız bu modülün işleri
 php tests/transkript.php             # modül birim testleri (veritabanı gerekmez)
+php modules/Transkript/bin/evren-teshis.php                  # EVREN: anahtar, şartlar, kota, modeller
+php modules/Transkript/bin/evren-olcum.php --suite=smoke     # EVREN ölçümü (önce --dry-run)
+EVREN_LIVE_TESTS=1 php tests/evren-canli.php                 # EVREN canlı testi (varsayılan kapalı)
 ```
 
 ## Kaldırmak

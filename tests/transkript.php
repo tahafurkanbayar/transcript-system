@@ -3394,6 +3394,16 @@ dogrula('İlerleme etiketi: zincir her halkadan önce bildirir; ekranda "— EVR
     && KaynakDurumu::calisanMetni(['saglayici' => 'evren', 'model' => 'glm-5.3', 'deneme' => 1, 'zaman' => time() - 1000]) === ''
     && KaynakDurumu::calisanMetni(null) === '');
 
+$saglik = AiKullanimRepository::saglikOzeti([
+    ['model' => 'auto → zai/glm-5.3-fp8', 'durum' => 'basarili', 'hata_kodu' => null, 'sure_ms' => 100000, 'giris_token' => 1000, 'cikis_token' => 500, 'onbellek_token' => 500, 'ilk_token_ms' => 2000],
+    ['model' => 'glm-5.3', 'durum' => 'hata', 'hata_kodu' => 'zaman_asimi', 'sure_ms' => 180000, 'giris_token' => 0, 'cikis_token' => 0, 'onbellek_token' => null, 'ilk_token_ms' => null],
+    ['model' => 'gemma-4-31b', 'durum' => 'basarili', 'hata_kodu' => null, 'sure_ms' => 10000, 'giris_token' => 800, 'cikis_token' => 400, 'onbellek_token' => 0, 'ilk_token_ms' => 700],
+], static fn (string $m): string => EvrenProvider::kisaAd($m));
+dogrula('EVREN model sağlığı: "auto → …" yanıt veren modele sayılır; başarı, ort. / p95 süre, zaman aşımı, ilk token, önbellek oranı',
+    $saglik[0]['model'] === 'glm-5.3' && $saglik[0]['cagri'] === 2 && $saglik[0]['basari'] === 0.5 && $saglik[0]['zaman_asimi'] === 1
+    && $saglik[0]['ort_ms'] === 140000 && $saglik[0]['p95_ms'] === 100000 && $saglik[0]['ilk_token_ms'] === 2000 && $saglik[0]['onbellek'] === 0.5
+    && $saglik[1]['model'] === 'gemma-4-31b' && $saglik[1]['basari'] === 1.0 && $saglik[1]['token'] === 1200);
+
 /* Kuyruk nabzı (cowork 3. tur): çalışan iş kuyruk satırını, aşama ve parça kilidini tazeler; ölen iş 5 dk sonra geri döner. */
 $nabizSayac = 0;
 IsNabzi::basla(static function () use (&$nabizSayac): void { $nabizSayac++; });
