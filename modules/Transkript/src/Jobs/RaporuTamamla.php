@@ -23,11 +23,18 @@ use App\Core\Log\Logger;
 use App\Core\Queue\Queue;
 use Modules\Transkript\Ai\AiHatasi;
 use Modules\Transkript\Ayarlar;
+use Modules\Transkript\Services\KuyrukDurumu;
 use Modules\Transkript\Services\Pipeline;
 
 final class RaporuTamamla extends TranskriptIsi
 {
     protected const ASAMA = 'rapor';
+
+    /** Başlamış analizin rapor işi yeni analizlerin bölümlerinden önce (KuyrukDurumu::ONCELIKLI). */
+    public function queue(): string
+    {
+        return KuyrukDurumu::ONCELIKLI;
+    }
 
     protected function calis(array $analiz): void
     {

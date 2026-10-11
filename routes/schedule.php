@@ -33,10 +33,15 @@ use App\Core\Schedule\Schedule;
  *  Ayrı bir "queue:work" işçisi çalıştırmıyorsanız bu satır yeterlidir:
  *  her dakika birkaç iş işlenir. Yoğun sistemlerde bunu kapatıp
  *  kalıcı bir işçi (supervisor) tercih edin.
+ *
+ *  Yalnız çekirdeğin "varsayilan" kuyruğu: kendi kuyruğu olan modül onu
+ *  kendi göreviyle ve kendi sırasıyla işler (Transkript: "transkript-
+ *  kuyrugu", önce öncelikli kuyruk). Burada FIFO alınırsa o öncelik
+ *  bozulurdu. Kalıcı işçi (php cy queue:work) bütün kuyrukları işler.
  * ------------------------------------------------------------------ */
 Schedule::call('kuyruk-isle', static function (): void {
     for ($i = 0; $i < 10; $i++) {
-        if (!Queue::runNext()) {
+        if (!Queue::runNext('varsayilan')) {
             break;
         }
     }

@@ -60,8 +60,10 @@ hata ve yedek yok. 1. turda EVREN yavaştı (23–82 tok/sn; ölçümde 88–95)
 videolarda zaman damgası artık her maddede (sabah 4446'da 4 / 18).
 
 Tek işçi işleri sırayla (FIFO) aldığı için dört analizin raporu aynı anda
-bitti (1. tur: 13:10:34). Başlamış analizin işini öne almak ilk raporu ~2 dk
-erkene çeker (öneri, 2. bölüm P2).
+bitti (1. tur: 13:10:34). **Sonradan yapıldı (0.11.1, kullanıcı onayıyla):**
+başlamış analizin birleştirme / rapor işi öncelikli kuyrukta. Aynı 4 video
+(17:38): raporlar 1:26, 2:00, 2:20, 2:30'da teker teker bitti (önce
+hepsi 3:09'da).
 
 ## 2. Yapılanlar (öncelik sırasıyla)
 
@@ -106,10 +108,11 @@ erkene çeker (öneri, 2. bölüm P2).
 
 - **Yapıldı:** Durum'da "EVREN model sağlığı (son 7 gün)" — model başına
   başarı, ort. / p95 süre, zaman aşımı, ilk token, token, önbellek oranı.
-- **Öneri (yapılmadı, ayrı adım):** kuyrukta başlamış analizin
-  birleştirme / rapor işini yeni bölümlerden önce almak (öncelik sütunu ya
-  da ayrı kuyruk; çekirdek `Queue` değişebilir, önce sorulmalı); bölüm
-  boyutunu büyütmek (02, 3.4); anlamsal arama (`qwen3-embedding-8b` +
+- **Yapıldı (0.11.1):** başlamış analizin birleştirme / rapor işi
+  "transkript_oncelik" kuyruğunda, modülün işçisi önce ona bakar; çekirdek
+  `Queue` değişmedi (yalnız izinli `routes/schedule.php`: "kuyruk-isle"
+  yalnız "varsayilan" kuyruğu).
+- **Öneri (yapılmadı, ayrı adım):** bölüm boyutunu büyütmek (02, 3.4); anlamsal arama (`qwen3-embedding-8b` +
   `qwen3-reranker-8b`), otomatik etiket (`/v1/systemone` `laya`), içerik
   güvenliği (`qwen3-guard-4b`), yüklenen dosya için ASR (`qwen3-asr-1.7b`;
   5b adımı, YouTube'dan ses indirilmez). Ayrıntı:
