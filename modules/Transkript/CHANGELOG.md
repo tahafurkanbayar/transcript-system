@@ -12,9 +12,11 @@ Ayrıntı ve rakamlar: `docs/evren/01-kesif.md`, `02-olcum-raporu.md`,
 `03-gelistirme-raporu.md`; API: `docs/EVREN_LLM_API_Rehberi.md`.
 
 ### EVREN istemcisi
-- Akış (SSE, `Ai\SseAkisi`), bağlantı 15 sn / boşta 60 sn / toplam girişle
-  ölçekli (120 sn + 40 tok/sn, ≤900); `EVREN_STREAM`, `EVREN_BOSTA_SN`,
-  `EVREN_TOPLAM_SN`.
+- Akış (SSE, `Ai\SseAkisi`), bağlantı 15 sn / ilk token'a kadar 120 sn
+  (keep-alive gelirken; hiç bayt yoksa 30 sn) / sonra boşta 60 sn / toplam
+  girişle ölçekli (120 sn + 40 tok/sn, ≤900); `EVREN_STREAM`,
+  `EVREN_ILK_TOKEN_SN`, `EVREN_BOSTA_SN`, `EVREN_TOPLAM_SN`. Ölçüm: glm-5.3
+  yoğunken ilk token'ı 52 sn bekledi.
 - Düşünme `EVREN_THINKING=off|low|default` (low); 400'de parametresiz bir
   kez. Düşünme bütçesi yetmezse aynı modelde `max_tokens` ×2 bir kez.
 - `json_schema` (strict) — `json_object`'te modeller alan adlarını
@@ -41,7 +43,9 @@ Ayrıntı ve rakamlar: `docs/evren/01-kesif.md`, `02-olcum-raporu.md`,
 - Zincir süre sınırı 900 sn (aşılırsa iş 1 dk sonra yeniden).
 - Çağrı günlüğü: kendi başlangıç saati ve süresi (eskiden zincirin), bitiş,
   aşama, istenen → yanıttaki model, akış, bütçe, bitiş nedeni, düşünme /
-  önbellek token'ı, TTFT, HTTP, kalan kota (migration `…140000`).
+  önbellek token'ı, TTFT, HTTP, kalan kota (migration `…140000`). Kesilen
+  çağrının kullanımı tahmin edilir ve "tahmini" işaretlenir (`…150000`,
+  panelde "≈"): EVREN kesilen istekte de kotadan düşer.
 - Ekranda çalışan model: "… — EVREN · glm-5.3, 2. deneme".
 - Şart kapısı: 403'ün istediği sürüm saklanır, Durum "yeni şart sürümü
   onay bekliyor" der (kod onaylamaz).
@@ -50,7 +54,13 @@ Ayrıntı ve rakamlar: `docs/evren/01-kesif.md`, `02-olcum-raporu.md`,
 - Neden: Görev Zamanlayıcı'da işçi kayıtlı değildi; tarayıcıdan işleme
   sayfanın analizi bitince / sekme gizlenince duruyordu.
 - İş nabzı (`Jobs\IsNabzi`): kuyruk satırı, aşama ve parça kilidi 30 sn'de
-  bir; ölen iş 5 dk sonra kuyruğa geri döner, biten parça AI'a gitmez.
+  bir (yalnız ALINMIŞ kilit); nabzı 5 dk kesilen "transkript" işi görev ve
+  tik başında kuyruğa geri döner (`KuyrukDurumu::bayatlariBirak`; .env
+  `QUEUE_TIMEOUT` 900 olsa da), biten parça AI'a gitmez. Sahipsiz parça
+  (işi kuyrukta olmayan, kilidi bayat) bir sonraki parça bitince yeniden
+  kuyruğa girer. Canlı denemede (analiz 4928) bulunan hata: dönen iş, kilidi
+  almadan attığı nabızla bayat kilidi taze gösterip parçayı sahipsiz
+  bırakıyordu.
 - Tik döngüsü bütün Transkript sayfalarında, kuyruk boşalana kadar.
 - `kuyruk-isci-kur.ps1`: 5 dk'da bir tetik → ölen işçi yeniden başlar.
 - Durum: işçi son görülme, bekleyen / çalışan / takılı, kopyalanabilir

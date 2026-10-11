@@ -2419,10 +2419,11 @@ dogrula('EVREN_STREAM=false: eski akışsız istek (tek 180 sn sınırı); EVREN
     && korumali(new EvrenProvider('k', 'glm-5.3'), 'bostaSiniri') === 60 && korumali(new EvrenProvider('k', 'glm-5.3'), 'ilkTokenSiniri') === 120
     && korumali(new OpenAiCompatibleProvider('k', 'm'), 'ilkTokenSiniri') === 0);
 
-dogrula('Düşünme ayarı: low → reasoning_effort "low"; off → mimo "none", ötekiler "low"; default ya da düşünmeyen model (gemma, auto) → yok',
+dogrula('Düşünme ayarı: low → reasoning_effort "low"; off → deepseek chat_template_kwargs.thinking=false, mimo "none", ötekiler "low"; default ya da düşünmeyen model (gemma, auto) → yok',
     EvrenProvider::dusunmeParametreleri('glm-5.3', 'low') === ['reasoning_effort' => 'low']
     && EvrenProvider::dusunmeParametreleri('mimo-v2.6-pro', 'off') === ['reasoning_effort' => 'none']
-    && EvrenProvider::dusunmeParametreleri('deepseek-v4.1-flash', 'off') === ['reasoning_effort' => 'low']
+    && EvrenProvider::dusunmeParametreleri('deepseek-v4.1-flash', 'off') === ['chat_template_kwargs' => ['thinking' => false]]
+    && EvrenProvider::dusunmeParametreleri('glm-5.3', 'off') === ['reasoning_effort' => 'low']
     && EvrenProvider::dusunmeParametreleri('glm-5.3', 'default') === [] && EvrenProvider::dusunmeParametreleri('gemma-4-31b', 'low') === []
     && EvrenProvider::dusunmeParametreleri('auto', 'low') === [] && EvrenProvider::dusunmeAyari() === 'low');
 

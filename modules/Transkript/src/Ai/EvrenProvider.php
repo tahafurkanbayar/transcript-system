@@ -486,10 +486,16 @@ final class EvrenProvider extends OpenAiCompatibleProvider
 
     /**
      * Düşünme parametreleri. default → yok; düşünmeyen model (gemma, auto)
-     * → yok; low → reasoning_effort "low"; off → mimo "none", ötekiler
-     * "low" (en düşük desteklenen; /v1/models "none"u yalnız mimo için bildiriyor).
+     * → yok; low → reasoning_effort "low"; off → deepseek-v4.1-flash
+     * chat_template_kwargs.thinking=false (düşünme tamamen kapanır), mimo
+     * reasoning_effort "none", ötekiler "low".
      *
-     * @return array<string,string>
+     * Keşif (11.10.2026, docs/evren/02): thinking_budget, reasoning.max_tokens,
+     * thinking.budget_tokens sessizce yok sayılıyor. chat_template_kwargs ile
+     * kapatma yalnız deepseek'te güvenli: glm-5.3 düşünmesini İngilizce olarak
+     * yanıta yazdı, qwen3.8-flash-next ve mimo-v2.6-pro yanlış yanıt verdi.
+     *
+     * @return array<string,mixed>
      */
     public static function dusunmeParametreleri(string $model, string $ayar): array
     {
@@ -499,7 +505,11 @@ final class EvrenProvider extends OpenAiCompatibleProvider
             return [];
         }
 
-        return ['reasoning_effort' => $ayar === 'off' && $kisa === 'mimo-v2.6-pro' ? 'none' : 'low'];
+        return match (true) {
+            $ayar === 'off' && in_array($kisa, ['deepseek-v4.1-flash', 'deepseek-v4-flash'], true) => ['chat_template_kwargs' => ['thinking' => false]],
+            $ayar === 'off' && $kisa === 'mimo-v2.6-pro'                                          => ['reasoning_effort' => 'none'],
+            default                                                                              => ['reasoning_effort' => 'low'],
+        };
     }
 
     /**
