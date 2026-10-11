@@ -14,6 +14,21 @@ yazıldı.
 "Ölçüm" = `bin/evren-olcum.php` (`02-olcum-raporu.md`); "üretim" = gerçek
 kuyruk işçisi ve çağrı günlüğü (`ai_kullanim_kaydi`).
 
+Bu rapordaki numaralar **analiz** numarasıdır (`transkript_analizler.id`).
+Panel sayfası **kaynak** (video) numarasıyla açılır ve Durum'daki "Analiz"
+sütunu da kaynak numarasını gösterir:
+
+| Analiz | Kaynak | Video | Panel |
+|---|---|---|---|
+| 4445, 5557, 5561 | 4379 | Satranç tarihi (5:18), `YeB-1F-UKO0` | `panel/transkript/4379` |
+| 4446, 5558, 5562 | 4380 | Çikolata tarihi (4:19), `ibjUpk9Iagk` | `panel/transkript/4380` |
+| 4447, 5559, 5563 | 4381 | 185 milyon nesil (3:42), `0dSNbPEOPA0` | `panel/transkript/4381` |
+| 4448, 5560, 5564 | 4382 | Evrim Ağacı (2:01), `rnByHXewsak` | `panel/transkript/4382` |
+| 4928 | 4383 | JEV: A Beyni mi B Beyni mi? (38:41), işçi durdurma denemesi | `panel/transkript/4383` |
+
+Panel her kaynakta en son analizi gösterir; eski analizler veritabanında
+değişmeden durur.
+
 | Ölçüt | Hedef | Önce | Sonra | |
 |---|---|---|---|---|
 | Zaman aşımı | ≤ %2 | ölçüm %11 (8 / 72) | ölçüm %1,2 (1 / 82, düzeltmeden önce başlamış çalıştırmada); üretim 20 / 20 başarılı | ✔ |
@@ -32,10 +47,10 @@ damgalı madde / bütün madde.
 
 | Video | Sabah, `auto` (4445–4448) | 1. tur (5557–5560) | 2. tur (5561–5564) |
 |---|---|---|---|
-| YeB-1F-UKO0 | 380 sn: EVREN 180 sn zaman aşımı, OpenRouter 429, Groq 187 sn, rapor görsel qwen3-vl; madde 11 / 19 | 91 sn; 23 / 23 | 53 sn; 26 / 26 |
-| ibjUpk9Iagk | 117 sn (mimo); 4 / 18 | 71 sn; 19 / 19 | 34 sn; 19 / 19 |
-| 0dSNbPEOPA0 | 167 sn (qwen3-vl + qwen); 14 / 14 | 119 sn; 24 / 24 | 31 sn; 16 / 16 |
-| rnByHXewsak | 108 sn (qwen); 12 / 12 | 32 sn; 9 / 9 | 23 sn; 8 / 8 |
+| Satranç 5:18 (4379) | 380 sn: EVREN 180 sn zaman aşımı, OpenRouter 429, Groq 187 sn, rapor görsel qwen3-vl; madde 11 / 19 | 91 sn; 23 / 23 | 53 sn; 26 / 26 |
+| Çikolata 4:19 (4380) | 117 sn (mimo); 4 / 18 | 71 sn; 19 / 19 | 34 sn; 19 / 19 |
+| 185 milyon nesil 3:42 (4381) | 167 sn (qwen3-vl + qwen); 14 / 14 | 119 sn; 24 / 24 | 31 sn; 16 / 16 |
+| Evrim Ağacı 2:01 (4382) | 108 sn (qwen); 12 / 12 | 32 sn; 9 / 9 | 23 sn; 8 / 8 |
 | **AI süresi medyanı** | **142 sn** | **81 sn** | **32,5 sn** |
 | Dört analizin bitişi | işçi durdu: 4445 tek başına 365 sn, ötekiler 21 dk | 7 dk 18 sn | 3 dk 9 sn |
 
