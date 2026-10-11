@@ -146,6 +146,22 @@ return [
             'kota_saat_dilimi' => 'America/Los_Angeles',
             // İş en çok bu kadar gün ertelenir; sonra hatayla biter.
             'erteleme_gun'     => 2,
+            /* Bir isteğin bütün zincir denemeleri en çok bu kadar sürer (sn);
+             * aşılırsa kalan halkalar denenmez, iş 1 dk sonra yeniden kuyruğa
+             * girer. 11.10.2026: EVREN 180 + OpenRouter 1 + Groq 187 sn = 6 dk. */
+            'zincir_en_cok_sn' => 900,
+        ],
+
+        /* EVREN (Ai\EvrenProvider). Aşama modeli boşsa Transkript ayarlarındaki
+         * EVREN modeli. yedek_model: asıl EVREN modeli zaman aşımı, düşünme
+         * bütçesi ya da 503 verince BAŞKA sağlayıcıya geçmeden önce bir kez
+         * denenen hızlı EVREN modeli ('' = kapalı); .env EVREN_YEDEK_MODEL ezer.
+         * Ayar "auto" ise analizin ilk yanıtındaki metin modeli o analize
+         * sabitlenir (transkript_analizler.evren_model). */
+        'evren' => [
+            'bolum_modeli' => '',
+            'rapor_modeli' => '',
+            'yedek_model'  => 'gemma-4-31b',
         ],
 
         'istem_surumu' => 'v3',

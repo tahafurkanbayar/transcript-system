@@ -71,6 +71,7 @@ $yaz('4. GET /quota', $hesap->kota());
 
 $modeller = $hesap->modeller();
 printf("5. GET /models → HTTP %d", $modeller->durum);
+$onbellek = Modules\Transkript\Ai\EvrenModelleri::yenile($hesap);
 $liste = $modeller->json()['data'] ?? null;
 echo is_array($liste) ? ' · ' . count($liste) . ' model: ' . implode(', ', array_map(static fn (array $m): string => (string) ($m['id'] ?? '?'), array_filter($liste, 'is_array'))) . "\n" : "\n";
 if (!is_array($liste)) {

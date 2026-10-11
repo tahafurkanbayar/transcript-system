@@ -28,6 +28,7 @@ namespace Modules\Transkript;
 use App\Core\Setting;
 use Modules\Transkript\Ai\Ai;
 use Modules\Transkript\Ai\EvrenProvider;
+use Modules\Transkript\Ai\EvrenModelleri;
 use Modules\Transkript\Ai\GeminiProvider;
 use Modules\Transkript\Services\KuyrukDurumu;
 use PDO;
@@ -57,7 +58,19 @@ final class PanelAyarlari
         'model_evren' => [
             'yol' => ['ai.modeller.evren'], 'tur' => 'secim', 'saglayici' => 'evren',
             'etiket' => 'EVREN modeli',
-            'aciklama' => 'EVREN LLM API (yurt içi H200 kümesi). 1 Kasım 2026\'ya kadar ücretsiz, günlük 15M token. Anahtar .env\'deki EVREN_API_KEY.',
+            'aciklama' => 'EVREN LLM API (yurt içi H200 kümesi). 1 Kasım 2026\'ya kadar ücretsiz, günlük 15M token. "auto" her çağrıda başka model seçer (yavaş / tutarsız olabilir); analizin ilk yanıtındaki metin modeli o analize sabitlenir. Anahtar .env\'deki EVREN_API_KEY.',
+        ],
+        /* Aşama başına EVREN modeli (EVREN geliştirme P0-2). Boş: EVREN modeli.
+         * "saglayici" anahtarı yok: modelAlani('evren') yalnız model_evren'i bulsun. */
+        'model_evren_bolum' => [
+            'yol' => ['ai.evren.bolum_modeli'], 'tur' => 'secim', 'evren_asama' => true,
+            'etiket' => 'EVREN · bölüm analizi modeli',
+            'aciklama' => 'Videonun her bölümünü bu model analiz eder (kısa ve çok sayıda istek: hızlı bir model önerilir). Boş: yukarıdaki EVREN modeli.',
+        ],
+        'model_evren_rapor' => [
+            'yol' => ['ai.evren.rapor_modeli'], 'tur' => 'secim', 'evren_asama' => true,
+            'etiket' => 'EVREN · rapor birleştirme modeli',
+            'aciklama' => 'Bölümleri tek rapora bu model birleştirir (uzun videoda ara özetler de). Boş: yukarıdaki EVREN modeli.',
         ],
         /* Adı eski ("asıl sağlayıcının modeli" iken konmuştu); kayıtlı değer
          * korunsun diye değişmedi. Artık yalnız Gemini'nin modelidir: asıl
@@ -265,10 +278,8 @@ final class PanelAyarlari
     public static function secenekler(string $alan): array
     {
         return match ($alan) {
-            'model_evren'  => ['' => 'Varsayılan (' . Ai::ortamModeli('evren') . ')'] + array_combine(
-                array_keys(EvrenProvider::MODELLER),
-                array_map(static fn (string $id, string $aciklama): string => $id . ' — ' . $aciklama, array_keys(EvrenProvider::MODELLER), EvrenProvider::MODELLER)
-            ),
+            'model_evren'  => ['' => 'Varsayılan (' . Ai::ortamModeli('evren') . ')'] + EvrenModelleri::secenekler(),
+            'model_evren_bolum', 'model_evren_rapor' => ['' => 'EVREN modeliyle aynı (' . Ai::varsayilanModel('evren') . ')'] + EvrenModelleri::secenekler(),
             'ai_model'     => ['' => 'Varsayılan (' . Ai::ortamModeli('gemini') . ')'] + self::geminiModelleri(),
             'altyazi_dili' => [
                 '' => 'Varsayılan (' . (Ayarlar::varsayilan('transcript.tercih_diller') === [] ? 'videonun kendi dili' : 'Türkçe altyazı varsa onu') . ')',

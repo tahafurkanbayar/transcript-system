@@ -57,6 +57,7 @@ use Modules\Transkript\Ai\GeminiProvider;
 use Modules\Transkript\Ai\GirisSiniri;
 use Modules\Transkript\Ai\HttpProvider;
 use Modules\Transkript\Ai\OpenAiCompatibleProvider;
+use Modules\Transkript\Ai\Provider;
 use Modules\Transkript\Ai\DinlenmeDeposu;
 use Modules\Transkript\Ai\SseAkisi;
 use Modules\Transkript\Ai\YedekliSaglayici;
@@ -2337,22 +2338,25 @@ EvrenProvider::dusunmeReddiniUnut();
 $geriAkis = $ortamDegistir(['EVREN_STREAM' => '', 'EVREN_THINKING' => '', 'EVREN_BOSTA_SN' => '', 'EVREN_TOPLAM_SN' => '']);
 $giden = [];
 $y = $evrenSahte([[200, $evrenYaniti('{"cevap":"Ankara"}', 'stop', 'uzun bir düşünce')]], $giden)->sendJson([['role' => 'user', 'content' => 'x']], 'JSON yaz', ['type' => 'object']);
-dogrula('JSON modu: response_format json_object; akış açık (stream + include_usage), düşünme "low"; yalnız content okunur, token sayılır, maliyet 0; akışı yok sayan düz JSON da okunur',
-    ($giden[0]['response_format'] ?? null) === ['type' => 'json_object'] && ($giden[0]['stream'] ?? null) === true
+dogrula('JSON modu: json_schema (strict, additionalProperties false); akış açık (stream + include_usage), düşünme "low"; yalnız content okunur, token sayılır, maliyet 0; akışı yok sayan düz JSON da okunur',
+    ($giden[0]['response_format']['type'] ?? null) === 'json_schema' && ($giden[0]['response_format']['json_schema']['strict'] ?? null) === true
+    && ($giden[0]['response_format']['json_schema']['schema'] ?? null) === ['type' => 'object', 'additionalProperties' => false] && ($giden[0]['stream'] ?? null) === true
     && ($giden[0]['stream_options'] ?? null) === ['include_usage' => true] && ($giden[0]['reasoning_effort'] ?? null) === 'low' && $giden[0]['model'] === 'glm-5.3'
     && $y['text'] === '{"cevap":"Ankara"}' && $y['thinking'] === '' && $y['usage']['input_tokens'] === 120 && $y['usage']['output_tokens'] === 30 && $y['cost'] === 0.0
     && ($y['olcum']['bitis_nedeni'] ?? null) === 'stop' && ($y['olcum']['istenen_model'] ?? null) === 'glm-5.3');
 
 $giden = [];
-$y = $evrenSahte([[400, '{"error":{"message":"reasoning_effort desteklenmiyor"}}'], [400, '{"error":{"message":"response_format desteklenmiyor"}}'],
-    [200, $evrenYaniti("```json\n{\"cevap\":\"Ankara\"}\n```")]], $giden)
+$y = $evrenSahte([[400, '{"error":{"message":"reasoning_effort desteklenmiyor"}}'], [400, '{"error":{"message":"json_schema desteklenmiyor"}}'],
+    [400, '{"error":{"message":"response_format desteklenmiyor"}}'], [200, $evrenYaniti("```json\n{\"cevap\":\"Ankara\"}\n```")]], $giden)
     ->sendJson([['role' => 'user', 'content' => 'x']], 'JSON yaz', ['type' => 'object']);
 $sonrakiGlm = [];
 $evrenSahte([[200, $evrenYaniti('{"a":1}')]], $sonrakiGlm)->sendJson([['role' => 'user', 'content' => 'x']], 'JSON yaz', ['type' => 'object']);
 EvrenProvider::dusunmeReddiniUnut();
-dogrula('400: önce düşünme parametresiz, yine 400 ise response_format\'sız denenir; red süreç boyunca hatırlanır; JSON ``` çitinden ayıklanır',
-    count($giden) === 3 && isset($giden[0]['reasoning_effort'], $giden[0]['response_format']) && !isset($giden[1]['reasoning_effort']) && isset($giden[1]['response_format'])
-    && !isset($giden[2]['response_format']) && !isset($giden[2]['reasoning_effort']) && !isset($sonrakiGlm[0]['reasoning_effort'])
+dogrula('400: sırayla düşünme parametresiz, json_schema yerine json_object, en son response_format\'sız; red süreç boyunca hatırlanır; JSON ``` çitinden ayıklanır',
+    count($giden) === 4 && isset($giden[0]['reasoning_effort']) && ($giden[0]['response_format']['type'] ?? '') === 'json_schema'
+    && !isset($giden[1]['reasoning_effort']) && ($giden[1]['response_format']['type'] ?? '') === 'json_schema'
+    && ($giden[2]['response_format'] ?? null) === ['type' => 'json_object'] && !isset($giden[3]['response_format']) && !isset($giden[3]['reasoning_effort'])
+    && !isset($sonrakiGlm[0]['reasoning_effort']) && ($sonrakiGlm[0]['response_format'] ?? null) === ['type' => 'json_object']
     && ResultValidator::ayikla($y['text']) === ['cevap' => 'Ankara']);
 
 $giden = [];
@@ -2502,11 +2506,15 @@ $dinlenmeyiSil();
 
 /* Yedeğe düşme (kullanıcının 5. test adımı): EVREN 503 / 429 → Gemini yanıtlar. */
 $giden = [];
-$evren503 = $evrenSahte([[503, '{"error":{"message":"meşgul"}}']], $giden);
+$uykular = [];
+HttpProvider::uyuyucu(static function (float $sn) use (&$uykular): void { $uykular[] = $sn; });
+$evren503 = $evrenSahte(array_fill(0, 4, [503, '{"error":{"message":"meşgul"}}']), $giden);
 $gemYedek = new SahteAi([SahteAi::yanit('{"tamam":1}')]);
 $zincir503 = new YedekliSaglayici([['ad' => 'test-a', 'saglayici' => $evren503], ['ad' => 'test-b', 'saglayici' => $gemYedek]]);
 $y503 = $zincir503->sendJson([['role' => 'user', 'content' => 'x']], 's', ['type' => 'object']);
 $evren503Kalan = YedekliSaglayici::dinlenmeKalan('test-a');
+$evren503Istek = count($giden);
+HttpProvider::uyuyucu(null);
 $dinlenmeyiSil();
 $giden = [];
 $evrenKota = $evrenSahte([[429, '{"error":{"message":"kota"}}', ['x-evren-daily-remaining-tokens' => '0']]], $giden);
@@ -2514,8 +2522,9 @@ $zincirKota = new YedekliSaglayici([['ad' => 'test-a', 'saglayici' => $evrenKota
 $yKota = $zincirKota->sendJson([['role' => 'user', 'content' => 'x']], 's', ['type' => 'object']);
 $evrenKotaKayit = YedekliSaglayici::dinlenmeKaydi('test-a');
 $dinlenmeyiSil();
-dogrula('EVREN 503 → sıradaki (Gemini) yanıtlar, EVREN "sunucu" ile ~120 sn dinlenir; 429 günlük kota → Gemini, EVREN 03:00\'e kadar',
+dogrula('EVREN 503 → aynı modelde 3 kez (2 / 4 / 8 sn), sonra sıradaki (Gemini) yanıtlar, EVREN "sunucu" ile ~120 sn dinlenir; 429 günlük kota → Gemini, EVREN 03:00\'e kadar',
     $y503['text'] === '{"tamam":1}' && $zincir503->sonAd() === 'test-b' && ($zincir503->denemeler()[0]['kod'] ?? '') === 'sunucu'
+    && $evren503Istek === 4 && $uykular === [2.0, 4.0, 8.0]
     && $evren503Kalan > 100 && $evren503Kalan <= 120
     && $yKota['text'] === '{"tamam":2}' && ($evrenKotaKayit['kod'] ?? '') === 'kota_doldu'
     && ($evrenKotaKayit['bitis'] ?? 0) - time() > 60 && ($evrenKotaKayit['bitis'] ?? 0) - time() <= 86460);
@@ -2544,18 +2553,35 @@ $evrenDurum = Ai::zincirDurumu();
 $evrenAlanlar = PanelAyarlari::modelAlanlari();
 $ayarYaz(['transkript_model_evren' => 'qwen3.8-flash-next']);
 [$zPanelEvren] = Pipeline::saglayiciUret('map');
+$ayarYaz(['transkript_model_evren' => 'auto', 'transkript_model_evren_bolum' => 'deepseek-v4.1-flash', 'transkript_model_evren_rapor' => 'glm-5.3']);
+[$zBolum] = Pipeline::saglayiciUret('map');
+[$zRapor] = Pipeline::saglayiciUret('reduce');
+$ayarYaz(['transkript_model_evren' => 'auto']);
+[$zSabit] = Pipeline::saglayiciUret('map', 'mimo-v2.6-pro');
+[$zAuto] = Pipeline::saglayiciUret('reduce');
+$ayarYaz(['transkript_model_evren' => 'deepseek-v4-flash']);
+$tasinan = Ai::evrenModeli('map');
 $ayarYaz([]);
+$geriYedek = $ortamDegistir(['EVREN_YEDEK_MODEL' => 'yok']);
+[$zYedeksiz] = Pipeline::saglayiciUret('map');
+$geriYedek();
 $geri();
+$halka = static fn (Provider $z): array => $z instanceof YedekliSaglayici ? (new ReflectionProperty(YedekliSaglayici::class, 'halkalar'))->getValue($z) : [];
 $hE = $zEvren instanceof YedekliSaglayici ? (new ReflectionProperty(YedekliSaglayici::class, 'halkalar'))->getValue($zEvren) : [];
 $hR = $zReduce instanceof YedekliSaglayici ? (new ReflectionProperty(YedekliSaglayici::class, 'halkalar'))->getValue($zReduce) : [];
 $hP = $zPanelEvren instanceof YedekliSaglayici ? (new ReflectionProperty(YedekliSaglayici::class, 'halkalar'))->getValue($zPanelEvren) : [];
 dogrula('Zincir evren,gemini,openrouter,groq: EVREN başta glm-5.3; kayıtlı Gemini modeli yalnız Gemini\'ye; thinkingConfig yalnız Gemini\'ye',
-    $zEvrenAd === 'zincir' && $zEvren->adlar() === ['evren', 'gemini', 'openrouter', 'groq']
+    $zEvrenAd === 'zincir' && $zEvren->adlar() === ['evren', 'evren', 'gemini', 'openrouter', 'groq']
     && $hE[0]['saglayici'] instanceof EvrenProvider && $hE[0]['saglayici']->model() === 'glm-5.3' && $hE[0]['ek'] === []
-    && $hE[1]['saglayici']->model() === 'gemini-2.5-flash-lite' && $hE[1]['ek'] !== []
+    && $hE[1]['saglayici']->model() === 'gemma-4-31b' && $hE[2]['saglayici']->model() === 'gemini-2.5-flash-lite' && $hE[2]['ek'] !== []
     && $evOzellik($hE[0]['saglayici'], 'maxTokens') === 8192 && $evOzellik($hR[0]['saglayici'], 'maxTokens') === 24000
     && $evOzellik($hE[0]['saglayici'], 'timeout') === 180 && $evOzellik($hR[0]['saglayici'], 'timeout') === 240
     && ($hP[0]['saglayici'] ?? null)?->model() === 'qwen3.8-flash-next');
+dogrula('EVREN: aşama modelleri (bölüm / rapor), analize sabitlenen model, hızlı yedek halka (EVREN_YEDEK_MODEL=yok kapatır); kalkan deepseek-v4-flash v4.1\'e taşınır',
+    $halka($zBolum)[0]['saglayici']->model() === 'deepseek-v4.1-flash' && $halka($zRapor)[0]['saglayici']->model() === 'glm-5.3'
+    && $halka($zSabit)[0]['saglayici']->model() === 'mimo-v2.6-pro' && $halka($zAuto)[0]['saglayici']->model() === 'auto'
+    && $halka($zAuto)[1]['saglayici']->model() === 'gemma-4-31b' && $zYedeksiz->adlar() === ['evren', 'gemini', 'openrouter', 'groq']
+    && $tasinan === 'deepseek-v4.1-flash');
 dogrula('Ayarlar: model alanları zincir sırasıyla (EVREN en üstte); Durum\'da anahtarın yalnız adı',
     $evrenAlanlar === ['model_evren', 'ai_model', 'model_openrouter', 'model_groq']
     && array_column($evrenDurum, 'anahtar_adi') === ['EVREN_API_KEY', 'GEMINI_API_KEY', 'OPENROUTER_API_KEY', 'GROQ_API_KEY']
@@ -2846,6 +2872,32 @@ $araZamansiz = SahteAi::yanit((string) json_encode(['topic' => 'Ara', 'summary' 
 $rZ = $plZ->araBirlestir($kaynakBolumler, $zamanBaslangic, $uzunBaglam);
 dogrula('Ara birleştirme: model "at" yazmasa da madde kaynağının zamanını alır (son rapora zamanla gider)',
     ($rZ['sonuc']['important_points'][0]['at'] ?? null) === '00:31:05' && $rZ['sonuc']['chunk'] === ['start' => '00:00:00', 'end' => '00:40:00']);
+
+/* Şema zorlamasız modeller alan adını değiştiriyor (11.10.2026, gemma json_object: "point", "claim", "at" yok). */
+$gemmaHam = json_decode('{"topic":"Yapay Zekanın Tanımı","summary":"Yapay zeka, cihazlara insan benzeri düşünme kazandıran bir teknoloji dalıdır.",'
+    . '"important_points":[{"point":"Yapay zeka düşünme, öğrenme ve problem çözme yetenekleri kazandırır.","importance":"critical"},'
+    . '{"point":"AI sistemleri bilinçli değildir; matematiksel modellerle çalışır.","importance":"important"}],'
+    . '"technical_information":[{"name":"Instagram, Siri, Google Haritalar","category":"uygulama","description":"Yapay zeka kullanılan araçlar."}],'
+    . '"claims":[{"claim":"Yapay zeka sistemleri bilinçli değildir.","speaker_confidence":"stated_as_fact"}],'
+    . '"ideas":[{"idea":"Etik kurallar konmalı.","time":"[00:01:58]"}],"timestamps":[{"at":"00:00:27","label":"Yapay zeka tanımı"}]}', true);
+$bolumBloklari = [
+    new Segment(0, 9000, 'Merhaba bugün yapay zeka nedir onu anlatacağız.'),
+    new Segment(27000, 41000, 'Yapay zeka cihazlara düşünme öğrenme ve problem çözme yetenekleri kazandıran bir teknoloji dalıdır.'),
+    new Segment(72000, 88000, 'Instagram Siri ve Google Haritalar gibi uygulamalar yapay zeka kullanır.'),
+    new Segment(104000, 118000, 'Ancak bu sistemler gerçek anlamda bilinçli değildir; matematiksel modeller ve algoritmalarla çalışırlar.'),
+    new Segment(118000, 140000, 'Etik kurallar konmalı diyorlar.'),
+];
+$bolumBaslangic = array_map(static fn (Segment $b): int => $b->baslangicMs, $bolumBloklari);
+$tolerans = (new ResultValidator())->parca($gemmaHam, 0, 153000, $bolumBaslangic, ZamanYedegi::bloklardan($bolumBloklari, '00:00:00'));
+$toleranssiz = (new ResultValidator())->parca(array_merge($gemmaHam, ['important_points' => [['point' => 'Hiç geçmeyen bir konu: kuantum.']]]), 0, 153000, $bolumBaslangic,
+    ZamanYedegi::bloklardan($bolumBloklari, '00:00:00'));
+dogrula('Doğrulayıcı alternatif anahtarları okur ("point", "claim", "idea", "time"); "[00:01:58]" biçimi okunur; bölümde boş "at" transcript satırından, bulunamazsa bölüm başından',
+    count($tolerans['sonuc']['important_points']) === 2 && count($tolerans['sonuc']['claims']) === 1 && count($tolerans['sonuc']['ideas']) === 1
+    && array_column($tolerans['sonuc']['important_points'], 'at') === ['00:00:27', '00:01:44']
+    && $tolerans['sonuc']['technical_information'][0]['at'] === '00:01:12' && $tolerans['sonuc']['claims'][0]['at'] === '00:01:44'
+    && $tolerans['sonuc']['ideas'][0]['at'] === '00:01:58' && $toleranssiz['sonuc']['important_points'][0]['at'] === '00:00:00'
+    && Zaman::oku('[00:01:25]') === 85000 && Zaman::oku('(01:25)') === 85000 && Zaman::oku(' 00:00:05 ') === 5000
+    && !in_array('important_points: 2 bozuk / zamanı tutmayan madde atıldı.', $tolerans['uyarilar'], true));
 
 /* Raporun bütün modelleri (analiz 4378: bölümler qwen, birleştirme gemma; kutuda yalnız birleştirme görünüyordu). */
 $mo = ModelOzeti::olustur(
@@ -3300,13 +3352,22 @@ dogrula('Tik ucu: kilit doluysa 202, tek iş (runNext bir kez), kilit finally il
 
 $surecKomutu = [];
 foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator(MODUL_YOLU, FilesystemIterator::SKIP_DOTS)) as $dosya) {
-    if ($dosya->getExtension() === 'php' && preg_match('/(?<![\w>$:\\\\])(exec|shell_exec|system|passthru|popen|proc_open)\s*\(/', (string) file_get_contents($dosya->getPathname())) === 1) {
+    $kod = (string) file_get_contents($dosya->getPathname());
+
+    /* bin/ yalnız komut satırı araçlarıdır (ölçüm aracı eşzamanlılık için kendi
+     * alt süreçlerini açar); web'den çalışmadıkları dosyanın başındaki
+     * PHP_SAPI korumasıyla denetlenir. */
+    if (basename(dirname($dosya->getPathname())) === 'bin' && preg_match("/if \\(PHP_SAPI !== 'cli'\\) \\{\\s*http_response_code\\(404\\);\\s*exit;/", $kod) === 1) {
+        continue;
+    }
+
+    if ($dosya->getExtension() === 'php' && preg_match('/(?<![\w>$:\\\\])(exec|shell_exec|system|passthru|popen|proc_open)\s*\(/', $kod) === 1) {
         $surecKomutu[] = basename($dosya->getPathname());
     }
 }
 $kurBat = (string) @file_get_contents(CY_BASE . '/kuyruk-isci-kur.bat');
 $kurPs  = (string) @file_get_contents(CY_BASE . '/kuyruk-isci-kur.ps1');
-dogrula('Modül PHP\'den süreç / işletim sistemi komutu başlatmaz (exec, shell_exec, popen, proc_open, system)', $surecKomutu === [], implode(', ', $surecKomutu));
+dogrula('Modül PHP\'den süreç / işletim sistemi komutu başlatmaz (exec, shell_exec, popen, proc_open, system); bin/ yalnız CLI korumalıysa muaf', $surecKomutu === [], implode(', ', $surecKomutu));
 dogrula('kuyruk-isci-kur.bat: etiket / goto yok, ps1\'i çağırır; görev oturum açılınca, gizli, tek örnek, süre sınırsız',
     $kurBat !== '' && !preg_match('/^\s*(:\w|goto\b)/mi', $kurBat) && str_contains($kurBat, 'kuyruk-isci-kur.ps1') && str_contains($kurBat, '%1')
     && str_contains($kurPs, '-AtLogOn') && str_contains($kurPs, '-MultipleInstances IgnoreNew') && str_contains($kurPs, '-WindowStyle Hidden')

@@ -103,6 +103,23 @@ final class AnalizRepository
         $this->db->prepare($sql . " WHERE id = :id AND durum NOT IN ('tamamlandi', 'hata')")->execute($parametreler);
     }
 
+    /** Analize sabitlenen EVREN modeli (ayar "auto" iken ilk yanıttan); yoksa null. */
+    public function evrenModeli(int $id): ?string
+    {
+        $statement = $this->db->prepare('SELECT evren_model FROM transkript_analizler WHERE id = :id');
+        $statement->execute([':id' => $id]);
+        $model = $statement->fetchColumn();
+
+        return is_string($model) && $model !== '' ? $model : null;
+    }
+
+    /** İlk kez sabitler (yarışta ilk yazan kazanır; sonradan değişmez). */
+    public function evrenModeliniSabitle(int $id, string $model): void
+    {
+        $this->db->prepare('UPDATE transkript_analizler SET evren_model = :model WHERE id = :id AND evren_model IS NULL')
+            ->execute([':model' => mb_substr($model, 0, 100), ':id' => $id]);
+    }
+
     /**
      * Kademeli birleştirmenin ara özetleri: "s1:00:00:00-00:26:30" => bölüm
      * biçimli sonuç (AnalizBirlestir). Yoksa boş.

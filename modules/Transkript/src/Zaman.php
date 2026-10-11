@@ -18,7 +18,8 @@ final class Zaman
     /** "01:02:03", "02:03", "1:02:03.5", "75" (saniye) → milisaniye; okunamazsa null. */
     public static function oku(string $zaman): ?int
     {
-        $zaman = trim($zaman);
+        // Model transcript satırındaki biçimi aynen kopyalayabiliyor: "[00:01:25]", "(01:25)".
+        $zaman = trim($zaman, " \t\n\r[]()");
 
         if (preg_match('/^(?:(\d{1,2}):)?(\d{1,2}):(\d{2})(?:[.,](\d{1,3}))?$/', $zaman, $m)) {
             if ((int) $m[3] >= 60 || ($m[1] !== '' && (int) $m[2] >= 60)) {

@@ -26,18 +26,33 @@ final class AiKullanimRepository
     }
 
     /**
-     * @param array{saglayici:string,model:string,giris_token:int,cikis_token:int,maliyet_usd:float,sure_ms:int} $kayit
-     * @param ?string $hataKodu    başarısız çağrının kodu (AiHatasi::$kod); günlük ekranı için
-     * @param ?string $hataAyrinti sağlayıcının mesajı; anahtarlar maskelenir, 500 karakter (yalnız yönetici görür)
+     * Bir çağrının kaydı. $kayit zorunlu: saglayici, model, giris_token,
+     * cikis_token, maliyet_usd, sure_ms. İsteğe bağlı (EVREN geliştirme,
+     * P1-1): baslangic (unix, kesirli; created_at = çağrının KENDİ
+     * başlangıcı), asama, istenen_model, ve "olcum" dizisi (akis,
+     * max_token, bitis_nedeni, dusunme_token, onbellek_token,
+     * ilk_token_ms, http, kalan_kota). Zamanlar SQL'in saatinden geriye
+     * sayılır (PHP ile MySQL saat dilimi farklı olsa da tutarlı).
+     *
+     * @param array<string,mixed> $kayit
      */
     public function kaydet(array $kayit, string $refTur, ?int $refId, string $durum = 'basarili', ?string $hataKodu = null, ?string $hataAyrinti = null): void
     {
         $ayrinti = $hataAyrinti !== null ? trim(mb_substr(Ai::maskele(preg_replace('/\s+/u', ' ', $hataAyrinti) ?? ''), 0, 500)) : '';
+        $o       = is_array($kayit['olcum'] ?? null) ? $kayit['olcum'] : [];
+        $simdi   = microtime(true);
+        $sure    = max(0, (int) $kayit['sure_ms']);
+        $bas     = is_numeric($kayit['baslangic'] ?? null) ? (float) $kayit['baslangic'] : $simdi - $sure / 1000;
+        $tamsayi = static fn (mixed $v): ?int => is_numeric($v) && (int) $v >= 0 ? (int) $v : null;
+        $metin   = static fn (mixed $v, int $en): ?string => is_string($v) && trim($v) !== '' ? mb_substr(trim($v), 0, $en) : null;
 
         $this->db->prepare(
             'INSERT INTO ai_kullanim_kaydi
-                (modul, ref_tur, ref_id, saglayici, model, giris_token, cikis_token, maliyet_usd, sure_ms, durum, hata_kodu, hata_ayrinti)
-             VALUES (:modul, :ref_tur, :ref_id, :saglayici, :model, :giris, :cikis, :maliyet, :sure, :durum, :hata_kodu, :hata_ayrinti)'
+                (modul, ref_tur, ref_id, saglayici, model, giris_token, cikis_token, maliyet_usd, sure_ms, durum, hata_kodu, hata_ayrinti,
+                 created_at, bitis_at, asama, istenen_model, akis, max_token, bitis_nedeni, dusunme_token, onbellek_token, ilk_token_ms, http_durum, kalan_kota)
+             VALUES (:modul, :ref_tur, :ref_id, :saglayici, :model, :giris, :cikis, :maliyet, :sure, :durum, :hata_kodu, :hata_ayrinti,
+                 NOW() - INTERVAL :bas_once SECOND, NOW() - INTERVAL :bit_once SECOND, :asama, :istenen, :akis, :max_token, :bitis_nedeni,
+                 :dusunme, :onbellek, :ilk_token, :http, :kalan)'
         )->execute([
             ':hata_kodu' => $hataKodu !== null && $hataKodu !== '' ? mb_substr($hataKodu, 0, 40) : null,
             ':hata_ayrinti' => $ayrinti !== '' ? $ayrinti : null,
@@ -49,8 +64,20 @@ final class AiKullanimRepository
             ':giris'     => max(0, (int) $kayit['giris_token']),
             ':cikis'     => max(0, (int) $kayit['cikis_token']),
             ':maliyet'   => max(0.0, (float) $kayit['maliyet_usd']),
-            ':sure'      => max(0, (int) $kayit['sure_ms']),
+            ':sure'      => $sure,
             ':durum'     => $durum,
+            ':bas_once'  => max(0, (int) round($simdi - $bas)),
+            ':bit_once'  => max(0, (int) round($simdi - ($bas + $sure / 1000))),
+            ':asama'     => $metin($kayit['asama'] ?? null, 20),
+            ':istenen'   => $metin($kayit['istenen_model'] ?? $o['istenen_model'] ?? null, 100),
+            ':akis'      => isset($o['akis']) ? (int) (bool) $o['akis'] : null,
+            ':max_token' => $tamsayi($o['max_token'] ?? null),
+            ':bitis_nedeni' => $metin($o['bitis_nedeni'] ?? null, 30),
+            ':dusunme'   => $tamsayi($o['dusunme_token'] ?? null),
+            ':onbellek'  => $tamsayi($o['onbellek_token'] ?? null),
+            ':ilk_token' => $tamsayi($o['ilk_token_ms'] ?? null),
+            ':http'      => $tamsayi($o['http'] ?? null) ?: null,
+            ':kalan'     => $tamsayi($o['kalan_kota'] ?? null),
         ]);
     }
 

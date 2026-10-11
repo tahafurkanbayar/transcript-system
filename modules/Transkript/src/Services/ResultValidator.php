@@ -52,6 +52,22 @@ final class ResultValidator
     private const OZET_EN_COK    = 5000;
     private const DETAYLI_EN_COK = 30000;
 
+    /**
+     * Şema zorlaması olmayan sağlayıcıda (json_object) modeller alan adını
+     * değiştirebiliyor: 11.10.2026'da gemma önemli noktayı {"point": …},
+     * iddiayı {"claim": …} yazdı; doğrulayıcı "text" aradığı için maddeler
+     * "bozuk" sayılıp atıldı. İlk dolu ad kullanılır.
+     */
+    private const METIN_ADLARI = [
+        'important_points'      => ['text', 'point', 'nokta', 'content', 'description', 'title', 'summary', 'metin'],
+        'technical_information' => ['name', 'term', 'title', 'ad', 'isim', 'terim'],
+        'claims'                => ['text', 'claim', 'iddia', 'statement', 'content'],
+        'ideas'                 => ['text', 'idea', 'fikir', 'suggestion', 'content', 'description'],
+        'timestamps'            => ['label', 'title', 'text', 'baslik', 'etiket', 'topic'],
+    ];
+
+    private const ZAMAN_ADLARI = ['at', 'time', 'timestamp', 'zaman', 'start', 'baslangic'];
+
     /** @var list<string> */
     private array $uyarilar = [];
 
@@ -255,54 +271,54 @@ final class ResultValidator
     private function maddeler(array $veri, \Closure $zaman): array
     {
         $noktalar = $this->liste($veri, 'important_points', static function (array $m) use ($zaman): ?array {
-            $metin = self::metin($m['text'] ?? null, self::MADDE_EN_COK);
-            $onem  = strtolower(trim((string) ($m['importance'] ?? '')));
+            $metin = self::metin(self::alan($m, self::METIN_ADLARI['important_points']), self::MADDE_EN_COK);
+            $onem  = strtolower(trim((string) self::alan($m, ['importance', 'onem', 'priority'])));
 
             return $metin === '' ? null : [
                 'text'       => $metin,
-                'at'         => $zaman($m['at'] ?? null, $metin),
+                'at'         => $zaman(self::alan($m, self::ZAMAN_ADLARI), $metin),
                 'importance' => in_array($onem, self::ONEM, true) ? $onem : 'useful',
             ];
         });
 
         $teknik = $this->liste($veri, 'technical_information', static function (array $m) use ($zaman): ?array {
-            $ad       = self::metin($m['name'] ?? null, self::BASLIK_EN_COK);
-            $aciklama = self::metinVeyaNull($m['description'] ?? null, self::MADDE_EN_COK);
+            $ad       = self::metin(self::alan($m, self::METIN_ADLARI['technical_information']), self::BASLIK_EN_COK);
+            $aciklama = self::metinVeyaNull(self::alan($m, ['description', 'aciklama', 'detail', 'details', 'explanation']), self::MADDE_EN_COK);
 
             return $ad === '' ? null : [
                 'name'        => $ad,
-                'category'    => self::metinVeyaNull($m['category'] ?? null, 100),
+                'category'    => self::metinVeyaNull(self::alan($m, ['category', 'kategori', 'type']), 100),
                 'description' => $aciklama,
-                'at'          => $zaman($m['at'] ?? null, $ad . ' ' . $aciklama),
+                'at'          => $zaman(self::alan($m, self::ZAMAN_ADLARI), $ad . ' ' . $aciklama),
             ];
         });
 
         $iddialar = $this->liste($veri, 'claims', static function (array $m) use ($zaman): ?array {
-            $metin = self::metin($m['text'] ?? null, self::MADDE_EN_COK);
+            $metin = self::metin(self::alan($m, self::METIN_ADLARI['claims']), self::MADDE_EN_COK);
             $guven = strtolower(trim((string) ($m['speaker_confidence'] ?? '')));
 
             return $metin === '' ? null : [
                 'text'               => $metin,
-                'at'                 => $zaman($m['at'] ?? null, $metin),
+                'at'                 => $zaman(self::alan($m, self::ZAMAN_ADLARI), $metin),
                 'speaker_confidence' => in_array($guven, self::GUVEN, true) ? $guven : null,
             ];
         });
 
         $fikirler = $this->liste($veri, 'ideas', static function (array $m) use ($zaman): ?array {
-            $metin = self::metin($m['text'] ?? null, self::MADDE_EN_COK);
+            $metin = self::metin(self::alan($m, self::METIN_ADLARI['ideas']), self::MADDE_EN_COK);
 
             return $metin === '' ? null : [
                 'text' => $metin,
-                'type' => self::metinVeyaNull($m['type'] ?? null, 100),
-                'at'   => $zaman($m['at'] ?? null, $metin),
+                'type' => self::metinVeyaNull(self::alan($m, ['type', 'tur', 'category']), 100),
+                'at'   => $zaman(self::alan($m, self::ZAMAN_ADLARI), $metin),
             ];
         });
 
         // Zaman çizelgesi yalnız zamandan ibaret: zamanı tutmayan madde silinir.
         $gorulen = [];
         $zamanlar = $this->liste($veri, 'timestamps', static function (array $m) use ($zaman, &$gorulen): ?array {
-            $etiket = self::metin($m['label'] ?? null, self::BASLIK_EN_COK);
-            $at     = $etiket !== '' ? $zaman($m['at'] ?? null, $etiket) : null;
+            $etiket = self::metin(self::alan($m, self::METIN_ADLARI['timestamps']), self::BASLIK_EN_COK);
+            $at     = $etiket !== '' ? $zaman(self::alan($m, self::ZAMAN_ADLARI), $etiket) : null;
 
             if ($at === null || $etiket === '' || isset($gorulen[$at])) {
                 return null;
@@ -355,6 +371,23 @@ final class ResultValidator
         return $this->tamamlanan > 0
             ? [...$this->uyarilar, sprintf('%d maddenin boş zamanı kaynak bölümden tamamlandı.', $this->tamamlanan)]
             : $this->uyarilar;
+    }
+
+    /**
+     * Maddenin ilk dolu alanı (adlar sırasıyla); hiçbiri yoksa null.
+     *
+     * @param array<string,mixed> $m
+     * @param list<string>        $adlar
+     */
+    private static function alan(array $m, array $adlar): mixed
+    {
+        foreach ($adlar as $ad) {
+            if (isset($m[$ad]) && (!is_string($m[$ad]) || trim($m[$ad]) !== '')) {
+                return $m[$ad];
+            }
+        }
+
+        return null;
     }
 
     /**

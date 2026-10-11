@@ -44,7 +44,9 @@ $sekmeler = [
 ];
 $alanlar = [
     // Zincirdeki her sağlayıcının modeli, sırasıyla (EVREN, Gemini = ai_model, OpenRouter …).
-    'yapay-zeka' => [...PanelAyarlari::modelAlanlari(), 'altyazi_dili', 'en_uzun_dk'],
+    // EVREN'in aşama modelleri EVREN modelinin hemen ardından.
+    'yapay-zeka' => [...array_merge(...array_map(static fn (string $a): array => $a === 'model_evren' ? [$a, 'model_evren_bolum', 'model_evren_rapor'] : [$a],
+        PanelAyarlari::modelAlanlari())), 'altyazi_dili', 'en_uzun_dk'],
     'butce'      => ['gunluk_token_tavani', 'gunluk_maliyet_tavani', 'fiyat_giris', 'fiyat_cikis'],
     'site'       => ['ana_sayfa', 'tarayici_kuyruk'],
 ];

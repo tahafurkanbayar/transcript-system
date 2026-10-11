@@ -47,6 +47,46 @@ final class ZamanYedegi
 
     private int $doldurulan = 0;
 
+    /** Hiçbir eşleşme yoksa döndürülen zaman (bölüm analizinde bölümün başı); null = yok. */
+    private ?string $varsayilan = null;
+
+    /**
+     * Bölüm analizi (map) için: kaynak transcript satırlarıdır. Madde
+     * metni önce tek tek satırlarla, tutmazsa ardışık 3 satırlık
+     * pencerelerle (madde birkaç satırı özetler) eşleştirilir; bulunamazsa
+     * bölümün başlangıcı (cowork 3. tur: "boş gelirse bölüm başlangıcı
+     * yedek olarak kullanılsın").
+     *
+     * @param list<\Modules\Transkript\Transcript\Segment> $bloklar Cleaner::hazirla() çıktısı
+     */
+    public static function bloklardan(array $bloklar, ?string $varsayilan = null): self
+    {
+        $yedek = new self([]);
+        $bloklar = array_values($bloklar);
+
+        foreach ($bloklar as $i => $blok) {
+            $at     = \Modules\Transkript\Zaman::yaz($blok->baslangicMs);
+            $satir  = self::kokler($blok->metin);
+            $pencere = $satir;
+
+            foreach (array_slice($bloklar, $i + 1, 2) as $komsu) {
+                $pencere += self::kokler($komsu->metin);
+            }
+
+            if ($satir !== []) {
+                $yedek->maddeler[] = ['kokler' => $satir, 'at' => $at, 'bolum' => 0];
+            }
+
+            if ($pencere !== []) {
+                $yedek->bolumler[] = ['kokler' => $pencere, 'at' => $at];
+            }
+        }
+
+        $yedek->varsayilan = $varsayilan;
+
+        return $yedek;
+    }
+
     /** @param list<array<string,mixed>> $kaynaklar girdi bölüm (ya da ara özet) sonuçları */
     public function __construct(array $kaynaklar)
     {
@@ -80,10 +120,10 @@ final class ZamanYedegi
         $sorgu = self::kokler($metin);
 
         if ($sorgu === []) {
-            return null;
+            return $this->varsayilan;
         }
 
-        $at = self::enIyi($sorgu, $this->maddeler) ?? self::enIyi($sorgu, $this->bolumler);
+        $at = self::enIyi($sorgu, $this->maddeler) ?? self::enIyi($sorgu, $this->bolumler) ?? $this->varsayilan;
 
         if ($at !== null) {
             $this->doldurulan++;

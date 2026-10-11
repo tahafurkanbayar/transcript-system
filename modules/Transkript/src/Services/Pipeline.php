@@ -32,11 +32,13 @@ namespace Modules\Transkript\Services;
 use Closure;
 use Modules\Transkript\Ai\Ai;
 use Modules\Transkript\Ai\AiHatasi;
+use Modules\Transkript\Ai\EvrenProvider;
 use Modules\Transkript\Ai\GirisSiniri;
 use Modules\Transkript\Ai\Provider;
 use Modules\Transkript\Ai\YedekliSaglayici;
 use Modules\Transkript\Ayarlar;
 use Modules\Transkript\Repositories\AiKullanimRepository;
+use Modules\Transkript\Repositories\AnalizRepository;
 use Modules\Transkript\Transcript\Segment;
 use Modules\Transkript\Zaman;
 
@@ -122,6 +124,8 @@ final class Pipeline
         private readonly int $analizId,
         private readonly ResultValidator $dogrulayici = new ResultValidator(),
         private readonly ?Closure $saglayici = null,
+        /** Analiz başına EVREN modeli sabitleme (ayar "auto"); null → sabitleme yok (testler, ölçüm). */
+        private readonly ?AnalizRepository $analizler = null,
     ) {
     }
 
@@ -161,8 +165,9 @@ final class Pipeline
             'transcript' => Istem::veri(implode("\n", $satirlar)),
         ]);
 
+        // Boş kalan "at": transcript satırlarından, o da yoksa bölümün başı (ZamanYedegi).
         return $this->jsonIste('map', $istem, $kullanici, self::PARCA_SEMASI,
-            fn (array $veri): array => $this->dogrulayici->parca($veri, $basMs, $bitMs, $baslangiclar));
+            fn (array $veri): array => $this->dogrulayici->parca($veri, $basMs, $bitMs, $baslangiclar, ZamanYedegi::bloklardan($bloklar, Zaman::yaz($basMs))));
     }
 
     /* =================================================================
@@ -517,7 +522,9 @@ final class Pipeline
      */
     private function jsonIste(string $asama, Istem $istem, string $kullanici, array $sema, Closure $dogrula): array
     {
-        [$saglayici, $ad] = $this->saglayici !== null ? ($this->saglayici)($asama) : self::saglayiciUret($asama);
+        $sabit = $this->saglayici === null && $this->analizler !== null ? $this->analizler->evrenModeli($this->analizId) : null;
+
+        [$saglayici, $ad] = $this->saglayici !== null ? ($this->saglayici)($asama) : self::saglayiciUret($asama, $sabit);
 
         $ek       = $ad === 'gemini' ? (array) Ayarlar::get('ai.' . $asama . '.gemini_ek', []) : [];
         $mesajlar = [['role' => 'user', 'content' => $kullanici]];
@@ -530,18 +537,25 @@ final class Pipeline
                 $yanit = $saglayici->sendJson($mesajlar, $istem->sistem, $sema, $ek);
             } catch (AiHatasi $e) {
                 if ($saglayici instanceof YedekliSaglayici) {
-                    $this->denemeleriKaydet($saglayici);
+                    $this->denemeleriKaydet($saglayici, $asama);
                 } else {
-                    $this->kaydet($ad, $saglayici->model(), null, $baslangic, 'hata', $e->kod, $e->getMessage());
+                    $this->kaydet($ad, $saglayici->model(), ['olcum' => $e->olcum], $baslangic, 'hata', $e->kod, $e->getMessage(), $asama);
                 }
 
                 throw $e;
             }
 
-            // Zincirde önce düşenler "hata" satırı olur; yanıtı veren adıyla yazılır.
+            // Zincirde önce düşenler "hata" satırı olur; yanıtı veren adıyla, kendi zamanıyla yazılır.
+            $zaman = null;
+
             if ($saglayici instanceof YedekliSaglayici) {
-                $this->denemeleriKaydet($saglayici);
-                $ad = $saglayici->sonAd();
+                $this->denemeleriKaydet($saglayici, $asama);
+                $ad    = $saglayici->sonAd();
+                $zaman = $saglayici->sonDeneme();
+            }
+
+            if ($ad === 'evren') {
+                $this->evrenModeliniSabitle($asama, $sabit, (string) $yanit['model']);
             }
 
             $durum = 'gecersiz';
@@ -566,7 +580,7 @@ final class Pipeline
                 $mesajlar[] = ['role' => 'assistant', 'content' => $yanit['text'] !== '' ? mb_substr($yanit['text'], 0, $enCok) : '(boş yanıt)'];
                 $mesajlar[] = ['role' => 'user', 'content' => self::onarimIstegi($e->sorunlar, $yanit['stop_reason'] === 'max_tokens')];
             } finally {
-                $this->kaydet($ad, (string) $yanit['model'], $yanit, $baslangic, $durum);
+                $this->kaydet($ad, (string) $yanit['model'], $yanit, $baslangic, $durum, null, null, $asama, $zaman);
             }
         }
     }
@@ -580,32 +594,68 @@ final class Pipeline
             . ' açıklama ya da kod bloğu ekleme.';
     }
 
-    /** Yedek zincirinde düşen sağlayıcılar: token yok, süre ve ad var. */
-    private function denemeleriKaydet(YedekliSaglayici $zincir): void
+    /**
+     * Yedek zincirinde düşen sağlayıcılar: her biri KENDİ başlangıç zamanı ve
+     * süresiyle; ölçülebildiyse kısmi kullanım (düşünme bütçesi) ve ölçüm.
+     */
+    private function denemeleriKaydet(YedekliSaglayici $zincir, string $asama = ''): void
     {
         foreach ($zincir->denemeler() as $d) {
+            $o = (array) ($d['olcum'] ?? []);
+
             $this->kullanim->kaydet([
-                'saglayici'   => $d['ad'],
-                'model'       => $d['model'],
-                'giris_token' => 0,
-                'cikis_token' => 0,
-                'maliyet_usd' => 0.0,
-                'sure_ms'     => $d['sure_ms'],
+                'saglayici'     => $d['ad'],
+                'model'         => $d['model'],
+                'giris_token'   => (int) ($o['giris_token'] ?? 0),
+                'cikis_token'   => (int) ($o['cikis_token'] ?? 0),
+                'maliyet_usd'   => 0.0,
+                'sure_ms'       => $d['sure_ms'],
+                'baslangic'     => $d['baslangic'] ?? null,
+                'asama'         => $asama,
+                'istenen_model' => $d['model'],
+                'olcum'         => $o,
             ], 'analiz', $this->analizId, 'hata', $d['kod'], $d['mesaj']);
         }
     }
 
-    /** @param array<string,mixed>|null $yanit */
-    private function kaydet(string $saglayici, string $model, ?array $yanit, int|float $baslangic, string $durum, ?string $hataKodu = null, ?string $hataAyrinti = null): void
+    /**
+     * @param array<string,mixed>|null                $yanit
+     * @param array{baslangic:float, sure_ms:int}|null $zaman zincirdeki başarılı denemenin kendi zamanı
+     */
+    private function kaydet(string $saglayici, string $model, ?array $yanit, int|float $baslangic, string $durum, ?string $hataKodu = null,
+        ?string $hataAyrinti = null, string $asama = '', ?array $zaman = null): void
     {
+        $o = is_array($yanit['olcum'] ?? null) ? $yanit['olcum'] : [];
+
         $this->kullanim->kaydet([
-            'saglayici'   => $saglayici,
-            'model'       => $model,
-            'giris_token' => (int) ($yanit['usage']['input_tokens'] ?? 0),
-            'cikis_token' => (int) ($yanit['usage']['output_tokens'] ?? 0),
-            'maliyet_usd' => self::maliyet($yanit, $saglayici),
-            'sure_ms'     => (int) ((hrtime(true) - $baslangic) / 1_000_000),
+            'saglayici'     => $saglayici,
+            'model'         => $model,
+            'giris_token'   => (int) ($yanit['usage']['input_tokens'] ?? $o['giris_token'] ?? 0),
+            'cikis_token'   => (int) ($yanit['usage']['output_tokens'] ?? $o['cikis_token'] ?? 0),
+            'maliyet_usd'   => self::maliyet($yanit, $saglayici),
+            'sure_ms'       => $zaman['sure_ms'] ?? (int) ((hrtime(true) - $baslangic) / 1_000_000),
+            'baslangic'     => $zaman['baslangic'] ?? null,
+            'asama'         => $asama,
+            'istenen_model' => $o['istenen_model'] ?? null,
+            'olcum'         => $o,
         ], 'analiz', $this->analizId, $durum, $hataKodu ?? ($durum === 'basarili' ? null : $durum), $hataAyrinti);
+    }
+
+    /**
+     * Ayar "auto" ise analizin ilk başarılı EVREN yanıtındaki METİN modeli
+     * analize yazılır; sonraki bölümler ve birleştirme onunla çağrılır
+     * (11.10.2026: bir analizin bölümleri mimo, qwen3-vl, gemma ile yazıldı).
+     * Görsel model (qwen3-vl) ve kalkan model sabitlenmez; bir sonraki
+     * çağrı yeniden "auto" sorar.
+     */
+    private function evrenModeliniSabitle(string $asama, ?string $sabit, string $yanitModeli): void
+    {
+        if ($this->analizler === null || $sabit !== null || $this->analizId <= 0 || Ai::evrenModeli($asama) !== 'auto'
+            || !str_starts_with($yanitModeli, 'auto') || !EvrenProvider::metinModeliMi($yanitModeli)) {
+            return;
+        }
+
+        $this->analizler->evrenModeliniSabitle($this->analizId, EvrenProvider::kisaAd($yanitModeli));
     }
 
     /**
@@ -649,7 +699,7 @@ final class Pipeline
      *
      * @return array{0: Provider, 1: string}
      */
-    public static function saglayiciUret(string $asama): array
+    public static function saglayiciUret(string $asama, ?string $evrenSabit = null): array
     {
         $ayar     = (array) Ayarlar::get('ai.' . $asama, []);
         $zincir   = Ai::zincir();
@@ -667,7 +717,7 @@ final class Pipeline
         $zamanAsim = (int) ($ayar['zaman_asimi'] ?? 120);
 
         if (count($adlar) === 1) {
-            return [Ai::make($birincil, $model, $maxToken, $zamanAsim), $birincil];
+            return [Ai::make($birincil, $birincil === 'evren' ? self::evrenHalkaModeli($asama, $evrenSabit, $model) : $model, $maxToken, $zamanAsim), $birincil];
         }
 
         $halkalar = [];
@@ -677,11 +727,22 @@ final class Pipeline
                 continue;
             }
 
+            $halkaModeli = $ad === 'evren' ? self::evrenHalkaModeli($asama, $evrenSabit, $i === 0 ? $model : '') : ($i === 0 ? $model : '');
+
             $halkalar[] = [
                 'ad'        => $ad,
-                'saglayici' => Ai::make($ad, $i === 0 ? $model : '', $maxToken, $zamanAsim, $i === 0),
+                'saglayici' => Ai::make($ad, $halkaModeli, $maxToken, $zamanAsim, $i === 0),
                 'ek'        => $ad === 'gemini' ? (array) ($ayar['gemini_ek'] ?? []) : [],
             ];
+
+            /* EVREN içi hızlı yedek: asıl model zaman aşımı / düşünme bütçesi /
+             * 503 verince BAŞKA sağlayıcıya geçmeden önce bir kez (bu
+             * dinlenmeler modele bağlıdır, YedekliSaglayici::MODEL_KAPSAMLI). */
+            $yedek = $ad === 'evren' ? Ai::evrenYedekModeli() : '';
+
+            if ($yedek !== '' && EvrenProvider::kisaAd($yedek) !== EvrenProvider::kisaAd($halkaModeli !== '' ? $halkaModeli : Ai::evrenModeli($asama))) {
+                $halkalar[] = ['ad' => 'evren', 'saglayici' => Ai::make('evren', $yedek, $maxToken, $zamanAsim, $i === 0), 'ek' => []];
+            }
         }
 
         return match (count($halkalar)) {
@@ -690,6 +751,20 @@ final class Pipeline
             1       => [$halkalar[0]['saglayici'], $halkalar[0]['ad']],
             default => [new YedekliSaglayici($halkalar), 'zincir'],
         };
+    }
+
+    /**
+     * Zincirdeki EVREN halkasının modeli: analize sabitlenen model, yoksa
+     * config ai.<aşama>.model (EVREN asıl sağlayıcıysa), yoksa aşama modeli
+     * (Transkript ayarları: bölüm / rapor modeli, boşsa EVREN modeli).
+     */
+    private static function evrenHalkaModeli(string $asama, ?string $sabit, string $configModeli): string
+    {
+        if ($sabit !== null && $sabit !== '') {
+            return $sabit;
+        }
+
+        return $configModeli !== '' ? $configModeli : Ai::evrenModeli($asama);
     }
 
     private static function bilgi(mixed $deger): string

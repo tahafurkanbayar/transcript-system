@@ -94,6 +94,15 @@ abstract class HttpProvider implements Provider
     }
 
     /**
+     * Bu HTTP durumunda en çok kaç yeniden deneme. Varsayılan: hepsi aynı
+     * (denemeSiniri). EVREN 503'ü (anlık doluluk) zincirde de 3 kez dener.
+     */
+    protected function durumDenemeSiniri(int $status): int
+    {
+        return $this->denemeSiniri();
+    }
+
+    /**
      * HTTP isteğini cURL yerine verilen işlev yapar: gövdeyi alır,
      * [durum, yanıt gövdesi, başlıklar (küçük harf), cURL hatası, hata no]
      * döndürür. Birim testleri gerçek API'ye gitmeden hata kodlarını ve
@@ -109,6 +118,25 @@ abstract class HttpProvider implements Provider
     public static function nabizKancasi(?Closure $kanca): void
     {
         self::$nabiz = $kanca;
+    }
+
+    /** @var ?Closure(float): void testler gerçekten beklemesin: bekleme süresi (sn) buraya gider */
+    private static ?Closure $uyuyucu = null;
+
+    public static function uyuyucu(?Closure $islev): void
+    {
+        self::$uyuyucu = $islev;
+    }
+
+    protected static function uyu(float $saniye): void
+    {
+        if (self::$uyuyucu !== null) {
+            (self::$uyuyucu)($saniye);
+
+            return;
+        }
+
+        usleep((int) ($saniye * 1_000_000));
     }
 
     /** @return array<string,mixed> son isteğin ölçümleri (bkz. $olcum) */
@@ -325,7 +353,7 @@ abstract class HttpProvider implements Provider
             $bekle     = $this->retryAfter($headers) ?? $this->retryAfterFromBody($raw);
 
             // İki dakikadan uzun bekleme (ör. günlük sınır): istek içinde beklenmez, zincir / kuyruk erteler.
-            if ($retryable && $attempt <= $this->denemeSiniri() && ($bekle === null || $bekle <= 120)) {
+            if ($retryable && $attempt <= $this->durumDenemeSiniri($status) && ($bekle === null || $bekle <= 120)) {
                 /* SUNUCU "NE KADAR BEKLE" DERSE ONA UYULUR.
                  * Retry-After başlığı varken kendi hesabımızı
                  * dayatmak, hız sınırına tekrar çarpmak demektir. */
@@ -503,7 +531,7 @@ abstract class HttpProvider implements Provider
     protected function backoff(int $attempt, ?int $retryAfter): void
     {
         if ($retryAfter !== null) {
-            sleep(min(60, $retryAfter));
+            self::uyu(min(60, $retryAfter));
 
             return;
         }
@@ -511,7 +539,7 @@ abstract class HttpProvider implements Provider
         // 1s, 2s, 4s … + 0-500 ms sapma
         $seconds = min(30, 2 ** ($attempt - 1));
 
-        usleep($seconds * 1000000 + random_int(0, 500000));
+        self::uyu($seconds + random_int(0, 500000) / 1_000_000);
     }
 
     /* =================================================================

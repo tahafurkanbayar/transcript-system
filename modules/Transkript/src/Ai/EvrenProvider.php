@@ -151,8 +151,14 @@ final class EvrenProvider extends OpenAiCompatibleProvider
     /** @var array<string,true> bu süreçte reasoning_effort'u 400'le reddeden modeller */
     private static array $dusunmeReddi = [];
 
+    /** @var array<string,true> bu süreçte json_schema'yı 400'le reddeden modeller (json_object'e düşülür) */
+    private static array $semaReddi = [];
+
     /** dusunme_butcesi sonrası tek yeniden denemenin bütçesi (null: maxTokens). */
     private ?int $butce = null;
+
+    /** @var array{akis?:bool, dusunme?:string, bosta_sn?:int, toplam_sn?:int, sema?:bool} ölçüm aracının .env yerine verdiği ayarlar */
+    private array $ayar = [];
 
     public function __construct(
         string $apiKey,
@@ -193,23 +199,86 @@ final class EvrenProvider extends OpenAiCompatibleProvider
         return $this->butceyleDene(fn (): array => $this->dusunmesizDene(fn (): array => parent::send($messages, $system)));
     }
 
-    /** 400: model reasoning_effort'u reddediyorsa (bu süreçte bir kez öğrenilir) parametresiz yeniden. */
+    /**
+     * 400: model isteğe bağlı bir parametreyi reddediyor olabilir. Sırayla
+     * (bu süreçte bir kez öğrenilir): önce reasoning_effort, sonra
+     * json_schema (json_object'e düşülür). Yine 400 ise hata yukarı gider.
+     */
     private function dusunmesizDene(\Closure $istek): array
     {
-        try {
-            return $istek();
-        } catch (AiHatasi $e) {
-            $kisa = self::kisaAd($this->modelName);
+        for (;;) {
+            try {
+                return $istek();
+            } catch (AiHatasi $e) {
+                $kisa = self::kisaAd($this->modelName);
 
-            if ($e->httpDurumu !== 400 || $e->kod !== 'istek_hatasi' || isset(self::$dusunmeReddi[$kisa])
-                || self::dusunmeParametreleri($this->modelName, self::dusunmeAyari()) === []) {
-                throw $e;
+                if ($e->httpDurumu !== 400 || $e->kod !== 'istek_hatasi') {
+                    throw $e;
+                }
+
+                if (!isset(self::$dusunmeReddi[$kisa]) && self::dusunmeParametreleri($this->modelName, $this->dusunme()) !== []) {
+                    self::$dusunmeReddi[$kisa] = true;
+                } elseif (!isset(self::$semaReddi[$kisa]) && $this->semaKullanilir()) {
+                    self::$semaReddi[$kisa] = true;
+                } else {
+                    throw $e;
+                }
             }
-
-            self::$dusunmeReddi[$kisa] = true;
-
-            return $istek();
         }
+    }
+
+    /**
+     * JSON biçimi: json_schema (strict) — model alanları şemadaki adlarla ve
+     * her maddede "at" ile yazar (11.10.2026: json_object'te gemma
+     * "point" / "claim" yazdı, "at" koymadı; maddeler atıldı). auto
+     * parametre almaz; reddeden model json_object'e düşer.
+     *
+     * @param  array<string,mixed> $payload
+     * @param  array<string,mixed> $sema
+     * @param  array<string,mixed> $ek
+     * @return array<string,mixed>
+     */
+    protected function jsonPayload(array $payload, array $sema, array $ek): array
+    {
+        if (!$this->semaKullanilir() || $sema === []) {
+            return parent::jsonPayload($payload, $sema, $ek);
+        }
+
+        $payload['response_format'] = ['type' => 'json_schema', 'json_schema' => ['name' => 'cikti', 'strict' => true, 'schema' => self::katiSema($sema)]];
+
+        return $payload;
+    }
+
+    /** json_schema gönderilir mi: .env EVREN_JSON_SCHEMA (açık), auto değil, model reddetmedi. */
+    private function semaKullanilir(): bool
+    {
+        $kisa = self::kisaAd($this->modelName);
+
+        return ($this->ayar['sema'] ?? Env::bool('EVREN_JSON_SCHEMA', true)) && $kisa !== 'auto' && !isset(self::$semaReddi[$kisa]);
+    }
+
+    /**
+     * Strict şema: her nesnede additionalProperties false (OpenAI / vLLM
+     * kuralı). Şemalarda bütün özellikler zaten "required".
+     *
+     * @param  array<string,mixed> $sema
+     * @return array<string,mixed>
+     */
+    public static function katiSema(array $sema): array
+    {
+        if (($sema['type'] ?? '') === 'object') {
+            $sema['additionalProperties'] = false;
+
+            foreach ((array) ($sema['properties'] ?? []) as $ad => $alt) {
+                $sema['properties'][$ad] = is_array($alt) ? self::katiSema($alt) : $alt;
+            }
+        }
+
+        if (($sema['type'] ?? '') === 'array' && is_array($sema['items'] ?? null)) {
+            $sema['items'] = self::katiSema($sema['items']);
+        }
+
+        return $sema;
     }
 
     /** Düşünme bütçesi yetmedi: aynı modelde bir kez max_tokens ×2 (bağlamı aşmadan). */
@@ -246,7 +315,7 @@ final class EvrenProvider extends OpenAiCompatibleProvider
         $govde['max_tokens'] = $this->butce ?? $this->maxTokens;
 
         if (!isset(self::$dusunmeReddi[self::kisaAd($this->modelName)])) {
-            $govde += self::dusunmeParametreleri($this->modelName, self::dusunmeAyari());
+            $govde += self::dusunmeParametreleri($this->modelName, $this->dusunme());
         }
 
         if ($this->akis()) {
@@ -257,18 +326,39 @@ final class EvrenProvider extends OpenAiCompatibleProvider
         return $govde;
     }
 
+    /**
+     * Ölçüm kancası (bin/evren-olcum.php): .env'e dokunmadan bu sağlayıcının
+     * akış, düşünme ve süre ayarlarını verir. Üretim kodu çağırmaz.
+     *
+     * @param array{akis?:bool, dusunme?:string, bosta_sn?:int, toplam_sn?:int} $ayar
+     */
+    public function olcumAyari(array $ayar): static
+    {
+        $this->ayar = $ayar;
+
+        return $this;
+    }
+
+    /** Bu sağlayıcının düşünme ayarı: ölçüm kancası, yoksa .env EVREN_THINKING. */
+    public function dusunme(): string
+    {
+        $ayar = (string) ($this->ayar['dusunme'] ?? '');
+
+        return in_array($ayar, self::DUSUNME_AYARLARI, true) ? $ayar : self::dusunmeAyari();
+    }
+
     /* =================================================================
      *  AKIŞ VE SÜRE SINIRLARI (HttpProvider kancaları)
      * ============================================================== */
 
     protected function akis(): bool
     {
-        return Env::bool('EVREN_STREAM', true);
+        return array_key_exists('akis', $this->ayar) ? (bool) $this->ayar['akis'] : Env::bool('EVREN_STREAM', true);
     }
 
     protected function bostaSiniri(): int
     {
-        return max(15, Env::int('EVREN_BOSTA_SN', self::BOSTA_SN));
+        return max(15, (int) ($this->ayar['bosta_sn'] ?? Env::int('EVREN_BOSTA_SN', self::BOSTA_SN)));
     }
 
     /** Akışta: 120 sn + giriş token'ı / 40, en çok 900 (EVREN_TOPLAM_SN ezer); akışsız: eski tek sınır. */
@@ -278,7 +368,7 @@ final class EvrenProvider extends OpenAiCompatibleProvider
             return $this->timeout;
         }
 
-        $ayar = Env::int('EVREN_TOPLAM_SN', 0);
+        $ayar = (int) ($this->ayar['toplam_sn'] ?? Env::int('EVREN_TOPLAM_SN', 0));
 
         return $ayar > 0 ? max(60, $ayar) : self::olcekliSure(GirisSiniri::metinBoyutu($govde), $this->timeout);
     }
@@ -339,10 +429,11 @@ final class EvrenProvider extends OpenAiCompatibleProvider
         return $baglam > 0 ? max(1024, $baglam - self::CIKTI_PAYI) : 0;
     }
 
-    /** Testler ve uzun süren işçi: öğrenilen "reasoning_effort reddi" unutulur. */
+    /** Testler ve uzun süren işçi: öğrenilen "reasoning_effort / json_schema reddi" unutulur. */
     public static function dusunmeReddiniUnut(): void
     {
         self::$dusunmeReddi = [];
+        self::$semaReddi    = [];
     }
 
     /** .env EVREN_THINKING: off | low | default (geçersizse low). */
@@ -444,6 +535,27 @@ final class EvrenProvider extends OpenAiCompatibleProvider
             $status === 429 && $this->gunlukKotaBitti($raw)   => 'kota_doldu',
             default                                           => parent::errorCode($status, $raw),
         };
+    }
+
+    /**
+     * 503 (anlık sunucu doluluğu, EVREN rehberi): zincirde arkasında başka
+     * sağlayıcı olsa da aynı modelde 3 kez, 2 / 4 / 8 sn arayla (backoff).
+     */
+    protected function durumDenemeSiniri(int $status): int
+    {
+        return $status === 503 ? max(3, parent::durumDenemeSiniri($status)) : parent::durumDenemeSiniri($status);
+    }
+
+    /** Sunucu süre söylemediyse 2, 4, 8 sn (EVREN rehberi); söylediyse ona uyulur. */
+    protected function backoff(int $attempt, ?int $retryAfter): void
+    {
+        if ($retryAfter !== null) {
+            parent::backoff($attempt, $retryAfter);
+
+            return;
+        }
+
+        self::uyu(min(8, 2 ** max(1, $attempt)));
     }
 
     /** Günlük kota dolduysa aynı istekte yeniden denemek boşuna. */

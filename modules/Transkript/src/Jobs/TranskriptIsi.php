@@ -363,7 +363,7 @@ abstract class TranskriptIsi extends Job
 
     protected function pipeline(): Pipeline
     {
-        return new Pipeline($this->aiKullanim(), $this->analizId);
+        return new Pipeline($this->aiKullanim(), $this->analizId, analizler: $this->analizler());
     }
 
     /**
