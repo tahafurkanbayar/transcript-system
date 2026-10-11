@@ -3449,7 +3449,10 @@ dogrula('Nabız yalnız ALINMIŞ kilidi tazeler (bayat kilit devralınabilir); s
 
 $jsKuyruk = (string) file_get_contents(MODUL_YOLU . '/assets/js/transkript.js');
 preg_match('#public function kuyrukTik\(.*?\n    }\n#s', (string) file_get_contents(MODUL_YOLU . '/src/Controllers/KaynakController.php'), $tikGovde2);
+// Ortamdan bağımsız: tik adresi yalnız tarayıcıdan işleme açıkken basılır (CI'da APP_ENV=production → varsayılan kapalı).
+Ayarlar::set('kuyruk.tarayicidan_isle', true);
 $altMenu = App\Core\View::capture('Transkript::_parcalar/alt-menu', ['policy' => $prY, 'etkin' => 'ayarlar']);
+Ayarlar::forget();
 dogrula('Tarayıcı tik döngüsü: yanıt "bekleyen" söyledikçe sürer (analiz bitse / sekme gizlense de); bütün Transkript sayfaları alt menüden katılır; gönderim hatası kutuda kalır',
     str_contains($tikGovde2[0] ?? '', "'bekleyen' =>") && str_contains($jsKuyruk, 'function tikZamanla(') && str_contains($jsKuyruk, "attr('data-tk-tik-baslat') === '1'")
     && str_contains($altMenu, 'data-tk-tik="') && str_contains($jsKuyruk, "'?url=' + encodeURIComponent(url)") && str_contains($jsKuyruk, 'Sunucuya ulaşılamadı'));
