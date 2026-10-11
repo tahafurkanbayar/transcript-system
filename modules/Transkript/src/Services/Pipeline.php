@@ -29,6 +29,7 @@ declare(strict_types=1);
 
 namespace Modules\Transkript\Services;
 
+use App\Core\Cache\Cache;
 use Closure;
 use Modules\Transkript\Ai\Ai;
 use Modules\Transkript\Ai\AiHatasi;
@@ -533,9 +534,15 @@ final class Pipeline
         for ($deneme = 1; ; $deneme++) {
             $baslangic = hrtime(true);
 
+            // Ekrandaki ilerleme: "… — EVREN · glm-5.3, 2. deneme" (KaynakDurumu).
+            YedekliSaglayici::halkaKancasi(fn (string $halkaAdi, string $halkaModeli, int $sira) => $this->calisaniYaz($asama, $halkaAdi, $halkaModeli, $sira + $deneme - 1));
+            $this->calisaniYaz($asama, $ad === 'zincir' ? '' : $ad, $ad === 'zincir' ? '' : $saglayici->model(), $deneme);
+
             try {
                 $yanit = $saglayici->sendJson($mesajlar, $istem->sistem, $sema, $ek);
             } catch (AiHatasi $e) {
+                YedekliSaglayici::halkaKancasi(null);
+
                 if ($saglayici instanceof YedekliSaglayici) {
                     $this->denemeleriKaydet($saglayici, $asama);
                 } else {
@@ -580,6 +587,7 @@ final class Pipeline
                 $mesajlar[] = ['role' => 'assistant', 'content' => $yanit['text'] !== '' ? mb_substr($yanit['text'], 0, $enCok) : '(boş yanıt)'];
                 $mesajlar[] = ['role' => 'user', 'content' => self::onarimIstegi($e->sorunlar, $yanit['stop_reason'] === 'max_tokens')];
             } finally {
+                YedekliSaglayici::halkaKancasi(null);
                 $this->kaydet($ad, (string) $yanit['model'], $yanit, $baslangic, $durum, null, null, $asama, $zaman);
             }
         }
@@ -639,6 +647,21 @@ final class Pipeline
             'istenen_model' => $o['istenen_model'] ?? null,
             'olcum'         => $o,
         ], 'analiz', $this->analizId, $durum, $hataKodu ?? ($durum === 'basarili' ? null : $durum), $hataAyrinti);
+    }
+
+    /** Önbellek anahtarı: analizde şu an çalışan sağlayıcı / model (KaynakDurumu okur). */
+    public const CALISAN_ONEKI = 'transkript.calisan.';
+
+    private function calisaniYaz(string $asama, string $saglayici, string $model, int $deneme): void
+    {
+        if ($this->analizId <= 0 || $saglayici === '') {
+            return;
+        }
+
+        try {
+            Cache::put(self::CALISAN_ONEKI . $this->analizId, ['asama' => $asama, 'saglayici' => $saglayici, 'model' => $model, 'deneme' => $deneme, 'zaman' => time()], 1800);
+        } catch (\Throwable) {
+        }
     }
 
     /**

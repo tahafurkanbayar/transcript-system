@@ -2461,6 +2461,11 @@ dogrula('403 terms_not_accepted → "sartlar_onaylanmadi", Türkçe yönlendirme
     && YedekliSaglayici::dinlenmeSuresi('sartlar_onaylanmadi') === 3600 && in_array('sartlar_onaylanmadi', YedekliSaglayici::DEVRE_DISI, true)
     && TranskriptIsi::kaliciKod(new AiHatasi('', 'sartlar_onaylanmadi', 403)) === 'ai_ayar_eksik');
 
+$sartGereken = \App\Core\Cache\Cache::get(EvrenProvider::SART_GEREKEN);
+\App\Core\Cache\Cache::forget(EvrenProvider::SART_GEREKEN);
+dogrula('403 gövdesindeki gereken şart sürümü saklanır (Durum: "yeni şart sürümü onay bekliyor"); kod onaylamaz',
+    $sartGereken === 1 && !str_contains((string) file_get_contents(MODUL_YOLU . '/src/Ai/EvrenProvider.php'), 'sartlariOnayla('));
+
 $giden = [];
 $e401 = null;
 try {
@@ -3375,6 +3380,19 @@ dogrula('kuyruk-isci-kur.bat: etiket / goto yok, ps1\'i çağırır; görev otur
     && str_contains($kurPs, '-MultipleInstances IgnoreNew') && str_contains($kurPs, '-WindowStyle Hidden')
     && str_contains($kurPs, '-ExecutionTimeLimit ([TimeSpan]::Zero)') && str_contains($kurPs, 'Unregister-ScheduledTask')
     && KuyrukDurumu::KOMUT_KUR === 'kuyruk-isci-kur.bat');
+
+$halkaIzi = [];
+YedekliSaglayici::halkaKancasi(static function (string $ad, string $model, int $sira) use (&$halkaIzi): void { $halkaIzi[] = $ad . ':' . $sira; });
+(new YedekliSaglayici([['ad' => 'test-a', 'saglayici' => new SahteAi([new AiHatasi('x', 'sunucu', 503)])], ['ad' => 'test-b', 'saglayici' => new SahteAi([SahteAi::yanit('{"a":1}')])]]))
+    ->sendJson([['role' => 'user', 'content' => 'x']], 's', ['type' => 'object']);
+YedekliSaglayici::halkaKancasi(null);
+$dinlenmeyiSil();
+dogrula('İlerleme etiketi: zincir her halkadan önce bildirir; ekranda "— EVREN · glm-5.3, 2. deneme"; 15 dk\'dan eski kayıt yok sayılır',
+    $halkaIzi === ['test-a:1', 'test-b:2']
+    && KaynakDurumu::calisanMetni(['saglayici' => 'evren', 'model' => 'auto → zai/glm-5.3-fp8', 'deneme' => 2, 'zaman' => time()]) === ' — EVREN · glm-5.3, 2. deneme'
+    && KaynakDurumu::calisanMetni(['saglayici' => 'groq', 'model' => 'openai/gpt-oss-120b', 'deneme' => 1, 'zaman' => time()]) === ' — Groq · gpt-oss-120b'
+    && KaynakDurumu::calisanMetni(['saglayici' => 'evren', 'model' => 'glm-5.3', 'deneme' => 1, 'zaman' => time() - 1000]) === ''
+    && KaynakDurumu::calisanMetni(null) === '');
 
 /* Kuyruk nabzı (cowork 3. tur): çalışan iş kuyruk satırını, aşama ve parça kilidini tazeler; ölen iş 5 dk sonra geri döner. */
 $nabizSayac = 0;

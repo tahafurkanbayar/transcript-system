@@ -126,6 +126,14 @@ final class YedekliSaglayici implements Provider
     /** @var array{baslangic:float, sure_ms:int}|null son başarılı denemenin kendi başlangıcı ve süresi */
     private ?array $sonDeneme = null;
 
+    /** @var ?Closure(string, string, int): void her halka denenmeden önce (ad, model, kaçıncı deneme); ekrandaki ilerleme */
+    private static ?Closure $halkaKancasi = null;
+
+    public static function halkaKancasi(?Closure $kanca): void
+    {
+        self::$halkaKancasi = $kanca;
+    }
+
     /** @var list<string> son çağrıda istek sığmadığı için hiç denenmeyenler (GirisSiniri) */
     private array $atlananlar = [];
 
@@ -358,6 +366,10 @@ final class YedekliSaglayici implements Provider
                 $this->atlananlar[] = $halka['ad'];
 
                 continue;
+            }
+
+            if (self::$halkaKancasi !== null) {
+                (self::$halkaKancasi)($halka['ad'], $model, count($this->denemeler) + 1);
             }
 
             $bas   = hrtime(true);

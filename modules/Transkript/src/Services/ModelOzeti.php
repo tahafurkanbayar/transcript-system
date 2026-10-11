@@ -133,6 +133,12 @@ final class ModelOzeti
     public static function etiket(string $saglayici, string $model): string
     {
         $ad    = self::KISA_ADLAR[$saglayici] ?? ucfirst($saglayici);
+
+        // EVREN: panelle aynı kısa ad ("auto → zai/glm-5.3-fp8" → glm-5.3).
+        if ($saglayici === 'evren' && trim($model) !== '') {
+            return $ad . ' · ' . \Modules\Transkript\Ai\EvrenProvider::kisaAd($model);
+        }
+
         $model = trim((string) preg_replace('/^auto\s*→\s*/u', '', trim($model)));
         $kisa  = str_contains($model, '/') ? substr($model, strrpos($model, '/') + 1) : $model;
 

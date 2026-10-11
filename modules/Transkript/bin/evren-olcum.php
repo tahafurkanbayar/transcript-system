@@ -14,7 +14,8 @@
  *    --boy=kisa,orta,uzun,cok_uzun  models / json için fixture boyları (varsayılan kisa,orta)
  *    --uzun-models=<liste>   uzun ve çok uzun fixture'ı yalnız bu modeller çalıştırır
  *    --repeat=3 --concurrency=2 --max-tokens-budget=1500000
- *    --akis=1|0 --dusunme=low|off|default   (models / context / consistency; varsayılan .env)
+ *    --akis=1|0 --dusunme=low|off|default --sema=1|0  (akış, düşünme, json_schema; varsayılan .env)
+ *                            "önce" ölçümü: --akis=0 --dusunme=default --sema=0 (11.10.2026 sabahki üretim)
  *    --etiket=<ad>           çalışma klasörünün adına eklenir (ör. once, sonra)
  *    --dry-run               çağrı yapmadan plan ve tahmini token
  *
@@ -265,6 +266,7 @@ $ayar = [
     'butce'        => max(10_000, (int) $secenek('max-tokens-budget', '1500000')),
     'akis'         => $secenek('akis') !== null ? $secenek('akis') === '1' : null,
     'dusunme'      => $secenek('dusunme'),
+    'sema'         => $secenek('sema') !== null ? $secenek('sema') === '1' : null,
     'kuru'         => $secenek('dry-run') !== null,
     'etiket'       => preg_replace('/[^a-z0-9_-]/i', '', (string) $secenek('etiket', '')),
 ];
@@ -283,7 +285,7 @@ echo sprintf("Plan: %d görev · tahmini %s token · bütçe %s · eşzamanlı %
 
 foreach ($gorevler as $g) {
     echo sprintf("  %-11s %-20s %-26s %-6s %-8s %s\n", $g['suite'], $g['model'], $g['fikstur'] ?? '-', $g['tur'],
-        ($g['akis'] === null ? 'env' : ($g['akis'] ? 'akış' : 'akışsız')) . '/' . ($g['dusunme'] ?? 'env'),
+        ($g['akis'] === null ? 'env' : ($g['akis'] ? 'akış' : 'akışsız')) . '/' . ($g['dusunme'] ?? 'env') . '/' . (($g['sema'] ?? null) === false ? 'object' : 'şema'),
         ($g['max_token'] ?? '') . ($g['hedef_token'] ? ' hedef ' . $g['hedef_token'] : '') . ' ~' . sayi($g['tahmin']));
 }
 
@@ -441,7 +443,7 @@ function gorevleriPlanla(array $suitler, array $ayar, array $fiksturler): array
     $kisa  = $boyla(['kisa']);
     $orta  = $boyla(['orta']);
     $gorev = static fn (string $suite, string $tur, string $model, ?array $f, array $ek = []): array => $ek + [
-        'suite' => $suite, 'tur' => $tur, 'model' => $model, 'fikstur' => $f['ad'] ?? null, 'akis' => $ayar['akis'], 'dusunme' => $ayar['dusunme'],
+        'suite' => $suite, 'tur' => $tur, 'model' => $model, 'fikstur' => $f['ad'] ?? null, 'akis' => $ayar['akis'], 'dusunme' => $ayar['dusunme'], 'sema' => $ayar['sema'],
         'max_token' => null, 'hedef_token' => null, 'tekrar' => 1, 'tahmin' => tahmin($tur, $f),
     ];
 
@@ -582,9 +584,9 @@ function gorevCalistir(array $g, ?array $f, Closure $yaz, Closure $butceVar): vo
 {
     $sinirMap    = (int) ($g['max_token'] ?? 8192);
     $sinirReduce = (int) ($g['max_token'] ?? 24000);
-    $olcumAyari  = array_filter(['akis' => $g['akis'], 'dusunme' => $g['dusunme']], static fn ($v): bool => $v !== null);
+    $olcumAyari  = array_filter(['akis' => $g['akis'], 'dusunme' => $g['dusunme'], 'sema' => $g['sema'] ?? null], static fn ($v): bool => $v !== null);
     $ortak       = ['suite' => $g['suite'], 'fikstur' => $g['fikstur'], 'tur' => $g['tur'], 'tekrar' => $g['tekrar'], 'hedef_token' => $g['hedef_token'],
-                    'dusunme' => $g['dusunme'] ?? EvrenProvider::dusunmeAyari()];
+                    'dusunme' => $g['dusunme'] ?? EvrenProvider::dusunmeAyari(), 'sema' => $g['sema'] ?? true];
     $saglayici   = static function (int $sinir, int $sure) use ($g, $olcumAyari, $ortak, $yaz, $butceVar): Kaydedici {
         $p = Ai::make('evren', $g['model'], $sinir, $sure);
 
@@ -592,7 +594,8 @@ function gorevCalistir(array $g, ?array $f, Closure $yaz, Closure $butceVar): vo
             throw new RuntimeException('EVREN sağlayıcısı kurulamadı.');
         }
 
-        return new Kaydedici($p->olcumAyari($olcumAyari), $ortak, $yaz, $butceVar);
+        // Üretimde EVREN zincirin ilk halkasıdır: zaman aşımında aynı istek yeniden denenmez (YedekliSaglayici).
+        return new Kaydedici($p->olcumAyari($olcumAyari)->yenidenDenemeSiniri(0), $ortak, $yaz, $butceVar);
     };
 
     if ($g['tur'] === 'merhaba') {

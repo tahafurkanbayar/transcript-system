@@ -13,6 +13,7 @@ declare(strict_types=1);
 
 namespace Modules\Transkript\Controllers;
 
+use App\Core\Cache\Cache;
 use App\Core\Auth;
 use App\Core\Demo;
 use App\Core\Env;
@@ -32,6 +33,7 @@ use Modules\Transkript\PanelAyarlari;
 use Modules\Transkript\Repositories\AiKullanimRepository;
 use Modules\Transkript\Services\KuyrukDurumu;
 use PDO;
+use Throwable;
 
 final class AyarController extends Controller
 {
@@ -118,6 +120,8 @@ final class AyarController extends Controller
                 'evren_aylik_tahmin' => $kullanim->evrenTahmini(),
                 // Panelden verilen şart onayı (sürüm, tarih); yoksa null.
                 'evren_sart'  => self::sartOnayi(),
+                // 403'ün istediği sürüm (EVREN yeni esaslı sürüm yayımladıysa onaylı sürümden büyük).
+                'evren_sart_gereken' => (int) (Cache::get(EvrenProvider::SART_GEREKEN) ?? 0),
                 'yt_anahtar'  => trim(Env::get('YOUTUBE_API_KEY')) !== '',
                 'transcript'  => implode(' → ', (array) Ayarlar::get('transcript.saglayicilar', [])),
                 'istem'       => (string) Ayarlar::get('ai.istem_surumu', 'v1'),
@@ -257,6 +261,13 @@ final class AyarController extends Controller
         }
 
         YedekliSaglayici::dinlenmeyiBitir('evren');
+
+        try {
+            if ((int) (Cache::get(EvrenProvider::SART_GEREKEN) ?? 0) <= $surum) {
+                Cache::forget(EvrenProvider::SART_GEREKEN);
+            }
+        } catch (Throwable) {
+        }
     }
 
     /** Şart metni: JSON gövdede text / content / markdown alanı, yoksa gövdenin kendisi (200 KB'a kadar). */

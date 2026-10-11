@@ -528,8 +528,22 @@ final class EvrenProvider extends OpenAiCompatibleProvider
         }
     }
 
+    /** 403 terms_not_accepted gövdesindeki gereken şart sürümü (Durum: "yeni şart sürümü onay bekliyor"). */
+    public const SART_GEREKEN = 'transkript:evren_sart_gereken';
+
     protected function errorCode(int $status, string $raw): string
     {
+        if ($status === 403 && self::sartlarOnaylanmadi($raw)) {
+            $gereken = (int) (self::hataGovdesi($raw)['evren']['required_terms_version'] ?? 0);
+
+            try {
+                if ($gereken > 0) {
+                    Cache::put(self::SART_GEREKEN, $gereken, 30 * 86400);
+                }
+            } catch (Throwable) {
+            }
+        }
+
         return match (true) {
             $status === 403 && self::sartlarOnaylanmadi($raw) => 'sartlar_onaylanmadi',
             $status === 429 && $this->gunlukKotaBitti($raw)   => 'kota_doldu',

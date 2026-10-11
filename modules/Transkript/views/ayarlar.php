@@ -403,12 +403,17 @@ $sayi     = static fn (int $n): string => number_format($n, 0, ',', '.');
                                 /* Şartlar: panelden onaylandıysa sürüm ve tarih; değilse (ya da son
                                  * çağrı şart yüzünden reddedildiyse) "Şartları oku ve onayla". */
                                 $sartKaydi = $durum['evren_sart'] ?? null;
-                                $sartReddi = ($halka['kod'] ?? '') === 'sartlar_onaylanmadi';
+                                $gereken   = (int) ($durum['evren_sart_gereken'] ?? 0);
+                                // EVREN yeni esaslı sürüm yayımladıysa (403'ün istediği > onaylı) yeniden onay gerekir.
+                                $sartReddi = ($halka['kod'] ?? '') === 'sartlar_onaylanmadi' || ($sartKaydi !== null && $gereken > (int) $sartKaydi['surum']);
                                 ?>
                                 <?php if ($sartKaydi !== null && !$sartReddi): ?>
                                     <small class="tk-sart-durum">Şartlar: <span class="cy-pill is-ok">Onaylı</span> v<?= (int) $sartKaydi['surum'] ?><?= $sartKaydi['tarih'] !== '' ? ' · ' . e(date('d.m.Y H:i', (int) strtotime($sartKaydi['tarih']))) : '' ?>
                                         · <a class="cy-link" href="<?= e(url('panel/transkript/ayarlar/evren-sartlar')) ?>">kontrol et</a></small>
                                 <?php elseif ($halka['tanimli']): ?>
+                                    <?php if ($sartKaydi !== null && $gereken > (int) $sartKaydi['surum']): ?>
+                                        <small class="tk-sart-durum"><span class="cy-pill is-warn">Yeni şart sürümü v<?= $gereken ?> onay bekliyor</span> (onaylı: v<?= (int) $sartKaydi['surum'] ?>)</small>
+                                    <?php endif; ?>
                                     <a class="btn cy-btn cy-btn--primary cy-btn--sm mt-2" href="<?= e(url('panel/transkript/ayarlar/evren-sartlar')) ?>"><?= icon('lock', 'cy-icon cy-icon--sm') ?> Şartları oku ve onayla</a>
                                 <?php endif; ?>
                             <?php endif; ?>
