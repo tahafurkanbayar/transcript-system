@@ -31,6 +31,7 @@ use App\Core\Response;
 use App\Core\Setting;
 use App\Http\Controller;
 use Modules\Transkript\HataKodlari;
+use Modules\Transkript\Pdf\RaporPdf;
 use Modules\Transkript\Repositories\AnalizRepository;
 use Modules\Transkript\Repositories\KaynakRepository;
 use Modules\Transkript\Repositories\KutuphaneRepository;
@@ -192,14 +193,16 @@ final class KaynakController extends Controller
             throw HttpException::forbidden('Altyazı indirme Pro planında. Üyeliğim sayfasından Pro\'ya geçebilirsiniz.');
         }
 
-        if ($bicim === 'rapor.md') {
+        if ($bicim === 'rapor.md' || $bicim === 'rapor.pdf') {
             $veri = (new RaporVerisi($this->db, new TranskriptPolicy(Auth::user())))->getir($kaynak);
 
             if ($veri['rapor'] === null) {
                 throw HttpException::notFound();
             }
 
-            $icerik = DisaAktarim::markdown($kaynak, $veri['rapor'], $veri['analiz'], $veri['transcript']);
+            $icerik = $bicim === 'rapor.pdf'
+                ? RaporPdf::olustur($kaynak, $veri['rapor'], $veri['analiz'], $veri['transcript'], ['site' => Setting::get('site_adi')])
+                : DisaAktarim::markdown($kaynak, $veri['rapor'], $veri['analiz'], $veri['transcript']);
         } else {
             $segmentler = new SegmentRepository($this->db);
             $metin      = $segmentler->sonMetin((int) $kaynak['id']) ?? throw HttpException::notFound();

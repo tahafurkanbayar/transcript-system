@@ -81,6 +81,10 @@ use Modules\Transkript\Kaynak\KaynakHatasi;
 use Modules\Transkript\Kaynak\UrlParser;
 use Modules\Transkript\Kaynak\YoutubeMetadata;
 use Modules\Transkript\PanelAyarlari;
+use Modules\Transkript\Pdf\Akis;
+use Modules\Transkript\Pdf\PdfBelgesi;
+use Modules\Transkript\Pdf\RaporPdf;
+use Modules\Transkript\Pdf\Yazitipi;
 use Modules\Transkript\Repositories\AiKullanimRepository;
 use Modules\Transkript\Repositories\AnalizRepository;
 use Modules\Transkript\Repositories\KaynakRepository;
@@ -251,7 +255,7 @@ $yetkiMatrisi = [
     // Yeniden analiz plan özelliği: Pro'da açık, Ücretsiz'de kapalı (varsayılan).
     'yeniden analiz (kendi raporu)'                   => ['YE',   static fn (TranskriptPolicy $p, int $ben): bool => $p->canReanalyze(['kullanici_id' => $ben])],
     'altyazı indirme (SRT / VTT)'                     => ['YE',   static fn (TranskriptPolicy $p, int $ben): bool => $p->canDownload('transkript.srt') && $p->canDownload('transkript.vtt')],
-    'rapor ve metin indirme (MD / TXT)'               => ['YEUP', static fn (TranskriptPolicy $p, int $ben): bool => $p->canDownload('rapor.md') && $p->canDownload('transkript.txt')],
+    'rapor ve metin indirme (PDF / MD / TXT)'         => ['YEUP', static fn (TranskriptPolicy $p, int $ben): bool => $p->canDownload('rapor.pdf') && $p->canDownload('rapor.md') && $p->canDownload('transkript.txt')],
     'yeniden analiz (başkasının raporu)'              => ['Y',    static fn (TranskriptPolicy $p, int $ben): bool => $p->canReanalyze(['kullanici_id' => $baskasi])],
     'duran analizi sürdürmek (kendi)'                 => ['YEP',  static fn (TranskriptPolicy $p, int $ben): bool => $p->canRetry(['kullanici_id' => $ben])],
     'duran analizi sürdürmek (başkasının)'            => ['Y',    static fn (TranskriptPolicy $p, int $ben): bool => $p->canRetry(['kullanici_id' => $baskasi])],
@@ -1937,6 +1941,113 @@ dogrula('Dosya adı ASCII: Türkçe katlanır, işaretler tire olur',
     && DisaAktarim::dosyaAdi(['baslik' => 'Çılgın Şeyler!', 'dis_kimlik' => 'x'], 'transkript.srt') === 'cilgin-seyler.srt');
 dogrula('Okuma süresi: ~200 sözcük/dk, en az 1 dk',
     RaporVerisi::okumaDakikasi(['summary' => str_repeat('söz ', 450)]) === 3 && RaporVerisi::okumaDakikasi([]) === 1);
+
+/* ---------------------------------------------------------------- */
+echo "\nPDF çıktısı (Pdf\\PdfBelgesi, Akis, RaporPdf)\n";
+
+/** PDF'in iskeleti tutarlı mı: başlık, xref'teki her konum "N 0 obj"a, akış uzunlukları, startxref, %%EOF. */
+$pdfGecerli = static function (string $pdf): bool {
+    if (!str_starts_with($pdf, "%PDF-1.4\n") || !str_ends_with($pdf, "%%EOF\n") || !preg_match('/startxref\n(\d+)\n%%EOF\n$/', $pdf, $m)
+        || substr($pdf, (int) $m[1], 5) !== "xref\n" || !preg_match('/^xref\n0 (\d+)\n/', substr($pdf, (int) $m[1]), $x)) {
+        return false;
+    }
+
+    $n     = (int) $x[1];
+    $tablo = substr($pdf, (int) $m[1] + strlen("xref\n0 {$n}\n"), 20 * $n);
+
+    for ($i = 1; $i < $n; $i++) {
+        if (substr($pdf, (int) substr($tablo, 20 * $i, 10), strlen("{$i} 0 obj")) !== "{$i} 0 obj") {
+            return false;
+        }
+    }
+
+    preg_match_all('/\/Length (\d+)[^>]*>>\nstream\n/', $pdf, $akislar, PREG_OFFSET_CAPTURE);
+
+    foreach ($akislar[0] as $j => [$baslik, $konum]) {
+        if (substr($pdf, $konum + strlen($baslik) + (int) $akislar[1][$j][0], 10) !== "\nendstream") {
+            return false;
+        }
+    }
+
+    return str_contains($pdf, "trailer << /Size {$n} ");
+};
+/** Bütün içerik akışları açılmış (Flate) ve birleştirilmiş. */
+$pdfIcerik = static function (string $pdf): string {
+    preg_match_all('/\/Length (\d+) \/Filter \/FlateDecode >>\nstream\n/', $pdf, $akislar, PREG_OFFSET_CAPTURE);
+    $metin = '';
+
+    foreach ($akislar[0] as $j => [$baslik, $konum]) {
+        $metin .= (string) @gzuncompress(substr($pdf, $konum + strlen($baslik), (int) $akislar[1][$j][0])) . "\n";
+    }
+
+    return $metin;
+};
+
+dogrula('Türkçe kodlama (CP1254): İ ğ ş ı Ğ ü tek bayt; ₺ → TL; emoji atlanır, çift boşluk kalmaz; ā → a; kontrol karakteri atılır; “ ” korunur',
+    Yazitipi::kodla('İğneşı Ğü') === "\xDD\xF0ne\xFE\xFD \xD0\xFC" && Yazitipi::kodla('5 ₺') === '5 TL'
+    && Yazitipi::kodla('Hazırlık 📑 #2025') === "Haz\xFDrl\xFDk #2025" && Yazitipi::kodla('ā') === 'a'
+    && Yazitipi::kodla("a\tb\x01c") === 'a bc' && Yazitipi::kodla('“x”') === "\x93x\x94" && Yazitipi::kodla('') === '');
+dogrula('Genişlik Helvetica ölçüsüyle: a 5,56 · ı 2,78 (10 pt), kalın i 2,78; Türkçe harfler sıfır değil',
+    abs(Yazitipi::genislik('a', Yazitipi::NORMAL, 10) - 5.56) < 0.001 && abs(Yazitipi::genislik(Yazitipi::kodla('ı'), Yazitipi::NORMAL, 10) - 2.78) < 0.001
+    && abs(Yazitipi::genislik('i', Yazitipi::KALIN, 10) - 2.78) < 0.001
+    && min(array_map(static fn (string $h): float => Yazitipi::genislik(Yazitipi::kodla($h), Yazitipi::NORMAL, 10), ['İ', 'ğ', 'ş', 'Ğ', 'Ş', 'ı', 'ç', 'ö'])) > 2);
+
+$akisDene = new Akis(new PdfBelgesi());
+$satirDene = $akisDene->satirla([
+    ['metin' => 'Kritik', 'rozet' => [254, 226, 226], 'punto' => 7.5], ['sekme' => 54.0],
+    ['metin' => str_repeat('Türkçe uzun bir cümle yazılıyor ve satırlara kırılıyor. ', 12)],
+    ['metin' => ' https://ornek.test/' . str_repeat('cokuzunbirkelime', 30), 'url' => 'https://ornek.test/'],
+], 300.0, 54.0);
+$tasma = 0.0;
+foreach ($satirDene as $sd) {
+    foreach ($sd['ogeler'] as $o) {
+        $tasma = max($tasma, $o['x'] + $o['genislik'] - 300.0);
+    }
+}
+dogrula('Satır kırma: hiçbir satır genişliği aşmaz (uzun kelime harf harf bölünür), asılma ile ikinci satır 54 pt\'den başlar, rozet bölünmez',
+    count($satirDene) > 5 && $tasma <= 0.01 && $satirDene[1]['ogeler'][0]['x'] >= 54.0
+    && count(array_filter($satirDene[0]['ogeler'], static fn (array $o): bool => isset($o['rozet']))) === 1, (string) $tasma);
+
+$belge = new PdfBelgesi('Başlık (deneme)', 'Konu');
+$belge->sayfaEkle();
+$belge->metin(50, 60, Yazitipi::kodla('Şerit (dünya) \\ son'), Yazitipi::NORMAL, 10, [0, 0, 0]);
+$belge->baglanti(50, 50, 100, 12, 'https://youtu.be/abc?t=5');
+$belge->baglanti(50, 70, 100, 12, 'javascript:alert(1)');
+$belge->yerImi('Önemli noktalar', 60);
+$belge->sayfaEkle();
+$belgePdf = $belge->cikti();
+dogrula('PdfBelgesi: geçerli iskelet (xref, akış uzunlukları), 2 sayfa, Türkçe glif farkları, ( ) \\ kaçışlı, yalnız http(s) bağlantı, yer imi ve UTF-16 başlık',
+    $pdfGecerli($belgePdf) && str_contains($belgePdf, '/Type /Pages /Kids [') && str_contains($belgePdf, '/Count 2 >>')
+    && str_contains($belgePdf, '/Differences [208 /Gbreve 221 /Idotaccent 222 /Scedilla 240 /gbreve 253 /dotlessi 254 /scedilla]')
+    && str_contains($pdfIcerik($belgePdf), "(\xDEerit \\(d\xFCnya\\) \\\\ son) Tj")
+    && substr_count($belgePdf, '/Subtype /Link') === 1 && str_contains($belgePdf, '/URI (https://youtu.be/abc?t=5)') && !str_contains($belgePdf, 'javascript')
+    && str_contains($belgePdf, '/Type /Outlines') && str_contains($belgePdf, '/Title ' . PdfBelgesi::metinDizesi('Önemli noktalar'))
+    && str_contains($belgePdf, '/Title ' . PdfBelgesi::metinDizesi('Başlık (deneme)')) && str_contains($belgePdf, '/Lang (tr-TR)'));
+
+$raporPdf = RaporPdf::olustur($kaynakOrnek, $raporOrnek, ['model' => 'gemini-2.5-flash', 'bitti_at' => '2026-10-09 09:00:00', 'prompt_surumu' => 'v2'],
+    ['dil' => 'en', 'otomatik_mi' => true], ['site' => 'Örnek Site', 'zaman' => 1760000000]);
+$raporIcerik = $pdfIcerik($raporPdf);
+dogrula('RaporPdf: geçerli PDF; başlık, Kısa özet, Kritik rozeti, zaman damgası youtu.be?t=125 bağlantısı, alt bilgide "Sayfa 1 / 1" ve yapay zekâ uyarısı',
+    $pdfGecerli($raporPdf) && str_contains($raporIcerik, '(Do schools kill creativity? | TED) Tj') && str_contains($raporIcerik, Yazitipi::kodla('(Kısa özet) Tj'))
+    && str_contains($raporIcerik, '(Kritik) Tj') && str_contains($raporPdf, '/URI (https://youtu.be/iG9CE55wbtY?t=125)')
+    && str_contains($raporIcerik, '(Sayfa 1 / 1) Tj') && str_contains($raporIcerik, Yazitipi::kodla('Yapay zekâ ile üretildi'))
+    && str_contains($raporPdf, '/Title ' . PdfBelgesi::metinDizesi('Önemli noktalar')) && str_contains($raporIcerik, Yazitipi::kodla('İstem: v2')));
+dogrula('RaporPdf: AI metnindeki "[tıkla](javascript:…)" yalnız metin; bağlantı olmaz, PDF komutu kırılmaz',
+    !str_contains($raporPdf, '/URI (javascript') && str_contains($raporIcerik, 'javascript:alert\\(1\\)'));
+
+$uzunRapor = ['summary' => 'Özet.', 'important_points' => array_map(static fn (int $i): array => [
+    'text' => $i . '. ' . str_repeat('Uzun bir önemli nokta metni, sayfaları doldurur. ', 4), 'at' => sprintf('00:%02d:00', $i % 60), 'importance' => 'important'], range(1, 70))];
+$uzunPdf = RaporPdf::olustur($kaynakOrnek, $uzunRapor, null, null, ['zaman' => 1760000000]);
+preg_match('#/Type /Pages /Kids \[[^\]]*\] /Count (\d+)#', $uzunPdf, $uzunSayfa);
+$uzunIcerik = $pdfIcerik($uzunPdf);
+$sayfaN = (int) ($uzunSayfa[1] ?? 0);
+dogrula('Uzun rapor: birden çok sayfa, her sayfada "Sayfa i / N"; 2. sayfadan itibaren üst bilgide video adı; 70 bağlantı',
+    $pdfGecerli($uzunPdf) && $sayfaN > 2 && substr_count($uzunIcerik, ' / ' . $sayfaN . ') Tj') === $sayfaN
+    && str_contains($uzunIcerik, '(Sayfa ' . $sayfaN . ' / ' . $sayfaN . ') Tj') && substr_count($uzunIcerik, '(Do schools kill creativity? | TED) Tj') === $sayfaN
+    && substr_count($uzunPdf, '/Subtype /Link') === 71, (string) $sayfaN);
+dogrula('Dışa aktarma: rapor.pdf biçimi (application/pdf), dosya adı ".rapor.pdf", rapor sayfasında "Rapor (PDF)" düğmesi',
+    (DisaAktarim::BICIMLER['rapor.pdf'][0] ?? '') === 'application/pdf' && DisaAktarim::dosyaAdi($kaynakOrnek, 'rapor.pdf') === 'do-schools-kill-creativity-ted.rapor.pdf'
+    && str_contains($goster, "\$indir('rapor.pdf')") && str_contains($goster, 'Rapor (PDF)'));
 
 /* ---------------------------------------------------------------- */
 echo "\nKuyruk durumu (\"Kuyruk işçisi çalışmıyor\" uyarısı)\n";

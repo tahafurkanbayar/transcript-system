@@ -448,6 +448,7 @@ $indir = static fn (string $bicim): string => url('panel/transkript/' . $kaynakI
                     <h3 class="cy-panel__title mb-2"><?= icon('save', 'cy-icon cy-icon--sm') ?> Dışa aktar</h3>
                     <div class="tk-disa__liste">
                         <?php if ($rapor !== null): ?>
+                            <a class="btn cy-btn cy-btn--primary cy-btn--sm" href="<?= e($indir('rapor.pdf')) ?>" download><?= icon('file', 'cy-icon cy-icon--sm') ?> Rapor (PDF)</a>
                             <a class="btn cy-btn cy-btn--ghost cy-btn--sm" href="<?= e($indir('rapor.md')) ?>" download><?= icon('file', 'cy-icon cy-icon--sm') ?> Rapor (Markdown)</a>
                         <?php endif; ?>
                         <?php if ($veri['transcript'] !== null): ?>

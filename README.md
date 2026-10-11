@@ -41,7 +41,7 @@ kendi kütüphanesine eklenir.
   satırlarına çekilir; tutmayan zaman damgası rapora girmez.
 - **Transcript'te arama:** Türkçe harf duyarsız arama, eşleşen yer vurgulanır,
   satıra tıklayınca video o saniyeden oynar.
-- **Dışa aktarma:** rapor (Markdown), transcript (TXT), altyazı (SRT / VTT) ve
+- **Dışa aktarma:** rapor (PDF ve Markdown), transcript (TXT), altyazı (SRT / VTT) ve
   video açıklamasına yapıştırılınca YouTube bölümleri oluşturan liste.
 - **Kişisel kütüphane:** herkes yalnız kendi analizlerini görür. Yönetici bir raporu
   "Üyelerle paylaş" ile herkese açabilir. Yönetici listesinde her kaydın kim

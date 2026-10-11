@@ -3,6 +3,25 @@
 Starter'ın sürüm geçmişi kökteki `CHANGELOG.md`'dedir; bu dosya yalnız
 `modules/Transkript/` içindir. Biçim [Keep a Changelog](https://keepachangelog.com/tr/1.1.0/).
 
+## 0.11.0 (2026-10-11): PDF raporu
+
+Kullanıcı isteği: "çıkan sonuçları PDF olarak da kullanıcıya verelim".
+
+- Rapor sayfası → Dışa aktar → **Rapor (PDF)** (`indir/rapor.pdf`); raporu
+  görebilen herkes indirebilir (Markdown gibi), AI çağrısı yok.
+- `Pdf\PdfBelgesi`: bağımlılıksız PDF 1.4 yazıcı (metin, yuvarlak köşeli
+  kutu, çizgi, URI bağlantısı, yer imleri, belge bilgisi, Flate). Yazı tipi
+  gömülmez: Helvetica / Helvetica-Bold / Helvetica-Oblique, CP1254 kodlaması
+  (/Differences ile Ğ İ Ş ğ ı ş); genişlik tablosu Helvetica AFM ile aynı.
+- `Pdf\Akis`: kelime kelime satır kırma, rozet, sekme hizası, asılı girinti,
+  zeminli kutu, sayfa geçişi ve üst bilgi; kısa maddeler sayfada bölünmez.
+- `Pdf\RaporPdf`: başlık ve künye (kanal, süre, transcript dili, model,
+  istem), kısa özet kutusu, detaylı özet, konular (zaman aralığı), önemli
+  noktalar (Kritik / Önemli / Faydalı rozeti), zaman çizelgesi, kavramlar
+  (kategoriye göre), fikirler, iddialar, öneriler. Zaman damgası YouTube'da
+  o saniyeyi açar; alt bilgide "Sayfa i / N" ve yapay zekâ uyarısı.
+- Ölçüm: 5:18 video 2 sayfa / 12 KB / ~20 ms; 1:06:25 video 7 sayfa / 43 KB.
+
 ## 0.10.0 (2026-10-11): EVREN geliştirme + cowork 3. test turu
 
 Kullanıcı isteği (bilgisayar başında değil, "tüm onaylar sende"): cowork 3.

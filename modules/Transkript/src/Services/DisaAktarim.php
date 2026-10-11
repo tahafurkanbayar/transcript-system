@@ -6,6 +6,7 @@
  *  Rakiplerde ortak beklenti (Glasp: Markdown / HTML / CSV / JSON,
  *  transcript kopyalama; docs/RAKIP_ANALIZI.md):
  *
+ *    rapor.pdf        rapor PDF (Pdf\RaporPdf); zaman damgası bağlantı, içindekiler
  *    rapor.md         rapor Markdown; zaman damgaları youtu.be?t= bağlantısı
  *    transkript.txt   okunur bloklar, "[hh:mm:ss] metin"
  *    transkript.srt   altyazı (video düzenleyiciler, oynatıcılar)
@@ -29,6 +30,7 @@ final class DisaAktarim
 {
     /** İndirilebilir biçimler: ad → [içerik türü, dosya eki] */
     public const BICIMLER = [
+        'rapor.pdf'      => ['application/pdf', 'rapor.pdf'],
         'rapor.md'       => ['text/markdown; charset=utf-8', 'rapor.md'],
         'transkript.txt' => ['text/plain; charset=utf-8', 'transkript.txt'],
         'transkript.srt' => ['application/x-subrip; charset=utf-8', 'srt'],
