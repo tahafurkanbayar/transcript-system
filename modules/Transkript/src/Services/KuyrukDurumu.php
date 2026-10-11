@@ -94,14 +94,14 @@ final class KuyrukDurumu
 
             return [
                 'bilinmiyor' => true, 'calisiyor' => true, 'takildi' => false,
-                'bekleyen' => 0, 'calisan' => 0, 'en_eski_sn' => 0, 'son_gorulme_sn' => null,
+                'bekleyen' => 0, 'calisan' => 0, 'en_eski_sn' => 0, 'son_gorulme_sn' => null, 'takili' => 0,
             ];
         }
 
         $son     = self::sonGorulme();
         $gorulme = $son > 0 ? max(0, time() - $son) : null;
 
-        return self::karar($sayilar['bekleyen'], $sayilar['calisan'], $sayilar['en_eski_sn'], $gorulme);
+        return self::karar($sayilar['bekleyen'], $sayilar['calisan'], $sayilar['en_eski_sn'], $gorulme) + ['takili' => $sayilar['takili']];
     }
 
     /**
@@ -159,20 +159,79 @@ final class KuyrukDurumu
         return $son > 0 && ($simdi ?? time()) - $son <= self::ESIK_SN;
     }
 
-    /** @return array{bekleyen: int, calisan: int, en_eski_sn: int} */
+    /** Nabzı bu kadar saniye gelmeyen iş ölmüştür (config kuyruk.nabiz_esik_sn, QUEUE_TIMEOUT'tan büyük olmaz). */
+    public static function nabizEsigi(): int
+    {
+        return max(60, min((int) Config::get('queue.timeout', 300), (int) Ayarlar::get('kuyruk.nabiz_esik_sn', 300)));
+    }
+
+    /**
+     * Nabzı eşikten eski "transkript" işlerini kuyruğa geri bırakır (deneme
+     * hakkı bitmişse başarısız sayar, çekirdeğin releaseStuck'ı gibi). Çekirdek
+     * QUEUE_TIMEOUT'u bekler (bu kurulumda 900 sn); modülün işleri nabız
+     * attığı için 5 dk yeter. Zamanlanmış görev ve tarayıcı tik'i işlemeye
+     * başlamadan çağırır.
+     *
+     * @return int geri bırakılan iş sayısı
+     */
+    public static function bayatlariBirak(?PDO $db = null): int
+    {
+        $db  ??= \App\Core\Database::connection();
+        $esik  = self::nabizEsigi();
+        $tablo = self::tablo();
+
+        $guncelle = $db->prepare(
+            'UPDATE `' . $tablo . "`
+                SET durum = IF(deneme >= max_deneme, 'basarisiz', 'bekliyor'),
+                    hata  = IF(deneme >= max_deneme, 'İş nabzı kesildi ve deneme hakkı bitti (işçi çöktü ya da kapatıldı).', hata),
+                    ayrildi_at = NULL
+              WHERE kuyruk = 'transkript' AND durum = 'calisiyor'
+                AND ayrildi_at IS NOT NULL AND ayrildi_at < NOW() - INTERVAL :esik SECOND"
+        );
+        $guncelle->bindValue(':esik', $esik, PDO::PARAM_INT);
+        $guncelle->execute();
+        $adet = $guncelle->rowCount();
+
+        if ($adet > 0) {
+            Logger::warning('Nabzı kesilen Transkript işleri kuyruğa geri bırakıldı', ['adet' => $adet, 'esik_sn' => $esik], 'transkript');
+        }
+
+        return $adet;
+    }
+
+    /** Bu iş (sınıf + yük) kuyrukta bekliyor ya da çalışıyor mu? */
+    public static function isKuyruktaMi(string $sinif, string $veri): bool
+    {
+        $statement = \App\Core\Database::connection()->prepare(
+            'SELECT COUNT(*) FROM `' . self::tablo() . "` WHERE sinif = :sinif AND veri = :veri AND durum IN ('bekliyor', 'calisiyor')"
+        );
+        $statement->execute([':sinif' => $sinif, ':veri' => $veri]);
+
+        return (int) $statement->fetchColumn() > 0;
+    }
+
+    /** Kuyruk tablosunun adı (config queue.table, yalnız harf / rakam / _). */
+    public static function tablo(): string
+    {
+        return preg_replace('/[^a-zA-Z0-9_]/', '', (string) Config::get('queue.table', 'isler')) ?: 'isler';
+    }
+
+    /** @return array{bekleyen: int, calisan: int, en_eski_sn: int, takili: int} */
     private function sayilar(): array
     {
-        $tablo = preg_replace('/[^a-zA-Z0-9_]/', '', (string) Config::get('queue.table', 'isler')) ?: 'isler';
+        $tablo = self::tablo();
 
         $sorgu = $this->db->prepare(
             "SELECT COALESCE(SUM(durum = 'bekliyor' AND hazir_at <= NOW()), 0) AS bekleyen,
                     COALESCE(MAX(CASE WHEN durum = 'bekliyor' AND hazir_at <= NOW()
                                       THEN TIMESTAMPDIFF(SECOND, hazir_at, NOW()) END), 0) AS en_eski,
-                    COALESCE(SUM(durum = 'calisiyor' AND ayrildi_at > NOW() - INTERVAL :zaman SECOND), 0) AS calisan
+                    COALESCE(SUM(durum = 'calisiyor' AND ayrildi_at > NOW() - INTERVAL :zaman SECOND), 0) AS calisan,
+                    COALESCE(SUM(durum = 'calisiyor' AND ayrildi_at <= NOW() - INTERVAL :zaman2 SECOND), 0) AS takili
                FROM `" . $tablo . "`
               WHERE kuyruk = 'transkript'"
         );
-        $sorgu->bindValue(':zaman', max(30, (int) Config::get('queue.timeout', 300)), PDO::PARAM_INT);
+        $sorgu->bindValue(':zaman', self::nabizEsigi(), PDO::PARAM_INT);
+        $sorgu->bindValue(':zaman2', self::nabizEsigi(), PDO::PARAM_INT);
         $sorgu->execute();
 
         $satir = $sorgu->fetch(PDO::FETCH_ASSOC) ?: [];
@@ -181,6 +240,8 @@ final class KuyrukDurumu
             'bekleyen'   => (int) ($satir['bekleyen'] ?? 0),
             'calisan'    => (int) ($satir['calisan'] ?? 0),
             'en_eski_sn' => max(0, (int) ($satir['en_eski'] ?? 0)),
+            // Nabzı 5 dk'dır gelmeyen "çalışıyor" iş: ölmüş; işçi (ya da tarayıcı) bir sonraki turda geri bırakır.
+            'takili'     => (int) ($satir['takili'] ?? 0),
         ];
     }
 

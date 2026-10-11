@@ -34,7 +34,7 @@ final class AnalizRepository
     private const CALISIYOR = ':calisiyor';
 
     /** ilerle() ile yazılabilecek ek sütunlar. */
-    private const EK_SUTUNLAR = ['metin_id', 'sonuc_json', 'kisa_ozet', 'detayli_ozet', 'prompt_surumu', 'model', 'ara_sonuclar'];
+    private const EK_SUTUNLAR = ['metin_id', 'sonuc_json', 'kisa_ozet', 'detayli_ozet', 'prompt_surumu', 'model', 'modeller', 'ara_sonuclar'];
 
     public function __construct(private readonly PDO $db)
     {
@@ -103,6 +103,23 @@ final class AnalizRepository
         $this->db->prepare($sql . " WHERE id = :id AND durum NOT IN ('tamamlandi', 'hata')")->execute($parametreler);
     }
 
+    /** Analize sabitlenen EVREN modeli (ayar "auto" iken ilk yanıttan); yoksa null. */
+    public function evrenModeli(int $id): ?string
+    {
+        $statement = $this->db->prepare('SELECT evren_model FROM transkript_analizler WHERE id = :id');
+        $statement->execute([':id' => $id]);
+        $model = $statement->fetchColumn();
+
+        return is_string($model) && $model !== '' ? $model : null;
+    }
+
+    /** İlk kez sabitler (yarışta ilk yazan kazanır; sonradan değişmez). */
+    public function evrenModeliniSabitle(int $id, string $model): void
+    {
+        $this->db->prepare('UPDATE transkript_analizler SET evren_model = :model WHERE id = :id AND evren_model IS NULL')
+            ->execute([':model' => mb_substr($model, 0, 100), ':id' => $id]);
+    }
+
     /**
      * Kademeli birleştirmenin ara özetleri: "s1:00:00:00-00:26:30" => bölüm
      * biçimli sonuç (AnalizBirlestir). Yoksa boş.
@@ -163,6 +180,41 @@ final class AnalizRepository
         ]);
 
         return $statement->rowCount() === 1;
+    }
+
+    /** Nabız (Jobs\IsNabzi): aşamayı tutan iş hâlâ çalışıyor; kilit bayatlamasın. */
+    public function asamaNabzi(int $id, string $asama): void
+    {
+        $this->db->prepare('UPDATE transkript_analizler SET updated_at = NOW() WHERE id = :id AND asama = :calisan')
+            ->execute([':id' => $id, ':calisan' => $asama . self::CALISIYOR]);
+    }
+
+    /**
+     * Bitmemiş ve sahibi görünmeyen parçalar: "bekliyor" ya da kilidi
+     * $bayatSn'den eski "isleniyor" (işçisi ölmüş).
+     *
+     * @return list<int> parça sıraları
+     */
+    public function sahipsizParcalar(int $analizId, int $bayatSn): array
+    {
+        $statement = $this->db->prepare(
+            "SELECT sira FROM transkript_parcalar
+              WHERE analiz_id = :analiz
+                AND (durum = 'bekliyor' OR (durum = 'isleniyor' AND (updated_at IS NULL OR updated_at < NOW() - INTERVAL :bayat SECOND)))
+              ORDER BY sira"
+        );
+        $statement->bindValue(':analiz', $analizId, PDO::PARAM_INT);
+        $statement->bindValue(':bayat', max(30, $bayatSn), PDO::PARAM_INT);
+        $statement->execute();
+
+        return array_map('intval', $statement->fetchAll(PDO::FETCH_COLUMN));
+    }
+
+    /** Nabız: parçayı işleyen iş hâlâ çalışıyor. */
+    public function parcaNabzi(int $analizId, int $sira): void
+    {
+        $this->db->prepare("UPDATE transkript_parcalar SET updated_at = NOW() WHERE analiz_id = :analiz AND sira = :sira AND durum = 'isleniyor'")
+            ->execute([':analiz' => $analizId, ':sira' => $sira]);
     }
 
     /** Geçici hatada aşamayı geri bırakır; kuyruk yeniden dener. */
@@ -326,12 +378,19 @@ final class AnalizRepository
     }
 
     /** @param array<string,mixed> $sonuc map çıktısı (doğrulanmış) */
-    public function parcayiBitir(int $analizId, int $sira, array $sonuc): void
+    public function parcayiBitir(int $analizId, int $sira, array $sonuc, ?string $saglayici = null, ?string $model = null): void
     {
         $this->db->prepare(
-            "UPDATE transkript_parcalar SET durum = 'tamamlandi', sonuc_json = :sonuc, hata = NULL
+            "UPDATE transkript_parcalar SET durum = 'tamamlandi', sonuc_json = :sonuc, saglayici = :saglayici, model = :model, hata = NULL
               WHERE analiz_id = :analiz AND sira = :sira"
-        )->execute([':sonuc' => json_encode($sonuc, JSON_UNESCAPED_UNICODE), ':analiz' => $analizId, ':sira' => $sira]);
+        )->execute([
+            ':sonuc'     => json_encode($sonuc, JSON_UNESCAPED_UNICODE),
+            // Raporun model özeti (ModelOzeti): bölümü hangi sağlayıcı + model yazdı.
+            ':saglayici' => $saglayici !== null && $saglayici !== '' ? mb_substr($saglayici, 0, 50) : null,
+            ':model'     => $model !== null && $model !== '' ? mb_substr($model, 0, 150) : null,
+            ':analiz'    => $analizId,
+            ':sira'      => $sira,
+        ]);
     }
 
     /** Kalıcı hata ya da denemeler tükendi: rapor bu parça olmadan, uyarıyla tamamlanır. */

@@ -13,6 +13,7 @@ declare(strict_types=1);
 
 namespace Modules\Transkript\Controllers;
 
+use App\Core\Cache\Cache;
 use App\Core\Auth;
 use App\Core\Demo;
 use App\Core\Env;
@@ -24,6 +25,7 @@ use App\Core\Setting;
 use App\Http\Controller;
 use Modules\Transkript\Ai\Ai;
 use Modules\Transkript\Ai\EvrenHesap;
+use Modules\Transkript\Ai\EvrenModelleri;
 use Modules\Transkript\Ai\EvrenProvider;
 use Modules\Transkript\Ai\YedekliSaglayici;
 use Modules\Transkript\Ayarlar;
@@ -31,6 +33,7 @@ use Modules\Transkript\PanelAyarlari;
 use Modules\Transkript\Repositories\AiKullanimRepository;
 use Modules\Transkript\Services\KuyrukDurumu;
 use PDO;
+use Throwable;
 
 final class AyarController extends Controller
 {
@@ -111,8 +114,15 @@ final class AyarController extends Controller
                 'ai_anahtar'  => Ai::isConfigured(),
                 // Son EVREN yanıtının bildirdiği kalan günlük token (API'ye gidilmez).
                 'evren_kota'  => EvrenProvider::sonKota(),
+                // 1 Kasım 2026 sonrası ücretli (GET /v1/models free_until, günde bir önbelleğe).
+                'evren_ucretsiz_son' => EvrenModelleri::ucretsizSon(),
+                'evren_ucretli'      => EvrenModelleri::ucretliMi(),
+                'evren_aylik_tahmin' => $kullanim->evrenTahmini(),
+                'evren_saglik'       => $kullanim->modelSagligi('evren', 7, static fn (string $m): string => EvrenProvider::kisaAd($m)),
                 // Panelden verilen şart onayı (sürüm, tarih); yoksa null.
                 'evren_sart'  => self::sartOnayi(),
+                // 403'ün istediği sürüm (EVREN yeni esaslı sürüm yayımladıysa onaylı sürümden büyük).
+                'evren_sart_gereken' => (int) (Cache::get(EvrenProvider::SART_GEREKEN) ?? 0),
                 'yt_anahtar'  => trim(Env::get('YOUTUBE_API_KEY')) !== '',
                 'transcript'  => implode(' → ', (array) Ayarlar::get('transcript.saglayicilar', [])),
                 'istem'       => (string) Ayarlar::get('ai.istem_surumu', 'v1'),
@@ -169,7 +179,10 @@ final class AyarController extends Controller
         if ($bilgi['onayli'] === true) {
             // Başka yerden (EVREN Test Alanı) onaylanmış: kaydı eşitle, EVREN yeniden denensin.
             self::sartOnayiniYaz($this->db, (int) ($bilgi['guncel_surum'] ?? $bilgi['onaylanan_surum'] ?? 0), false);
-        } elseif ($durumYaniti->basarili()) {
+        }
+
+        // Metin onaydan sonra da okunabilsin (onaylanan metin).
+        if ($durumYaniti->basarili()) {
             $metinYaniti = $hesap->sartMetni();
             $metin       = $metinYaniti->basarili() ? self::sartMetniOku($metinYaniti->govde, $metinYaniti->json()) : null;
         }
@@ -249,6 +262,13 @@ final class AyarController extends Controller
         }
 
         YedekliSaglayici::dinlenmeyiBitir('evren');
+
+        try {
+            if ((int) (Cache::get(EvrenProvider::SART_GEREKEN) ?? 0) <= $surum) {
+                Cache::forget(EvrenProvider::SART_GEREKEN);
+            }
+        } catch (Throwable) {
+        }
     }
 
     /** Şart metni: JSON gövdede text / content / markdown alanı, yoksa gövdenin kendisi (200 KB'a kadar). */
@@ -276,7 +296,7 @@ final class AyarController extends Controller
             $kayit = YedekliSaglayici::dinlenmeKaydi($h['ad']);
             $kalan = YedekliSaglayici::dinlenmeKalan($h['ad'], $simdi, $h['model']);
 
-            return $h + [
+            $satir = $h + [
                 'hal'      => match (true) {
                     !$h['tanimli']                                                          => 'atlandi',
                     $kalan > 0 && in_array($kayit['kod'] ?? '', YedekliSaglayici::DEVRE_DISI, true) => 'devre_disi',
@@ -288,6 +308,16 @@ final class AyarController extends Controller
                 'acilis'   => $kalan > 0 ? YedekliSaglayici::saat($simdi + $kalan, $simdi) : null,
                 'kalan_dk' => $kalan > 0 ? max(1, (int) ceil($kalan / 60)) : 0,
             ] + ($ozet[$h['ad']] ?? []) + ['son_basari' => null, 'son_hata' => null, 'son_hata_kodu' => null, 'son_hata_ayrinti' => null, 'son_model' => null, 'bugun_cagri' => 0, 'bugun_token' => 0];
+
+            return $satir + [
+                /* "auto": son başarılı çağrıda yanıt veren model tek satır
+                 * ("auto → google/gemma-4-31b"); yoksa ayardaki model. */
+                'gorunen_model' => is_string($satir['son_model']) && str_starts_with($satir['son_model'], $satir['model'] . ' → ')
+                    ? $satir['son_model'] : (string) $satir['model'],
+                // Son hatadan sonra başarılı çağrı olduysa hata eskidi: soluk, "(çözüldü)".
+                'hata_cozuldu'  => $satir['son_hata'] !== null && $satir['son_basari'] !== null
+                    && strtotime((string) $satir['son_hata']) < strtotime((string) $satir['son_basari']),
+            ];
         }, $zincir);
     }
 

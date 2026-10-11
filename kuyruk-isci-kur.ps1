@@ -3,6 +3,9 @@
 # ---------------------------------------------------------------------
 #  kuyruk-isci-kur.bat cagirir (cift tiklama). Gorev:
 #    - oturum acilinca baslar (AtLogOn, yalniz bu kullanici)
+#    - KENDILIGINDEN YENIDEN BASLAR: 5 dakikada bir tetiklenir; isci
+#      calisiyorsa (tek ornek) yeni ornek acilmaz, pencere kapandiysa ya
+#      da PHP coktuyse en gec 5 dakikada yeniden baslar
 #    - gizli pencerede calisir (powershell -WindowStyle Hidden; oturum
 #      acilisinda bir an pencere gorunebilir)
 #    - ayni anda tek ornek (MultipleInstances IgnoreNew)
@@ -32,7 +35,11 @@ if (-not (Test-Path (Join-Path $kok 'kuyruk-isci.bat'))) {
 $eylem = New-ScheduledTaskAction -Execute 'powershell.exe' `
     -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command `"& '.\kuyruk-isci.bat'`"" `
     -WorkingDirectory $kok
-$tetik = New-ScheduledTaskTrigger -AtLogOn -User $kim
+$tetik = @(
+    (New-ScheduledTaskTrigger -AtLogOn -User $kim),
+    # Oturum boyunca 5 dakikada bir: isci olduyse yeniden baslar (IgnoreNew: calisirken dokunulmaz).
+    (New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 5))
+)
 $ayar  = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::Zero) `
     -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
 $hesap = New-ScheduledTaskPrincipal -UserId $kim -LogonType Interactive -RunLevel Limited
@@ -41,5 +48,6 @@ Register-ScheduledTask -TaskName $gorev -Action $eylem -Trigger $tetik -Settings
     -Description 'Transkript analiz kuyrugu: her dakika php cy schedule:run (kuyruk-isci.bat)' -Force | Out-Null
 Start-ScheduledTask -TaskName $gorev
 
-Write-Host 'Kaydedildi. Kuyruk iscisi simdi basladi; her oturum acilisinda gizli olarak kendiliginden baslar.'
+Write-Host 'Kaydedildi. Kuyruk iscisi simdi basladi; her oturum acilisinda gizli olarak kendiliginden baslar,'
+Write-Host 'kapanirsa en gec 5 dakika icinde yeniden baslar.'
 Write-Host 'Gorev Zamanlayici > "Transkript kuyruk iscisi" ile durdurulabilir; silmek icin: kuyruk-isci-kur.bat kaldir'

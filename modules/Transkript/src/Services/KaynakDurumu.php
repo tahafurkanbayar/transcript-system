@@ -91,7 +91,8 @@ final class KaynakDurumu
             'etiket'        => match (true) {
                 $devam !== null      => self::ertelemeMetni($devam, null, $sebep),
                 is_array($kademeli)  => self::kademeliMetni($kademeli),
-                default              => self::etiket($analiz, $ayrinti, $yonetici),
+                default              => self::etiket($analiz, $ayrinti, $yonetici)
+                    . ($suruyor && in_array($analiz['asama'] ?? '', ['parca', 'birlestirme'], true) ? self::calisanMetni(Cache::get(Pipeline::CALISAN_ONEKI . $analiz['analiz_id'])) : ''),
             },
             'hata'          => $hataKodu !== null
                 ? ['kod' => $hataKodu, 'mesaj' => HataKodlari::gorunenMesaj($analiz['hata_kodu'], $ayrinti, $yonetici)]
@@ -155,6 +156,21 @@ final class KaynakDurumu
         return $sebep === AiHatasi::SEBEP_BUYUK_GIRDI
             ? 'Rapor girdisi şu an açık yapay zekâ servislerinin sınırını aşıyor; büyük bağlamlı servis (EVREN / Gemini) açılınca, ' . $saat . ' civarında kendiliğinden sürecek.'
             : 'Yapay zekâ servisleri şu an meşgul; analiz ' . $saat . ' civarında kendiliğinden sürecek.';
+    }
+
+    /**
+     * " — EVREN · glm-5.3, 2. deneme": analizde şu an çalışan sağlayıcı ve
+     * model (Pipeline yazar, 15 dk'dan eskiyse yok sayılır).
+     */
+    public static function calisanMetni(mixed $kayit, ?int $simdi = null): string
+    {
+        if (!is_array($kayit) || ($kayit['saglayici'] ?? '') === '' || (int) ($kayit['zaman'] ?? 0) < ($simdi ?? time()) - 900) {
+            return '';
+        }
+
+        $deneme = (int) ($kayit['deneme'] ?? 1);
+
+        return ' — ' . ModelOzeti::etiket((string) $kayit['saglayici'], (string) ($kayit['model'] ?? '')) . ($deneme > 1 ? ', ' . $deneme . '. deneme' : '');
     }
 
     /** @param array{seviye?:int, biten?:int, toplam?:int} $durum */

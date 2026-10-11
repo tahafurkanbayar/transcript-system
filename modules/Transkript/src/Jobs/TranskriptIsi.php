@@ -104,10 +104,45 @@ abstract class TranskriptIsi extends Job
         return new static((int) ($payload['analiz_id'] ?? 0));
     }
 
+    /**
+     * İş sürerken nabız atılır (IsNabzi): kuyruk satırı ve aşama kilidi
+     * tazelenir; iş ölürse 5 dk sonra kuyruğa geri döner.
+     */
     public function handle(): void
     {
-        KuyrukDurumu::imle();
+        IsNabzi::basla(fn () => $this->nabizYaz());
 
+        try {
+            $this->isle();
+        } finally {
+            IsNabzi::bitir();
+        }
+    }
+
+    /**
+     * Bu iş aşama (ya da parça) kilidini ALDI mı? Nabız yalnız alınmış
+     * kilidi tazeler: kilidi almadan tazelemek, ölen işçiden kalan bayat
+     * kilidi taze gösterir ve devralmayı engellerdi (11.10.2026 canlı
+     * denemesi: parça 3 sahipsiz "işleniyor" kaldı).
+     */
+    protected bool $kilitte = false;
+
+    /**
+     * Nabız: bu işin kuyruk satırı (çekirdek releaseStuck'a karşı) ve
+     * aldığı aşamanın kilidi. Parça işi parça kilidini de ekler.
+     */
+    protected function nabizYaz(): void
+    {
+        $this->db()->prepare('UPDATE `' . KuyrukDurumu::tablo() . "` SET ayrildi_at = NOW() WHERE durum = 'calisiyor' AND sinif = :sinif AND veri = :veri")
+            ->execute([':sinif' => static::class, ':veri' => (string) json_encode($this->toPayload(), JSON_UNESCAPED_UNICODE)]);
+
+        if (static::ASAMA !== '' && $this->kilitte) {
+            $this->analizler()->asamaNabzi($this->analizId, static::ASAMA);
+        }
+    }
+
+    protected function isle(): void
+    {
         $analiz = $this->analizler()->bul($this->analizId);
 
         if ($analiz === null || in_array($analiz['durum'], AnalizRepository::BITMIS_DURUMLAR, true)) {
@@ -117,6 +152,8 @@ abstract class TranskriptIsi extends Job
         if (!$this->analizler()->asamayiAl($this->analizId, static::ASAMA, self::bayatSn())) {
             return;
         }
+
+        $this->kilitte = true;
 
         try {
             $this->calis($analiz);
@@ -317,9 +354,10 @@ abstract class TranskriptIsi extends Job
     }
 
     /** Takılı sayılma süresi: kuyruğun zaman aşımıyla aynı. */
+    /** Aşama / parça kilidi bu kadar saniye nabızsız kalırsa devralınır (KuyrukDurumu::nabizEsigi). */
     protected static function bayatSn(): int
     {
-        return max(60, (int) Config::get('queue.timeout', 300));
+        return KuyrukDurumu::nabizEsigi();
     }
 
     protected function db(): PDO
@@ -363,7 +401,7 @@ abstract class TranskriptIsi extends Job
 
     protected function pipeline(): Pipeline
     {
-        return new Pipeline($this->aiKullanim(), $this->analizId);
+        return new Pipeline($this->aiKullanim(), $this->analizId, analizler: $this->analizler());
     }
 
     /**

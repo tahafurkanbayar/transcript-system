@@ -93,7 +93,11 @@ SQL'de `KaynakRepository::gorunurluk()`).
 `Ai\EvrenProvider` OpenAI uyumludur. Kullanım şartlarını kod kendiliğinden ONAYLAMAZ;
 yalnız yönetici Durum → "Şartları oku ve onayla" ile onaylar (`Ai\EvrenHesap`). 403
 gelirse 1 saat atlanır. Maliyet 0 (1 Kasım 2026'ya kadar). Her sağlayıcının
-modeli panelden (`model_evren`, Gemini için `ai_model`).
+modeli panelden (`model_evren`, Gemini için `ai_model`); EVREN'de bölüm / rapor
+için ayrı model (`model_evren_bolum`, `model_evren_rapor`), "auto" analiz başına
+sabitlenir. EVREN akışlı (SSE), json_schema (strict), düşünme "low"; ayrıntı ve
+ölçümler `docs/evren/`, API `docs/EVREN_LLM_API_Rehberi.md`. Gerçek EVREN'e giden
+ölçüm: `modules/Transkript/bin/evren-olcum.php` (önce `--dry-run`).
 
 **Transcript zinciri** (`TranscriptProviderInterface`, sıra `.env` / config'ten):
 1. `YouTubeTranscriptProvider`: YouTube altyazısı.

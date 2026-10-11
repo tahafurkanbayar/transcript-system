@@ -75,6 +75,24 @@ final class YedekliSaglayici implements Provider
     /** Ayar hatası: erteleme sebebi değil; süre dolana ya da yönetici sıfırlayana dek devre dışı. */
     public const DEVRE_DISI = ['yetkisiz', 'model_bulunamadi', 'sartlar_onaylanmadi'];
 
+    /**
+     * Yalnız o MODELE bağlı dinlenmeler: aynı sağlayıcının başka modeli
+     * denenebilir. EVREN zincirde iki halkadır (asıl model + hızlı yedek
+     * model, Pipeline::saglayiciUret); asıl model zaman aşımına uğrayınca
+     * yedek model yine denenir. Tek halkalı sağlayıcıda fark yoktur.
+     */
+    public const MODEL_KAPSAMLI = ['model_bulunamadi', 'zaman_asimi', 'sunucu', 'dusunme_butcesi'];
+
+    /**
+     * DEVRE KESİCİ: art arda 429'da dinlenme katlanır (1. → sağlayıcının
+     * Retry-After'ı ya da 60 sn, 2. → 5 dk, 3. → 15 dk, 4.+ → 60 dk).
+     * Başarılı çağrı sayacı sıfırlar. 11.10.2026: OpenRouter'ın ücretsiz
+     * modeli 26 çağrının 26'sında 429 verdi; her zincirde yeniden deneniyordu.
+     */
+    public const KADEME_429 = [0, 300, 900, 3600];
+
+    private const ARDISIK_429 = 'ardisik429:';
+
     private const GECICI = ['rate_limit', 'sunucu', 'baglanti', 'zaman_asimi'];
 
     /** Yöneticiye gösterilen kısa sebep (özet ve durum tablosu). */
@@ -102,8 +120,19 @@ final class YedekliSaglayici implements Provider
     /** Son başarılı halka (sonAd / model). */
     private ?int $son = null;
 
-    /** @var list<array{ad:string, model:string, kod:string, mesaj:string, sure_ms:int}> */
+    /** @var list<array{ad:string, model:string, kod:string, mesaj:string, sure_ms:int, baslangic:float, olcum:array<string,mixed>}> */
     private array $denemeler = [];
+
+    /** @var array{baslangic:float, sure_ms:int}|null son başarılı denemenin kendi başlangıcı ve süresi */
+    private ?array $sonDeneme = null;
+
+    /** @var ?Closure(string, string, int): void her halka denenmeden önce (ad, model, kaçıncı deneme); ekrandaki ilerleme */
+    private static ?Closure $halkaKancasi = null;
+
+    public static function halkaKancasi(?Closure $kanca): void
+    {
+        self::$halkaKancasi = $kanca;
+    }
 
     /** @var list<string> son çağrıda istek sığmadığı için hiç denenmeyenler (GirisSiniri) */
     private array $atlananlar = [];
@@ -156,13 +185,21 @@ final class YedekliSaglayici implements Provider
 
     /**
      * Son çağrıda düşen sağlayıcılar (başarılı olan hariç). Pipeline
-     * bunları kullanım kaydına "hata" satırı olarak yazar.
+     * bunları kullanım kaydına "hata" satırı olarak, KENDİ başlangıç
+     * zamanı ve süresiyle yazar (eskiden hepsi zincirin bitiş saatini
+     * alıyordu; başarılı satırın süresi de zincirin başından ölçülüyordu).
      *
-     * @return list<array{ad:string, model:string, kod:string, mesaj:string, sure_ms:int}>
+     * @return list<array{ad:string, model:string, kod:string, mesaj:string, sure_ms:int, baslangic:float, olcum:array<string,mixed>}>
      */
     public function denemeler(): array
     {
         return $this->denemeler;
+    }
+
+    /** @return array{baslangic:float, sure_ms:int}|null son başarılı denemenin kendi zamanı */
+    public function sonDeneme(): ?array
+    {
+        return $this->sonDeneme;
     }
 
     /** @return list<string> son çağrıda isteğe sığmadığı için atlananlar */
@@ -208,7 +245,7 @@ final class YedekliSaglayici implements Provider
             return 0;
         }
 
-        if ($model !== null && $kayit['kod'] === 'model_bulunamadi' && $kayit['model'] !== '' && $kayit['model'] !== $model) {
+        if ($model !== null && in_array($kayit['kod'], self::MODEL_KAPSAMLI, true) && $kayit['model'] !== '' && $kayit['model'] !== $model) {
             return 0;
         }
 
@@ -242,6 +279,30 @@ final class YedekliSaglayici implements Provider
     public static function dinlenmeyiBitir(string $ad): void
     {
         DinlenmeDeposu::sil($ad);
+        DinlenmeDeposu::sil(self::ARDISIK_429 . $ad);
+    }
+
+    /**
+     * 429 sayacını artırır; dinlenme süresi (sn): ilk 429'da sağlayıcının
+     * önerisi (yoksa 60), sonra KADEME_429 (önerisi daha uzunsa o).
+     */
+    public static function ardisik429(string $ad, ?int $bekleme, ?int $simdi = null): int
+    {
+        $kayit = DinlenmeDeposu::al(self::ARDISIK_429 . $ad);
+        $n     = (is_array($kayit) ? (int) ($kayit['n'] ?? 0) : 0) + 1;
+        $simdi ??= time();
+
+        DinlenmeDeposu::yaz(self::ARDISIK_429 . $ad, ['n' => $n, 'zaman' => $simdi, 'sakla' => $simdi + 2 * 3600]);
+
+        $kademe = self::KADEME_429[min($n, count(self::KADEME_429)) - 1];
+
+        return max((int) $bekleme, $kademe, $n === 1 && (int) $bekleme <= 0 ? self::dinlenmeSuresi('rate_limit') : 0);
+    }
+
+    /** Zincirdeki bir isteğin bütün denemeleri en çok bu kadar sürer (sn); aşılırsa iş ertelenir. */
+    public static function zincirEnCokSn(): int
+    {
+        return max(60, (int) Ayarlar::get('ai.yedek.zincir_en_cok_sn', 900));
     }
 
     public static function dinlenmeSuresi(string $kod): int
@@ -282,14 +343,22 @@ final class YedekliSaglayici implements Provider
     {
         $this->denemeler  = [];
         $this->atlananlar = [];
+        $this->sonDeneme  = null;
         $simdi = $this->saat !== null ? ($this->saat)() : time();
         $son   = null;
+        $zincirBas = microtime(true);
 
         foreach ($this->halkalar as $i => $halka) {
             $model = $halka['saglayici']->model();
 
             if (self::dinlenmeKalan($halka['ad'], $simdi, $model) > 0) {
                 continue;
+            }
+
+            // Bütün denemeler üst sınırı aştı: kalan halkalar denenmez, iş kısa süre sonra yeniden.
+            if ($son !== null && microtime(true) - $zincirBas > self::zincirEnCokSn()) {
+                throw new AiHatasi('Yedek zincirinin süre sınırı (' . self::zincirEnCokSn() . ' sn) doldu; iş kısa süre sonra yeniden denenecek. '
+                    . self::teknikOzet($this->denemeler), 'zincir_dinleniyor', $son->httpDurumu, $son, 60);
             }
 
             // İstek bu sağlayıcının sınırını aşıyor: hiç gönderilmez, sağlayıcı dinlenmez.
@@ -299,36 +368,55 @@ final class YedekliSaglayici implements Provider
                 continue;
             }
 
-            $bas = hrtime(true);
+            if (self::$halkaKancasi !== null) {
+                (self::$halkaKancasi)($halka['ad'], $model, count($this->denemeler) + 1);
+            }
+
+            $bas   = hrtime(true);
+            $basAn = microtime(true);
 
             try {
                 $yanit = $cagri($halka['saglayici'], (array) ($halka['ek'] ?? []));
 
-                $this->son = $i;
+                $this->son       = $i;
+                $this->sonDeneme = ['baslangic' => $basAn, 'sure_ms' => (int) ((hrtime(true) - $bas) / 1_000_000)];
+
+                if (DinlenmeDeposu::al(self::ARDISIK_429 . $halka['ad']) !== null) {
+                    DinlenmeDeposu::sil(self::ARDISIK_429 . $halka['ad']);
+                }
 
                 return $yanit;
             } catch (AiHatasi $e) {
-                $kod     = $e->kod;
-                $bekleme = $e->bekleme;
-
-                // Groq'un 413'ü dakikalık kotanın dolması olabilir: hız sınırı gibi bekle, sınır öğrenme.
-                if (GirisSiniri::buyukIstekHatasi($e) && GirisSiniri::dakikalikDoluluk($e->getMessage(), $boyut)) {
-                    $kod     = 'rate_limit';
-                    $bekleme = 60;
-                } elseif (GirisSiniri::buyukIstekHatasi($e)) {
-                    GirisSiniri::ogren($halka['ad'], $model, $boyut, $simdi);
-                }
-
-                $son = $kod === $e->kod ? $e : new AiHatasi($e->getMessage(), $kod, $e->httpDurumu, $e, $bekleme);
+                $son = $e;
                 $this->denemeler[] = [
-                    'ad'      => $halka['ad'],
-                    'model'   => $model,
-                    'kod'     => $kod,
-                    'mesaj'   => $e->getMessage(),
-                    'sure_ms' => (int) ((hrtime(true) - $bas) / 1_000_000),
+                    'ad'        => $halka['ad'],
+                    'model'     => $model,
+                    'kod'       => $e->kod,
+                    'mesaj'     => $e->getMessage(),
+                    'sure_ms'   => (int) ((hrtime(true) - $bas) / 1_000_000),
+                    'baslangic' => $basAn,
+                    // Hatalı çağrının ölçümü (kısmi kullanım dahil): kota farkı kapanır.
+                    'olcum'     => $e->olcum !== [] ? $e->olcum : ($halka['saglayici'] instanceof HttpProvider ? $halka['saglayici']->sonOlcum() : []),
                 ];
 
-                self::dinlendir($halka['ad'], $kod, $simdi, $bekleme, $model);
+                /* 413: isteğin %80'i sınır olur; aynı boyut bu sağlayıcıya
+                 * yeniden gitmez (birleştirme küçük gruplara böler). Dakikalık
+                 * kota (Groq TPM) ise sağlayıcı 60 sn dinlenir: sıradaki
+                 * küçük istek dolu dakikaya gitmesin. Öteki 413 dinletmez. */
+                if (GirisSiniri::buyukIstekHatasi($e)) {
+                    $dakikalik = GirisSiniri::dakikalik($e->getMessage());
+                    GirisSiniri::ogren($halka['ad'], $model, $boyut, $simdi, $dakikalik);
+
+                    if ($dakikalik) {
+                        self::dinlendir($halka['ad'], 'rate_limit', $simdi, GirisSiniri::DAKIKALIK_DINLENME_SN, $model);
+                    }
+
+                    continue;
+                }
+
+                $bekleme = $e->kod === 'rate_limit' ? self::ardisik429($halka['ad'], $e->bekleme, $simdi) : $e->bekleme;
+
+                self::dinlendir($halka['ad'], $e->kod, $simdi, $bekleme, $model);
             }
         }
 

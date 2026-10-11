@@ -29,6 +29,7 @@
 use App\Core\View;
 use Modules\Transkript\Ayarlar;
 use Modules\Transkript\Services\DisaAktarim;
+use Modules\Transkript\Services\ModelOzeti;
 use Modules\Transkript\Services\RaporVerisi;
 use Modules\Transkript\Varliklar;
 
@@ -175,7 +176,13 @@ $indir = static fn (string $bicim): string => url('panel/transkript/' . $kaynakI
                 <?php endforeach; ?>
             </ol>
             <?php if (!$durdu): ?>
-                <p class="cy-panel__note mb-0">Sayfayı kapatabilirsiniz; analiz arka planda sürer.<?= $rapor !== null ? ' Yeni rapor hazır olana kadar aşağıda önceki rapor görünür.' : '' ?></p>
+                <?php /* İşçi yokken tarayıcı işler: "kapatabilirsiniz" yanlış olurdu (JS ilerlemeyle günceller). */ ?>
+                <?php $tarayiciModu = !empty($durum['tarayici_isle']); ?>
+                <p class="cy-panel__note mb-0">
+                    <span class="js-tk-not-isci"<?= $tarayiciModu ? ' hidden' : '' ?>>Sayfayı kapatabilirsiniz; analiz arka planda sürer.</span>
+                    <span class="js-tk-not-tarayici"<?= $tarayiciModu ? '' : ' hidden' ?>>Kuyruk işçisi çalışmıyor: bu sayfa (ya da başka bir Transkript sayfası) açık kaldıkça analiz sürer; hepsi kapanırsa bekler.</span>
+                    <?= $rapor !== null ? ' Yeni rapor hazır olana kadar aşağıda önceki rapor görünür.' : '' ?>
+                </p>
             <?php endif; ?>
         </section>
 
@@ -389,7 +396,17 @@ $indir = static fn (string $bicim): string => url('panel/transkript/' . $kaynakI
                     <h3 class="cy-panel__title mb-2"><?= icon('info', 'cy-icon cy-icon--sm') ?> Bu rapor</h3>
                     <dl class="tk-bilgi__liste">
                         <dt>Hazırlandı</dt><dd><?= e(human_date($analiz['bitti_at'] !== null ? (string) $analiz['bitti_at'] : null)) ?></dd>
-                        <dt>Model</dt><dd class="cy-mono"><?= e($analiz['model'] !== '' ? $analiz['model'] : '—') ?></dd>
+                        <dt>Model</dt>
+                        <?php $modelSatirlari = $analiz['modeller'] ?? ModelOzeti::satirlar(null, (string) $analiz['model']); ?>
+                        <dd class="cy-mono tk-bilgi__modeller">
+                            <?php if ($modelSatirlari === []): ?>
+                                —
+                            <?php else: ?>
+                                <?php foreach ($modelSatirlari as $satir): ?>
+                                    <span class="d-block"><?php if ($satir['etiket'] !== ''): ?><span class="cy-muted"><?= e($satir['etiket']) ?>:</span> <?php endif; ?><?= e($satir['deger']) ?></span>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
+                        </dd>
                         <dt>İstem</dt><dd class="cy-mono"><?= e($analiz['prompt_surumu'] !== '' ? $analiz['prompt_surumu'] : '—') ?></dd>
                         <dt>Transcript</dt><dd><?= $veri['transcript'] !== null ? e(RaporVerisi::dilAdi((string) $veri['transcript']['dil'])) : '—' ?></dd>
                         <?php /* Token ve maliyet yalnız yöneticiye (kullanıcı kararı: üye ve editör görmez). */ ?>

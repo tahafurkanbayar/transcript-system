@@ -89,6 +89,8 @@ final class RaporVerisi
                 // Raporu başlatan (yeniden analiz hakkı; API yalnız yöneticiye gösterir).
                 'kullanici_id'  => $analiz['kullanici_id'] !== null ? (int) $analiz['kullanici_id'] : null,
                 'model'         => (string) ($analiz['model'] ?? ''),
+                // Bölüm / ara özet / birleştirme modelleri; eski raporda yalnız "model".
+                'modeller'      => ModelOzeti::satirlar($analiz['modeller'] ?? null, (string) ($analiz['model'] ?? '')),
                 'prompt_surumu' => (string) ($analiz['prompt_surumu'] ?? ''),
                 'toplam_token'  => (int) $analiz['toplam_token'],
                 'maliyet_usd'   => (float) $analiz['maliyet_usd'],

@@ -453,8 +453,9 @@ final class KaynakController extends Controller
             Response::error('Kuyruğu tarayıcı üzerinden işleme kapalı.', 403);
         }
 
+        // bekleyen 0: sayfanın tik döngüsü durur (işçi işler).
         if (KuyrukDurumu::isciGorulduMu()) {
-            Response::json(['success' => true, 'type' => 'info', 'description' => 'Kuyruk işçisi çalışıyor.', 'islenen' => 0], 202);
+            Response::json(['success' => true, 'type' => 'info', 'description' => 'Kuyruk işçisi çalışıyor.', 'islenen' => 0, 'bekleyen' => 0], 202);
         }
 
         if (session_status() === PHP_SESSION_ACTIVE) {
@@ -464,13 +465,15 @@ final class KaynakController extends Controller
         $kilit = $this->db->query("SELECT GET_LOCK('transkript_kuyruk_tik', 0)")->fetchColumn();
 
         if ((int) $kilit !== 1) {
-            Response::json(['success' => true, 'type' => 'info', 'description' => 'Kuyruk başka bir sekmede işleniyor.', 'islenen' => 0], 202);
+            Response::json(['success' => true, 'type' => 'info', 'description' => 'Kuyruk başka bir sekmede işleniyor.', 'islenen' => 0,
+                'bekleyen' => $this->hazirIsSayisi()], 202);
         }
 
         ignore_user_abort(true);
         @set_time_limit(max(300, (int) \App\Core\Config::get('queue.timeout', 300) + 60));
 
         try {
+            KuyrukDurumu::bayatlariBirak($this->db);
             $islendi = Queue::runNext('transkript');
         } catch (Throwable $e) {
             Logger::error('Kuyruk tarayıcıdan işlenirken hata', ['ayrinti' => $e->getMessage(), 'kullanici' => Auth::id()], 'transkript');
@@ -479,7 +482,18 @@ final class KaynakController extends Controller
             $this->db->query("SELECT RELEASE_LOCK('transkript_kuyruk_tik')")->fetchColumn();
         }
 
-        Response::success($islendi ? 'Bir iş işlendi.' : 'Sırada hazır iş yok.', ['islenen' => $islendi ? 1 : 0]);
+        // bekleyen > 0: sayfa hemen bir sonraki tik'i atar (kuyruk boşalana kadar, analiz bitse de).
+        Response::success($islendi ? 'Bir iş işlendi.' : 'Sırada hazır iş yok.', ['islenen' => $islendi ? 1 : 0, 'bekleyen' => $this->hazirIsSayisi()]);
+    }
+
+    /** Sırada hazır bekleyen "transkript" işi (tik döngüsü buna göre sürer). */
+    private function hazirIsSayisi(): int
+    {
+        try {
+            return (int) (new KuyrukDurumu($this->db))->getir()['bekleyen'];
+        } catch (Throwable) {
+            return 0;
+        }
     }
 
     /**

@@ -23,6 +23,8 @@
  *                                            başlangıcına çekilir
  *     "Atılır": içerik maddesinde yalnız zaman (at) boşalır, madde
  *     kalır; zaman çizelgesi maddesi (yalnız zamandan ibaret) silinir.
+ *     Birleştirmede (ara ya da son) önce ZamanYedegi'ne sorulur: girdideki
+ *     kaynak maddenin zamanı, yoksa maddenin geldiği bölümün başlangıcı.
  *
  *  Çıktıdaki zamanlar "hh:mm:ss" metnidir (Pipeline::ogeler milisaniyeye
  *  çevirir); ayrıca konu aralıkları sıralanır, aynı ana düşen zaman
@@ -50,8 +52,27 @@ final class ResultValidator
     private const OZET_EN_COK    = 5000;
     private const DETAYLI_EN_COK = 30000;
 
+    /**
+     * Şema zorlaması olmayan sağlayıcıda (json_object) modeller alan adını
+     * değiştirebiliyor: 11.10.2026'da gemma önemli noktayı {"point": …},
+     * iddiayı {"claim": …} yazdı; doğrulayıcı "text" aradığı için maddeler
+     * "bozuk" sayılıp atıldı. İlk dolu ad kullanılır.
+     */
+    private const METIN_ADLARI = [
+        'important_points'      => ['text', 'point', 'nokta', 'content', 'description', 'title', 'summary', 'metin'],
+        'technical_information' => ['name', 'term', 'title', 'ad', 'isim', 'terim'],
+        'claims'                => ['text', 'claim', 'iddia', 'statement', 'content'],
+        'ideas'                 => ['text', 'idea', 'fikir', 'suggestion', 'content', 'description'],
+        'timestamps'            => ['label', 'title', 'text', 'baslik', 'etiket', 'topic'],
+    ];
+
+    private const ZAMAN_ADLARI = ['at', 'time', 'timestamp', 'zaman', 'start', 'baslangic'];
+
     /** @var list<string> */
     private array $uyarilar = [];
+
+    /** Bu doğrulamada zamanı ZamanYedegi'nden tamamlanan madde sayısı. */
+    private int $tamamlanan = 0;
 
     /* =================================================================
      *  1) AYIKLAMA
@@ -93,20 +114,22 @@ final class ResultValidator
     /**
      * @param  array<string,mixed> $veri
      * @param  list<int>           $baslangiclar Parçadaki gerçek segment başlangıçları (ms, sıralı)
+     * @param  ZamanYedegi|null    $yedek        ara birleştirmede girdi bölümlerinden zaman
      * @return array{sonuc: array<string,mixed>, uyarilar: list<string>}
      *
      * @throws GecersizSonuc
      */
-    public function parca(array $veri, int $basMs, int $bitMs, array $baslangiclar): array
+    public function parca(array $veri, int $basMs, int $bitMs, array $baslangiclar, ?ZamanYedegi $yedek = null): array
     {
-        $this->uyarilar = [];
+        $this->uyarilar   = [];
+        $this->tamamlanan = 0;
         $sorunlar = $this->zorunluMetinler($veri, ['topic', 'summary']);
 
         if ($sorunlar !== []) {
             throw new GecersizSonuc($sorunlar);
         }
 
-        $zaman = fn (mixed $deger): ?string => $this->yaslan($deger, $basMs, $bitMs, $baslangiclar);
+        $zaman = $this->zamanci($basMs, $bitMs, $baslangiclar, $yedek);
 
         $sonuc = [
             'chunk'                 => ['start' => Zaman::yaz($basMs), 'end' => Zaman::yaz($bitMs)],
@@ -118,7 +141,7 @@ final class ResultValidator
             throw new GecersizSonuc(['Analiz boş: summary ve bütün listeler boş.']);
         }
 
-        return ['sonuc' => $sonuc, 'uyarilar' => $this->uyarilar];
+        return ['sonuc' => $sonuc, 'uyarilar' => $this->tamamlananUyarisi()];
     }
 
     /* =================================================================
@@ -128,13 +151,15 @@ final class ResultValidator
     /**
      * @param  array<string,mixed> $veri
      * @param  list<int>           $baslangiclar Transcript'in bütün segment başlangıçları (ms, sıralı)
+     * @param  ZamanYedegi|null    $yedek        girdi bölümlerinden zaman (boş bırakılan "at" için)
      * @return array{sonuc: array<string,mixed>, uyarilar: list<string>}
      *
      * @throws GecersizSonuc
      */
-    public function birlestirme(array $veri, int $bitMs, array $baslangiclar): array
+    public function birlestirme(array $veri, int $bitMs, array $baslangiclar, ?ZamanYedegi $yedek = null): array
     {
-        $this->uyarilar = [];
+        $this->uyarilar   = [];
+        $this->tamamlanan = 0;
         $sorunlar = $this->zorunluMetinler($veri, ['summary']);
 
         if ($sorunlar === [] && self::metin($veri['summary'], self::OZET_EN_COK, true) === '') {
@@ -145,7 +170,7 @@ final class ResultValidator
             throw new GecersizSonuc($sorunlar);
         }
 
-        $zaman = fn (mixed $deger): ?string => $this->yaslan($deger, 0, $bitMs, $baslangiclar);
+        $zaman = $this->zamanci(0, $bitMs, $baslangiclar, $yedek);
 
         $konular = $this->liste($veri, 'topics', function (array $m) use ($zaman): ?array {
             $baslik = self::metin($m['title'] ?? null, self::BASLIK_EN_COK);
@@ -181,7 +206,7 @@ final class ResultValidator
             'user_relevance'   => null,
         ];
 
-        return ['sonuc' => $sonuc, 'uyarilar' => $this->uyarilar];
+        return ['sonuc' => $sonuc, 'uyarilar' => $this->tamamlananUyarisi()];
     }
 
     /**
@@ -239,60 +264,61 @@ final class ResultValidator
      * ============================================================== */
 
     /**
-     * @param  array<string,mixed>       $veri
-     * @param  \Closure(mixed): ?string  $zaman
+     * @param  array<string,mixed>              $veri
+     * @param  \Closure(mixed, string): ?string $zaman değer ve maddenin metni (yedek arama için)
      * @return array<string,list<array<string,mixed>>>
      */
     private function maddeler(array $veri, \Closure $zaman): array
     {
         $noktalar = $this->liste($veri, 'important_points', static function (array $m) use ($zaman): ?array {
-            $metin = self::metin($m['text'] ?? null, self::MADDE_EN_COK);
-            $onem  = strtolower(trim((string) ($m['importance'] ?? '')));
+            $metin = self::metin(self::alan($m, self::METIN_ADLARI['important_points']), self::MADDE_EN_COK);
+            $onem  = strtolower(trim((string) self::alan($m, ['importance', 'onem', 'priority'])));
 
             return $metin === '' ? null : [
                 'text'       => $metin,
-                'at'         => $zaman($m['at'] ?? null),
+                'at'         => $zaman(self::alan($m, self::ZAMAN_ADLARI), $metin),
                 'importance' => in_array($onem, self::ONEM, true) ? $onem : 'useful',
             ];
         });
 
         $teknik = $this->liste($veri, 'technical_information', static function (array $m) use ($zaman): ?array {
-            $ad = self::metin($m['name'] ?? null, self::BASLIK_EN_COK);
+            $ad       = self::metin(self::alan($m, self::METIN_ADLARI['technical_information']), self::BASLIK_EN_COK);
+            $aciklama = self::metinVeyaNull(self::alan($m, ['description', 'aciklama', 'detail', 'details', 'explanation']), self::MADDE_EN_COK);
 
             return $ad === '' ? null : [
                 'name'        => $ad,
-                'category'    => self::metinVeyaNull($m['category'] ?? null, 100),
-                'description' => self::metinVeyaNull($m['description'] ?? null, self::MADDE_EN_COK),
-                'at'          => $zaman($m['at'] ?? null),
+                'category'    => self::metinVeyaNull(self::alan($m, ['category', 'kategori', 'type']), 100),
+                'description' => $aciklama,
+                'at'          => $zaman(self::alan($m, self::ZAMAN_ADLARI), $ad . ' ' . $aciklama),
             ];
         });
 
         $iddialar = $this->liste($veri, 'claims', static function (array $m) use ($zaman): ?array {
-            $metin = self::metin($m['text'] ?? null, self::MADDE_EN_COK);
+            $metin = self::metin(self::alan($m, self::METIN_ADLARI['claims']), self::MADDE_EN_COK);
             $guven = strtolower(trim((string) ($m['speaker_confidence'] ?? '')));
 
             return $metin === '' ? null : [
                 'text'               => $metin,
-                'at'                 => $zaman($m['at'] ?? null),
+                'at'                 => $zaman(self::alan($m, self::ZAMAN_ADLARI), $metin),
                 'speaker_confidence' => in_array($guven, self::GUVEN, true) ? $guven : null,
             ];
         });
 
         $fikirler = $this->liste($veri, 'ideas', static function (array $m) use ($zaman): ?array {
-            $metin = self::metin($m['text'] ?? null, self::MADDE_EN_COK);
+            $metin = self::metin(self::alan($m, self::METIN_ADLARI['ideas']), self::MADDE_EN_COK);
 
             return $metin === '' ? null : [
                 'text' => $metin,
-                'type' => self::metinVeyaNull($m['type'] ?? null, 100),
-                'at'   => $zaman($m['at'] ?? null),
+                'type' => self::metinVeyaNull(self::alan($m, ['type', 'tur', 'category']), 100),
+                'at'   => $zaman(self::alan($m, self::ZAMAN_ADLARI), $metin),
             ];
         });
 
         // Zaman çizelgesi yalnız zamandan ibaret: zamanı tutmayan madde silinir.
         $gorulen = [];
         $zamanlar = $this->liste($veri, 'timestamps', static function (array $m) use ($zaman, &$gorulen): ?array {
-            $at     = $zaman($m['at'] ?? null);
-            $etiket = self::metin($m['label'] ?? null, self::BASLIK_EN_COK);
+            $etiket = self::metin(self::alan($m, self::METIN_ADLARI['timestamps']), self::BASLIK_EN_COK);
+            $at     = $etiket !== '' ? $zaman(self::alan($m, self::ZAMAN_ADLARI), $etiket) : null;
 
             if ($at === null || $etiket === '' || isset($gorulen[$at])) {
                 return null;
@@ -311,6 +337,57 @@ final class ResultValidator
             'ideas'                 => $fikirler,
             'timestamps'            => $zamanlar,
         ];
+    }
+
+    /**
+     * Madde zamanı: yaslan(); tutmazsa (boş, okunamaz, aralık dışı) ve yedek
+     * verildiyse maddenin metniyle girdideki kaynaktan (ZamanYedegi).
+     *
+     * @param  list<int> $baslangiclar
+     * @return \Closure(mixed, string=): ?string
+     */
+    private function zamanci(int $basMs, int $bitMs, array $baslangiclar, ?ZamanYedegi $yedek): \Closure
+    {
+        return function (mixed $deger, string $metin = '') use ($basMs, $bitMs, $baslangiclar, $yedek): ?string {
+            $at = $this->yaslan($deger, $basMs, $bitMs, $baslangiclar);
+
+            if ($at !== null || $yedek === null || trim($metin) === '') {
+                return $at;
+            }
+
+            $at = $this->yaslan($yedek->bul($metin), $basMs, $bitMs, $baslangiclar);
+
+            if ($at !== null) {
+                $this->tamamlanan++;
+            }
+
+            return $at;
+        };
+    }
+
+    /** @return list<string> uyarılar + kaç maddenin zamanı kaynaktan tamamlandı */
+    private function tamamlananUyarisi(): array
+    {
+        return $this->tamamlanan > 0
+            ? [...$this->uyarilar, sprintf('%d maddenin boş zamanı kaynak bölümden tamamlandı.', $this->tamamlanan)]
+            : $this->uyarilar;
+    }
+
+    /**
+     * Maddenin ilk dolu alanı (adlar sırasıyla); hiçbiri yoksa null.
+     *
+     * @param array<string,mixed> $m
+     * @param list<string>        $adlar
+     */
+    private static function alan(array $m, array $adlar): mixed
+    {
+        foreach ($adlar as $ad) {
+            if (isset($m[$ad]) && (!is_string($m[$ad]) || trim($m[$ad]) !== '')) {
+                return $m[$ad];
+            }
+        }
+
+        return null;
     }
 
     /**

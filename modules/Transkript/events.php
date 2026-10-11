@@ -44,6 +44,7 @@ use App\Core\SidebarMenu;
 use App\Core\View;
 use App\Models\User;
 use Modules\Transkript\Ai\Ai;
+use Modules\Transkript\Ai\EvrenModelleri;
 use Modules\Transkript\Ayarlar;
 use Modules\Transkript\Controllers\AnasayfaController;
 use Modules\Transkript\Controllers\AyarController;
@@ -64,6 +65,7 @@ if (PHP_SAPI === 'cli' && (bool) Ayarlar::get('kuyruk.zamanlanmis_gorev', true))
         $sinir = max(1, (int) Ayarlar::get('kuyruk.en_cok_is', 50));
 
         KuyrukDurumu::imle();
+        KuyrukDurumu::bayatlariBirak();
 
         for ($i = 0; $i < $sinir && time() < $bitis; $i++) {
             if (!Queue::runNext('transkript')) {
@@ -85,6 +87,17 @@ if (PHP_SAPI === 'cli') {
             Logger::info('Silinen hesapların Transkript kayıtları temizlendi', $silinen, 'transkript');
         }
     })->daily('03:40')->describe('Silinen hesapların Transkript kişisel kayıtlarını siler');
+
+    /* EVREN model listesi ve fiyatı (GET /v1/models) önbelleğe: panel
+     * listesi dinamik, ücretsiz dönemin sonu (free_until) buradan okunur.
+     * Panel isteği EVREN'e gitmez (Ai\EvrenModelleri). */
+    Schedule::call('transkript-evren-modeller', static function (): void {
+        $adet = EvrenModelleri::yenile();
+
+        if ($adet === null && Ai::zincirdeKullanilabilir('evren', true)) {
+            Logger::warning('EVREN model listesi okunamadı; panel sabit listeyi kullanıyor', [], 'transkript');
+        }
+    })->daily('06:10')->describe('EVREN model listesini ve fiyatını önbelleğe alır');
 
     /* Pro üyelik: süresi dolan Ücretsiz plana döner, bitime yakın olana
      * e-posta (Uyelik\UyelikYonetimi). */

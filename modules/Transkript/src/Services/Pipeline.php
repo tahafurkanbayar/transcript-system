@@ -29,14 +29,17 @@ declare(strict_types=1);
 
 namespace Modules\Transkript\Services;
 
+use App\Core\Cache\Cache;
 use Closure;
 use Modules\Transkript\Ai\Ai;
 use Modules\Transkript\Ai\AiHatasi;
+use Modules\Transkript\Ai\EvrenProvider;
 use Modules\Transkript\Ai\GirisSiniri;
 use Modules\Transkript\Ai\Provider;
 use Modules\Transkript\Ai\YedekliSaglayici;
 use Modules\Transkript\Ayarlar;
 use Modules\Transkript\Repositories\AiKullanimRepository;
+use Modules\Transkript\Repositories\AnalizRepository;
 use Modules\Transkript\Transcript\Segment;
 use Modules\Transkript\Zaman;
 
@@ -122,6 +125,8 @@ final class Pipeline
         private readonly int $analizId,
         private readonly ResultValidator $dogrulayici = new ResultValidator(),
         private readonly ?Closure $saglayici = null,
+        /** Analiz başına EVREN modeli sabitleme (ayar "auto"); null → sabitleme yok (testler, ölçüm). */
+        private readonly ?AnalizRepository $analizler = null,
     ) {
     }
 
@@ -134,7 +139,7 @@ final class Pipeline
      * @param list<Segment>       $bloklar      Cleaner::hazirla() çıktısı (istemin satırları)
      * @param list<int>           $baslangiclar parçadaki gerçek segment başlangıçları (zaman yaslama)
      * @param array<string,mixed> $baglam       baslik, kanal, dil, toplam (parça sayısı)
-     * @return array{sonuc: array<string,mixed>, model: string, uyarilar: list<string>}
+     * @return array{sonuc: array<string,mixed>, model: string, saglayici: string, uyarilar: list<string>}
      */
     public function parcaAnalizEt(array $parca, array $bloklar, array $baslangiclar, array $baglam): array
     {
@@ -161,8 +166,9 @@ final class Pipeline
             'transcript' => Istem::veri(implode("\n", $satirlar)),
         ]);
 
+        // Boş kalan "at": transcript satırlarından, o da yoksa bölümün başı (ZamanYedegi).
         return $this->jsonIste('map', $istem, $kullanici, self::PARCA_SEMASI,
-            fn (array $veri): array => $this->dogrulayici->parca($veri, $basMs, $bitMs, $baslangiclar));
+            fn (array $veri): array => $this->dogrulayici->parca($veri, $basMs, $bitMs, $baslangiclar, ZamanYedegi::bloklardan($bloklar, Zaman::yaz($basMs))));
     }
 
     /* =================================================================
@@ -173,14 +179,14 @@ final class Pipeline
      * @param list<array<string,mixed>> $parcaSonuclari doğrulanmış map sonuçları, zaman sırasıyla
      * @param list<int>                 $baslangiclar   transcript'in bütün segment başlangıçları
      * @param array<string,mixed>       $baglam         baslik, kanal, eksik (list<string> aralık)
-     * @return array{sonuc: array<string,mixed>, model: string, uyarilar: list<string>}
+     * @return array{sonuc: array<string,mixed>, model: string, saglayici: string, uyarilar: list<string>}
      */
     public function birlestir(array $parcaSonuclari, int $bitMs, array $baslangiclar, array $baglam): array
     {
         [$istem, $kullanici] = self::birlestirmeIstemi($parcaSonuclari, $bitMs, $baglam);
 
         return $this->jsonIste('reduce', $istem, $kullanici, self::BIRLESTIRME_SEMASI,
-            fn (array $veri): array => $this->dogrulayici->birlestirme($veri, $bitMs, $baslangiclar));
+            fn (array $veri): array => $this->dogrulayici->birlestirme($veri, $bitMs, $baslangiclar, new ZamanYedegi($parcaSonuclari)));
     }
 
     /**
@@ -237,7 +243,9 @@ final class Pipeline
      *  (AnalizBirlestir) ardışık bölümler gruplara ayrılır; her grup bir
      *  ARA ÖZETE çevrilir. Ara özet bölüm analiziyle aynı biçimdedir
      *  (chunk, topic, summary, listeler): son birleştirme onları bölüm gibi
-     *  okur, birleştirme istemi değişmez. İstem: ara_birlestirme.v1.
+     *  okur, birleştirme istemi değişmez. İstem: ara_birlestirme.v2 (her
+     *  maddede "at" zorunlu; boş kalırsa ZamanYedegi kaynaktan tamamlar).
+     *  Kayıt: "s1:…" => {sonuc, saglayici, model} (rapordaki model özeti).
      * ============================================================== */
 
     /**
@@ -251,7 +259,8 @@ final class Pipeline
      * @param  array<string, array<string,mixed>> $ara       önceki denemelerin ara özetleri
      * @param  ?Closure(array<string, array<string,mixed>>): void $araKaydet her ara özetten sonra
      * @param  ?Closure(int, int, int): void      $ilerleme  (seviye, biten grup, toplam grup)
-     * @return array{sonuc: array<string,mixed>, model: string, uyarilar: list<string>, kademeli: bool}
+     * @return array{sonuc: array<string,mixed>, model: string, saglayici: string, uyarilar: list<string>, kademeli: bool,
+     *               ara_modeller: list<array{saglayici: string, model: string}>}
      *
      * @throws AiHatasi
      */
@@ -259,15 +268,16 @@ final class Pipeline
         array $ara = [], ?Closure $araKaydet = null, ?Closure $ilerleme = null): array
     {
         for ($deneme = 1; ; $deneme++) {
-            $kap   = $kapasite();
-            $girdi = $sonuclar;
+            $kap      = $kapasite();
+            $girdi    = $sonuclar;
+            $modeller = [];
 
             try {
                 if ($kap !== null && count($girdi) > 1 && self::birlestirmeBoyutu($girdi, $bitMs, $baglam) > $kap) {
-                    $girdi = $this->araOzetler($girdi, $bitMs, $baslangiclar, $baglam, $kap, $ara, $araKaydet, $ilerleme);
+                    $girdi = $this->araOzetler($girdi, $bitMs, $baslangiclar, $baglam, $kap, $ara, $araKaydet, $ilerleme, $modeller);
                 }
 
-                return $this->birlestir($girdi, $bitMs, $baslangiclar, $baglam) + ['kademeli' => $girdi !== $sonuclar];
+                return $this->birlestir($girdi, $bitMs, $baslangiclar, $baglam) + ['kademeli' => $girdi !== $sonuclar, 'ara_modeller' => $modeller];
             } catch (AiHatasi $e) {
                 if (!self::buyukGirdi($e) || $deneme >= 4) {
                     throw $e;
@@ -287,10 +297,11 @@ final class Pipeline
      * sığana (ya da daha küçültülemeyene) kadar seviye seviye.
      *
      * @param  list<array<string,mixed>>          $girdi
-     * @param  array<string, array<string,mixed>> $ara
+     * @param  array<string, array<string,mixed>> $ara      "s1:…" => {sonuc, saglayici, model}
+     * @param  list<array{saglayici: string, model: string}> $modeller kullanılan ara özetlerin modelleri
      * @return list<array<string,mixed>>
      */
-    private function araOzetler(array $girdi, int $bitMs, array $baslangiclar, array $baglam, int $kap, array &$ara, ?Closure $araKaydet, ?Closure $ilerleme): array
+    private function araOzetler(array $girdi, int $bitMs, array $baslangiclar, array $baglam, int $kap, array &$ara, ?Closure $araKaydet, ?Closure $ilerleme, array &$modeller): array
     {
         $enCok       = max(2, (int) Ayarlar::get('ai.kademeli.grup_en_cok', 4));
         $seviyeEnCok = max(1, (int) Ayarlar::get('ai.kademeli.seviye_en_cok', 4));
@@ -320,14 +331,21 @@ final class Pipeline
                 $anahtar = 's' . $seviye . ':' . ($uyeler[0]['chunk']['start'] ?? '?') . '-' . ($uyeler[count($uyeler) - 1]['chunk']['end'] ?? '?');
 
                 if (!isset($ara[$anahtar])) {
-                    $ara[$anahtar] = $this->araBirlestir($uyeler, $baslangiclar, $baglam)['sonuc'];
+                    $ozet          = $this->araBirlestir($uyeler, $baslangiclar, $baglam);
+                    $ara[$anahtar] = ['sonuc' => $ozet['sonuc'], 'saglayici' => $ozet['saglayici'], 'model' => $ozet['model']];
 
                     if ($araKaydet !== null) {
                         $araKaydet($ara);
                     }
                 }
 
-                $yeni[] = $ara[$anahtar];
+                // 0.9.1 kaydı yalnız sonucu tutuyordu (model bilgisi yok).
+                $kayit  = $ara[$anahtar];
+                $yeni[] = is_array($kayit['sonuc'] ?? null) ? $kayit['sonuc'] : $kayit;
+
+                if (is_string($kayit['saglayici'] ?? null) && $kayit['saglayici'] !== '') {
+                    $modeller[] = ['saglayici' => $kayit['saglayici'], 'model' => (string) ($kayit['model'] ?? '')];
+                }
 
                 if ($ilerleme !== null) {
                     $ilerleme($seviye, ++$biten, $toplam);
@@ -344,14 +362,14 @@ final class Pipeline
      * @param  list<array<string,mixed>> $grup         ardışık bölüm (ya da ara özet) sonuçları
      * @param  list<int>                 $baslangiclar transcript'in segment başlangıçları
      * @param  array<string,mixed>       $baglam       baslik, kanal
-     * @return array{sonuc: array<string,mixed>, model: string, uyarilar: list<string>}
+     * @return array{sonuc: array<string,mixed>, model: string, saglayici: string, uyarilar: list<string>}
      */
     public function araBirlestir(array $grup, array $baslangiclar, array $baglam): array
     {
         [$istem, $kullanici, $basMs, $bitMs] = self::araBirlestirmeIstemi($grup, $baglam);
 
         return $this->jsonIste('reduce', $istem, $kullanici, self::PARCA_SEMASI,
-            fn (array $veri): array => $this->dogrulayici->parca($veri, $basMs, $bitMs, $baslangiclar));
+            fn (array $veri): array => $this->dogrulayici->parca($veri, $basMs, $bitMs, $baslangiclar, new ZamanYedegi($grup)));
     }
 
     /**
@@ -361,7 +379,7 @@ final class Pipeline
      */
     public static function araBirlestirmeIstemi(array $grup, array $baglam): array
     {
-        $istem = Istem::yukle('ara_birlestirme', 'v1');
+        $istem = Istem::yukle('ara_birlestirme', 'v2');
         $basMs = $grup === [] ? 0 : (int) (Zaman::oku((string) ($grup[0]['chunk']['start'] ?? '')) ?? 0);
         $bitMs = $grup === [] ? 0 : (int) (Zaman::oku((string) ($grup[count($grup) - 1]['chunk']['end'] ?? '')) ?? $basMs);
 
@@ -499,13 +517,15 @@ final class Pipeline
     /**
      * @param  array<string,mixed>                                          $sema
      * @param  Closure(array<string,mixed>): array{sonuc: array<string,mixed>, uyarilar: list<string>} $dogrula
-     * @return array{sonuc: array<string,mixed>, model: string, uyarilar: list<string>}
+     * @return array{sonuc: array<string,mixed>, model: string, saglayici: string, uyarilar: list<string>}
      *
      * @throws AiHatasi
      */
     private function jsonIste(string $asama, Istem $istem, string $kullanici, array $sema, Closure $dogrula): array
     {
-        [$saglayici, $ad] = $this->saglayici !== null ? ($this->saglayici)($asama) : self::saglayiciUret($asama);
+        $sabit = $this->saglayici === null && $this->analizler !== null ? $this->analizler->evrenModeli($this->analizId) : null;
+
+        [$saglayici, $ad] = $this->saglayici !== null ? ($this->saglayici)($asama) : self::saglayiciUret($asama, $sabit);
 
         $ek       = $ad === 'gemini' ? (array) Ayarlar::get('ai.' . $asama . '.gemini_ek', []) : [];
         $mesajlar = [['role' => 'user', 'content' => $kullanici]];
@@ -514,22 +534,35 @@ final class Pipeline
         for ($deneme = 1; ; $deneme++) {
             $baslangic = hrtime(true);
 
+            // Ekrandaki ilerleme: "… — EVREN · glm-5.3, 2. deneme" (KaynakDurumu).
+            YedekliSaglayici::halkaKancasi(fn (string $halkaAdi, string $halkaModeli, int $sira) => $this->calisaniYaz($asama, $halkaAdi, $halkaModeli, $sira + $deneme - 1));
+            $this->calisaniYaz($asama, $ad === 'zincir' ? '' : $ad, $ad === 'zincir' ? '' : $saglayici->model(), $deneme);
+
             try {
                 $yanit = $saglayici->sendJson($mesajlar, $istem->sistem, $sema, $ek);
             } catch (AiHatasi $e) {
+                YedekliSaglayici::halkaKancasi(null);
+
                 if ($saglayici instanceof YedekliSaglayici) {
-                    $this->denemeleriKaydet($saglayici);
+                    $this->denemeleriKaydet($saglayici, $asama);
                 } else {
-                    $this->kaydet($ad, $saglayici->model(), null, $baslangic, 'hata', $e->kod, $e->getMessage());
+                    $this->kaydet($ad, $saglayici->model(), ['olcum' => $e->olcum], $baslangic, 'hata', $e->kod, $e->getMessage(), $asama);
                 }
 
                 throw $e;
             }
 
-            // Zincirde önce düşenler "hata" satırı olur; yanıtı veren adıyla yazılır.
+            // Zincirde önce düşenler "hata" satırı olur; yanıtı veren adıyla, kendi zamanıyla yazılır.
+            $zaman = null;
+
             if ($saglayici instanceof YedekliSaglayici) {
-                $this->denemeleriKaydet($saglayici);
-                $ad = $saglayici->sonAd();
+                $this->denemeleriKaydet($saglayici, $asama);
+                $ad    = $saglayici->sonAd();
+                $zaman = $saglayici->sonDeneme();
+            }
+
+            if ($ad === 'evren') {
+                $this->evrenModeliniSabitle($asama, $sabit, (string) $yanit['model']);
             }
 
             $durum = 'gecersiz';
@@ -545,7 +578,7 @@ final class Pipeline
                 $sonuc = $dogrula($veri);
                 $durum = 'basarili';
 
-                return $sonuc + ['model' => $yanit['model']];
+                return $sonuc + ['model' => $yanit['model'], 'saglayici' => $ad];
             } catch (GecersizSonuc $e) {
                 if ($deneme >= 2) {
                     throw new AiHatasi(sprintf('%s yanıtı onarımdan sonra da geçersiz: %s', $asama, $e->getMessage()), 'yanit_cozulemedi');
@@ -554,7 +587,8 @@ final class Pipeline
                 $mesajlar[] = ['role' => 'assistant', 'content' => $yanit['text'] !== '' ? mb_substr($yanit['text'], 0, $enCok) : '(boş yanıt)'];
                 $mesajlar[] = ['role' => 'user', 'content' => self::onarimIstegi($e->sorunlar, $yanit['stop_reason'] === 'max_tokens')];
             } finally {
-                $this->kaydet($ad, (string) $yanit['model'], $yanit, $baslangic, $durum);
+                YedekliSaglayici::halkaKancasi(null);
+                $this->kaydet($ad, (string) $yanit['model'], $yanit, $baslangic, $durum, null, null, $asama, $zaman);
             }
         }
     }
@@ -568,32 +602,83 @@ final class Pipeline
             . ' açıklama ya da kod bloğu ekleme.';
     }
 
-    /** Yedek zincirinde düşen sağlayıcılar: token yok, süre ve ad var. */
-    private function denemeleriKaydet(YedekliSaglayici $zincir): void
+    /**
+     * Yedek zincirinde düşen sağlayıcılar: her biri KENDİ başlangıç zamanı ve
+     * süresiyle; ölçülebildiyse kısmi kullanım (düşünme bütçesi) ve ölçüm.
+     */
+    private function denemeleriKaydet(YedekliSaglayici $zincir, string $asama = ''): void
     {
         foreach ($zincir->denemeler() as $d) {
+            $o = (array) ($d['olcum'] ?? []);
+
             $this->kullanim->kaydet([
-                'saglayici'   => $d['ad'],
-                'model'       => $d['model'],
-                'giris_token' => 0,
-                'cikis_token' => 0,
-                'maliyet_usd' => 0.0,
-                'sure_ms'     => $d['sure_ms'],
+                'saglayici'     => $d['ad'],
+                'model'         => $d['model'],
+                'giris_token'   => (int) ($o['giris_token'] ?? 0),
+                'cikis_token'   => (int) ($o['cikis_token'] ?? 0),
+                'maliyet_usd'   => 0.0,
+                'sure_ms'       => $d['sure_ms'],
+                'baslangic'     => $d['baslangic'] ?? null,
+                'asama'         => $asama,
+                'istenen_model' => $d['model'],
+                'olcum'         => $o,
             ], 'analiz', $this->analizId, 'hata', $d['kod'], $d['mesaj']);
         }
     }
 
-    /** @param array<string,mixed>|null $yanit */
-    private function kaydet(string $saglayici, string $model, ?array $yanit, int|float $baslangic, string $durum, ?string $hataKodu = null, ?string $hataAyrinti = null): void
+    /**
+     * @param array<string,mixed>|null                $yanit
+     * @param array{baslangic:float, sure_ms:int}|null $zaman zincirdeki başarılı denemenin kendi zamanı
+     */
+    private function kaydet(string $saglayici, string $model, ?array $yanit, int|float $baslangic, string $durum, ?string $hataKodu = null,
+        ?string $hataAyrinti = null, string $asama = '', ?array $zaman = null): void
     {
+        $o = is_array($yanit['olcum'] ?? null) ? $yanit['olcum'] : [];
+
         $this->kullanim->kaydet([
-            'saglayici'   => $saglayici,
-            'model'       => $model,
-            'giris_token' => (int) ($yanit['usage']['input_tokens'] ?? 0),
-            'cikis_token' => (int) ($yanit['usage']['output_tokens'] ?? 0),
-            'maliyet_usd' => self::maliyet($yanit, $saglayici),
-            'sure_ms'     => (int) ((hrtime(true) - $baslangic) / 1_000_000),
+            'saglayici'     => $saglayici,
+            'model'         => $model,
+            'giris_token'   => (int) ($yanit['usage']['input_tokens'] ?? $o['giris_token'] ?? 0),
+            'cikis_token'   => (int) ($yanit['usage']['output_tokens'] ?? $o['cikis_token'] ?? 0),
+            'maliyet_usd'   => self::maliyet($yanit, $saglayici),
+            'sure_ms'       => $zaman['sure_ms'] ?? (int) ((hrtime(true) - $baslangic) / 1_000_000),
+            'baslangic'     => $zaman['baslangic'] ?? null,
+            'asama'         => $asama,
+            'istenen_model' => $o['istenen_model'] ?? null,
+            'olcum'         => $o,
         ], 'analiz', $this->analizId, $durum, $hataKodu ?? ($durum === 'basarili' ? null : $durum), $hataAyrinti);
+    }
+
+    /** Önbellek anahtarı: analizde şu an çalışan sağlayıcı / model (KaynakDurumu okur). */
+    public const CALISAN_ONEKI = 'transkript.calisan.';
+
+    private function calisaniYaz(string $asama, string $saglayici, string $model, int $deneme): void
+    {
+        if ($this->analizId <= 0 || $saglayici === '') {
+            return;
+        }
+
+        try {
+            Cache::put(self::CALISAN_ONEKI . $this->analizId, ['asama' => $asama, 'saglayici' => $saglayici, 'model' => $model, 'deneme' => $deneme, 'zaman' => time()], 1800);
+        } catch (\Throwable) {
+        }
+    }
+
+    /**
+     * Ayar "auto" ise analizin ilk başarılı EVREN yanıtındaki METİN modeli
+     * analize yazılır; sonraki bölümler ve birleştirme onunla çağrılır
+     * (11.10.2026: bir analizin bölümleri mimo, qwen3-vl, gemma ile yazıldı).
+     * Görsel model (qwen3-vl) ve kalkan model sabitlenmez; bir sonraki
+     * çağrı yeniden "auto" sorar.
+     */
+    private function evrenModeliniSabitle(string $asama, ?string $sabit, string $yanitModeli): void
+    {
+        if ($this->analizler === null || $sabit !== null || $this->analizId <= 0 || Ai::evrenModeli($asama) !== 'auto'
+            || !str_starts_with($yanitModeli, 'auto') || !EvrenProvider::metinModeliMi($yanitModeli)) {
+            return;
+        }
+
+        $this->analizler->evrenModeliniSabitle($this->analizId, EvrenProvider::kisaAd($yanitModeli));
     }
 
     /**
@@ -637,7 +722,7 @@ final class Pipeline
      *
      * @return array{0: Provider, 1: string}
      */
-    public static function saglayiciUret(string $asama): array
+    public static function saglayiciUret(string $asama, ?string $evrenSabit = null): array
     {
         $ayar     = (array) Ayarlar::get('ai.' . $asama, []);
         $zincir   = Ai::zincir();
@@ -655,7 +740,7 @@ final class Pipeline
         $zamanAsim = (int) ($ayar['zaman_asimi'] ?? 120);
 
         if (count($adlar) === 1) {
-            return [Ai::make($birincil, $model, $maxToken, $zamanAsim), $birincil];
+            return [Ai::make($birincil, $birincil === 'evren' ? self::evrenHalkaModeli($asama, $evrenSabit, $model) : $model, $maxToken, $zamanAsim), $birincil];
         }
 
         $halkalar = [];
@@ -665,11 +750,22 @@ final class Pipeline
                 continue;
             }
 
+            $halkaModeli = $ad === 'evren' ? self::evrenHalkaModeli($asama, $evrenSabit, $i === 0 ? $model : '') : ($i === 0 ? $model : '');
+
             $halkalar[] = [
                 'ad'        => $ad,
-                'saglayici' => Ai::make($ad, $i === 0 ? $model : '', $maxToken, $zamanAsim, $i === 0),
+                'saglayici' => Ai::make($ad, $halkaModeli, $maxToken, $zamanAsim, $i === 0),
                 'ek'        => $ad === 'gemini' ? (array) ($ayar['gemini_ek'] ?? []) : [],
             ];
+
+            /* EVREN içi hızlı yedek: asıl model zaman aşımı / düşünme bütçesi /
+             * 503 verince BAŞKA sağlayıcıya geçmeden önce bir kez (bu
+             * dinlenmeler modele bağlıdır, YedekliSaglayici::MODEL_KAPSAMLI). */
+            $yedek = $ad === 'evren' ? Ai::evrenYedekModeli() : '';
+
+            if ($yedek !== '' && EvrenProvider::kisaAd($yedek) !== EvrenProvider::kisaAd($halkaModeli !== '' ? $halkaModeli : Ai::evrenModeli($asama))) {
+                $halkalar[] = ['ad' => 'evren', 'saglayici' => Ai::make('evren', $yedek, $maxToken, $zamanAsim, $i === 0), 'ek' => []];
+            }
         }
 
         return match (count($halkalar)) {
@@ -678,6 +774,20 @@ final class Pipeline
             1       => [$halkalar[0]['saglayici'], $halkalar[0]['ad']],
             default => [new YedekliSaglayici($halkalar), 'zincir'],
         };
+    }
+
+    /**
+     * Zincirdeki EVREN halkasının modeli: analize sabitlenen model, yoksa
+     * config ai.<aşama>.model (EVREN asıl sağlayıcıysa), yoksa aşama modeli
+     * (Transkript ayarları: bölüm / rapor modeli, boşsa EVREN modeli).
+     */
+    private static function evrenHalkaModeli(string $asama, ?string $sabit, string $configModeli): string
+    {
+        if ($sabit !== null && $sabit !== '') {
+            return $sabit;
+        }
+
+        return $configModeli !== '' ? $configModeli : Ai::evrenModeli($asama);
     }
 
     private static function bilgi(mixed $deger): string

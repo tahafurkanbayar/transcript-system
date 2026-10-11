@@ -12,9 +12,17 @@
  *    · Sağlayıcının sınırı: .env <AD>_MAX_INPUT_TOKENS, yoksa config
  *      ai.giris_siniri.<ad>; 0 = bilinmiyor / sınır yok.
  *    · ÖĞRENİLEN SINIR: sağlayıcı 413 ya da "context length" hatası verirse
- *      o isteğin boyutu bu sağlayıcı + model için üst sınır olur (7 gün;
- *      "Dinlenmeleri sıfırla" siler). Daha büyük istek o sağlayıcıya hiç
- *      gitmez; sağlayıcı dinlenmez, öteki işler için "Hazır" kalır.
+ *      o isteğin boyutunun %80'i (GUVENLIK_PAYI) bu sağlayıcı + model için
+ *      üst sınır olur (7 gün; "Dinlenmeleri sıfırla" siler). Aynı boyut o
+ *      sağlayıcıya yeniden gitmez: birleştirme önce küçük gruplara böler
+ *      (cowork 2. tur: Groq'a art arda üç 413 gitmişti). Sağlayıcı
+ *      dinlenmez, öteki işler için "Hazır" kalır.
+ *    · DAKİKALIK SINIR: Groq ücretsiz katmanın 413'ü "tokens per minute
+ *      (TPM): Limit 8000, Requested N" der. "Requested" isteğin kendisinden
+ *      ~8.400 fazla çıkıyor (canlı, 2026-10-11: 2.050 → 10.438, 6.325 →
+ *      14.724); dakika boşken aynı boyut geçebiliyor. Sınır yine %80
+ *      öğrenilir ama 1 saatlik (kalıcı bir bağlam sınırı değil), ve
+ *      sağlayıcı 60 sn dinlenir: sıradaki küçük istek dolu dakikaya gitmez.
  *
  *  Kayıt DinlenmeDeposu dosyasında "sinir:<ad>" anahtarıyla durur (bütün
  *  işçiler görür). Yedek zinciri sığmayan halkayı atlar (YedekliSaglayici);
@@ -33,6 +41,13 @@ final class GirisSiniri
 {
     /** Öğrenilen sınırın ömrü (sn): katman yükseltilirse kendiliğinden düşsün. */
     public const OGRENME_SN = 7 * 86400;
+
+    /** Dakikalık (TPM) 413'ten öğrenilen sınırın ömrü ve sağlayıcının dinlenmesi (sn). */
+    public const DAKIKALIK_OGRENME_SN = 3600;
+    public const DAKIKALIK_DINLENME_SN = 60;
+
+    /** Reddedilen isteğin bu oranı sınır olur (tahmin payı: Türkçe metinde token sayımı şaşabiliyor). */
+    public const GUVENLIK_PAYI = 0.8;
 
     private const ONEK = 'sinir:';
 
@@ -73,7 +88,10 @@ final class GirisSiniri
         return max(0, (int) (((array) Ayarlar::get('ai.giris_siniri', []))[$ad] ?? 0));
     }
 
-    /** Bu sağlayıcı + model için öğrenilen sınır; yoksa (ya da model değiştiyse) null. */
+    /**
+     * Bu sağlayıcı + model için öğrenilen sınır (bu boyuta kadar gönderilir);
+     * yoksa, süresi geçtiyse ya da model değiştiyse null.
+     */
     public static function ogrenilen(string $ad, string $model): ?int
     {
         $kayit = DinlenmeDeposu::al(self::ONEK . $ad);
@@ -82,18 +100,18 @@ final class GirisSiniri
             return null;
         }
 
-        return max(1, (int) ($kayit['boyut'] ?? 0));
+        // 0.9.1 kaydı yalnız reddedilen boyutu tutuyordu.
+        return max(1, isset($kayit['sinir']) ? (int) $kayit['sinir'] : (int) ($kayit['boyut'] ?? 0) - 1);
     }
 
     /**
-     * Geçerli sınır (bu boyuta kadar gönderilir): yapılandırılan ve
-     * öğrenilenin bir eksiğinin küçüğü (öğrenilen boyut reddedilmişti);
-     * 0 = sınır yok.
+     * Geçerli sınır: yapılandırılan, modelin bağlamı (EVREN: "auto" 32K,
+     * EvrenProvider::girisSiniri) ve öğrenilenin küçüğü; 0 = sınır yok.
      */
     public static function sinir(string $ad, string $model): int
     {
-        $ogrenilen = self::ogrenilen($ad, $model);
-        $sinirlar  = array_filter([self::yapilandirilan($ad), $ogrenilen !== null ? max(1, $ogrenilen - 1) : 0], static fn (int $s): bool => $s > 0);
+        $modelSiniri = $ad === 'evren' ? EvrenProvider::girisSiniri($model) : 0;
+        $sinirlar    = array_filter([self::yapilandirilan($ad), $modelSiniri, self::ogrenilen($ad, $model) ?? 0], static fn (int $s): bool => $s > 0);
 
         return $sinirlar === [] ? 0 : min($sinirlar);
     }
@@ -106,21 +124,30 @@ final class GirisSiniri
         return $sinir === 0 || $boyut <= $sinir;
     }
 
-    /** Reddedilen isteğin boyutunu sınır olarak kaydeder (eskisinden büyükse eskisi kalır). */
-    public static function ogren(string $ad, string $model, int $boyut, ?int $simdi = null): void
+    /**
+     * Reddedilen isteğin %80'ini sınır olarak kaydeder (eskisi daha küçükse
+     * eskisi kalır). Dakikalık (TPM) 413'te kayıt 1 saat yaşar.
+     *
+     * @return int geçerli öğrenilen sınır
+     */
+    public static function ogren(string $ad, string $model, int $boyut, ?int $simdi = null, bool $dakikalik = false): int
     {
-        $eski = self::ogrenilen($ad, $model);
+        $eski  = self::ogrenilen($ad, $model);
+        $sinir = max(1, (int) floor($boyut * self::GUVENLIK_PAYI));
 
-        if ($boyut <= 0 || ($eski !== null && $eski <= $boyut)) {
-            return;
+        if ($boyut <= 0 || ($eski !== null && $eski <= $sinir)) {
+            return $eski ?? 0;
         }
 
         DinlenmeDeposu::yaz(self::ONEK . $ad, [
-            'boyut' => $boyut,
+            'sinir' => $sinir,
+            'istek' => $boyut,
             'model' => $model,
             'zaman' => $simdi ?? time(),
-            'sakla' => time() + self::OGRENME_SN,
+            'sakla' => time() + ($dakikalik ? self::DAKIKALIK_OGRENME_SN : self::OGRENME_SN),
         ]);
+
+        return $sinir;
     }
 
     public static function unut(string $ad): void
@@ -134,28 +161,9 @@ final class GirisSiniri
         return $e->kod === 'cok_buyuk';
     }
 
-    /**
-     * 413 aslında DAKİKALIK kotanın dolması mı? Groq ücretsiz katmanda
-     * "tokens per minute (TPM): Limit 8000, Requested 10438" der; Requested o
-     * dakikada harcananı da içerir (canlı ölçüm, 2026-10-11: ~2.000 token'lık
-     * istek, bir önceki çağrının hemen ardından 10.438 "istendi"). Requested
-     * isteğin kendisinden belirgin büyükse (×1,3) ve istek tek başına sınıra
-     * sığıyorsa küçültmek işe yaramaz: dakika dolunca geçer. O zaman hız
-     * sınırı gibi davranılır, sınır öğrenilmez. Requested yoksa: istek
-     * sınırın %75'inin altındaysa.
-     */
-    public static function dakikalikDoluluk(string $mesaj, int $boyut): bool
+    /** 413 dakikalık token kotasından mı (Groq: "tokens per minute (TPM)")? */
+    public static function dakikalik(string $mesaj): bool
     {
-        if ($boyut <= 0 || !preg_match('/per minute.{0,40}?Limit\s+(\d+)/is', $mesaj, $m)) {
-            return false;
-        }
-
-        $sinir = (int) $m[1];
-
-        if (preg_match('/Requested\s+(\d+)/i', $mesaj, $r)) {
-            return $boyut <= $sinir && (int) $r[1] > $boyut * 1.3;
-        }
-
-        return $boyut <= $sinir * 0.75;
+        return (bool) preg_match('/per\s+minute|\bTPM\b/i', $mesaj);
     }
 }

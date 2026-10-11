@@ -46,6 +46,21 @@ abstract class HttpProvider implements Provider
      */
     private ?Closure $tasiyici = null;
 
+    /**
+     * Uzun istek sürerken çağrılır (kuyruk işinin nabzı, Jobs\IsNabzi):
+     * cURL'ün ilerleme geri çağrısından, saniyede birkaç kez. Kanca kendisi
+     * seyreltir. null: kanca yok.
+     */
+    private static ?Closure $nabiz = null;
+
+    /**
+     * Son isteğin ölçümleri: akis, http, toplam_ms, ilk_token_ms (akışta ilk
+     * veri), keepalive (akışta yorum satırı), bosta_kesildi.
+     *
+     * @var array<string,mixed>
+     */
+    protected array $olcum = [];
+
     public function __construct(
         protected readonly string $apiKey,
         protected readonly string $modelName,
@@ -79,6 +94,15 @@ abstract class HttpProvider implements Provider
     }
 
     /**
+     * Bu HTTP durumunda en çok kaç yeniden deneme. Varsayılan: hepsi aynı
+     * (denemeSiniri). EVREN 503'ü (anlık doluluk) zincirde de 3 kez dener.
+     */
+    protected function durumDenemeSiniri(int $status): int
+    {
+        return $this->denemeSiniri();
+    }
+
+    /**
      * HTTP isteğini cURL yerine verilen işlev yapar: gövdeyi alır,
      * [durum, yanıt gövdesi, başlıklar (küçük harf), cURL hatası, hata no]
      * döndürür. Birim testleri gerçek API'ye gitmeden hata kodlarını ve
@@ -89,6 +113,99 @@ abstract class HttpProvider implements Provider
         $this->tasiyici = $tasiyici;
 
         return $this;
+    }
+
+    public static function nabizKancasi(?Closure $kanca): void
+    {
+        self::$nabiz = $kanca;
+    }
+
+    /** @var ?Closure(float): void testler gerçekten beklemesin: bekleme süresi (sn) buraya gider */
+    private static ?Closure $uyuyucu = null;
+
+    public static function uyuyucu(?Closure $islev): void
+    {
+        self::$uyuyucu = $islev;
+    }
+
+    protected static function uyu(float $saniye): void
+    {
+        if (self::$uyuyucu !== null) {
+            (self::$uyuyucu)($saniye);
+
+            return;
+        }
+
+        usleep((int) ($saniye * 1_000_000));
+    }
+
+    /** @return array<string,mixed> son isteğin ölçümleri (bkz. $olcum) */
+    public function sonOlcum(): array
+    {
+        return $this->olcum;
+    }
+
+    /* =================================================================
+     *  AKIŞ (SSE) — İSTEĞE BAĞLI, VARSAYILAN KAPALI
+     * =================================================================
+     *  Akışı açan sağlayıcı (EVREN) dört kancayı doldurur. Kapalıyken
+     *  istek eskisi gibidir: tek CURLOPT_TIMEOUT, gövde sonunda okunur.
+     *  Açıkken gövde parça parça gelir; BOŞTA KALMA sınırı ayrı ölçülür:
+     *  bostaSiniri() saniye boyunca hiç veri satırı ("data: …") gelmezse
+     *  istek kesilir (":" ile başlayan keep-alive satırları veri sayılmaz).
+     * ============================================================== */
+
+    protected function akis(): bool
+    {
+        return false;
+    }
+
+    /** Akışta veri gelmeden geçebilecek en uzun süre (sn); 0 = sınır yok. */
+    protected function bostaSiniri(): int
+    {
+        return 0;
+    }
+
+    /**
+     * İLK veri satırına kadar beklenebilecek süre (sn): model kuyruktayken
+     * sunucu keep-alive yollar, token yoktur. 0: bostaSiniri. Bu evrede hiç
+     * bayt (keep-alive dahil) OLU_BAGLANTI_SN gelmezse bağlantı ölüdür.
+     */
+    protected function ilkTokenSiniri(): int
+    {
+        return 0;
+    }
+
+    /** İlk token beklenirken hiç bayt gelmeyen en uzun süre (sn): sonra bağlantı ölü sayılır. */
+    protected const OLU_BAGLANTI_SN = 30;
+
+    /** Bu isteğin toplam süre sınırı (sn); alt sınıf girdi boyutuna göre ölçekleyebilir. */
+    protected function toplamSure(string $govde): int
+    {
+        return $this->timeout;
+    }
+
+    /**
+     * Kesilen (zaman aşımı / boşta) istekte harcanan token TAHMİNİ:
+     * ['giris_token', 'cikis_token', 'tahmini' => true]; bilinmiyorsa [].
+     * Varsayılan: tahmin yok.
+     *
+     * @return array<string,mixed>
+     */
+    protected function kismiKullanim(string $istek, string $kismiYanit): array
+    {
+        return [];
+    }
+
+    /**
+     * 2xx akış gövdesini tek yanıt dizisine çevirir; null → gövde düz JSON
+     * sayılır (sunucu akışı yok saydıysa).
+     *
+     * @return array<string,mixed>|null
+     */
+    protected function akisiCoz(string $raw): ?array
+    {
+        return null;
     }
 
     /* =================================================================
@@ -219,7 +336,14 @@ abstract class HttpProvider implements Provider
         while (true) {
             $attempt++;
 
-            [$status, $raw, $headers, $curlError, $curlErrno] = $this->tasiyici !== null ? ($this->tasiyici)($body) : $this->curl($body);
+            if ($this->tasiyici !== null) {
+                $bas = hrtime(true);
+                [$status, $raw, $headers, $curlError, $curlErrno] = ($this->tasiyici)($body);
+                $this->olcum = ['akis' => $this->akis(), 'http' => $status, 'toplam_ms' => (int) ((hrtime(true) - $bas) / 1_000_000),
+                                'ilk_token_ms' => null, 'keepalive' => 0, 'bosta_kesildi' => $curlErrno === 28 && str_starts_with($curlError, 'Boşta')];
+            } else {
+                [$status, $raw, $headers, $curlError, $curlErrno] = $this->curl($body);
+            }
 
             if ($curlError === '') {
                 $this->basliklariIsle($status, $headers);
@@ -234,14 +358,17 @@ abstract class HttpProvider implements Provider
                 }
 
                 // 28 = CURLE_OPERATION_TIMEDOUT: zaman aşımı ayrı koddur (9. adım).
+                // Ölçüm + sağlayıcının tahmin edebildiği kısmi kullanım (kesilen akış).
                 throw new AiHatasi(
                     'Bağlantı hatası: ' . $curlError,
-                    $curlErrno === 28 ? 'zaman_asimi' : 'baglanti'
+                    $curlErrno === 28 ? 'zaman_asimi' : 'baglanti',
+                    0, null, null, null,
+                    $this->olcum + $this->kismiKullanim($body, $raw)
                 );
             }
 
             if ($status >= 200 && $status < 300) {
-                $decoded = json_decode($raw, true);
+                $decoded = ($this->akis() ? $this->akisiCoz($raw) : null) ?? json_decode($raw, true);
 
                 if (!is_array($decoded)) {
                     throw new AiHatasi('API yanıtı çözümlenemedi.', 'yanit_cozulemedi', $status);
@@ -254,7 +381,7 @@ abstract class HttpProvider implements Provider
             $bekle     = $this->retryAfter($headers) ?? $this->retryAfterFromBody($raw);
 
             // İki dakikadan uzun bekleme (ör. günlük sınır): istek içinde beklenmez, zincir / kuyruk erteler.
-            if ($retryable && $attempt <= $this->denemeSiniri() && ($bekle === null || $bekle <= 120)) {
+            if ($retryable && $attempt <= $this->durumDenemeSiniri($status) && ($bekle === null || $bekle <= 120)) {
                 /* SUNUCU "NE KADAR BEKLE" DERSE ONA UYULUR.
                  * Retry-After başlığı varken kendi hesabımızı
                  * dayatmak, hız sınırına tekrar çarpmak demektir. */
@@ -278,25 +405,33 @@ abstract class HttpProvider implements Provider
      */
     private function curl(string $body): array
     {
-        $curl = curl_init($this->endpoint());
-
+        $curl    = curl_init($this->endpoint());
         $headers = [];
+        $akis    = $this->akis();
+        $bosta   = $akis ? max(0, $this->bostaSiniri()) : 0;
+        $ilkSinir = $akis && $this->ilkTokenSiniri() > 0 ? $this->ilkTokenSiniri() : $bosta;
+        $olu     = $akis && $this->ilkTokenSiniri() > 0 ? static::OLU_BAGLANTI_SN : 0;
+        $bas     = microtime(true);
+        $sonVeri = $bas;
+        $sonBayt = $bas;
+        $ilk     = null;
+        $keep    = 0;
+        $govde   = '';
+        $tampon  = '';
+        $kesildi = false;
 
         curl_setopt_array($curl, [
             CURLOPT_POST           => true,
             CURLOPT_POSTFIELDS     => $body,
             CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_TIMEOUT        => $this->timeout,
-
+            CURLOPT_TIMEOUT        => max(1, $this->toplamSure($body)),
             /* Sertifika doğrulaması AÇIK kalmalı. Kapatmak, API
              * anahtarınızı araya giren birine teslim etmek olur.
              * "Çalışmıyor" diye kapatmak yerine CA paketini
              * güncelleyin. */
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_SSL_VERIFYHOST => 2,
-
             CURLOPT_HTTPHEADER => $this->headers(),
-
             // Yanıt başlıklarını topluyoruz (Retry-After için).
             CURLOPT_HEADERFUNCTION => static function ($handle, string $line) use (&$headers): int {
                 $parts = explode(':', $line, 2);
@@ -307,7 +442,53 @@ abstract class HttpProvider implements Provider
 
                 return strlen($line);
             },
+            /* İlerleme: kuyruk nabzı (uzun istekte iş "ölü" sayılmasın) ve
+             * akışta boşta kalma sınırı. 0 dışı dönüş isteği keser. */
+            CURLOPT_NOPROGRESS       => false,
+            CURLOPT_XFERINFOFUNCTION => static function () use (&$sonVeri, &$sonBayt, &$ilk, &$kesildi, $bosta, $ilkSinir, $olu, $bas): int {
+                if (self::$nabiz !== null) {
+                    (self::$nabiz)();
+                }
+
+                $simdi = microtime(true);
+
+                // İlk token öncesi: kuyrukta bekleyiş (keep-alive geliyorsa) daha uzun; hiç bayt yoksa bağlantı ölü.
+                $asim = $ilk === null
+                    ? ($ilkSinir > 0 && $simdi - $bas > $ilkSinir) || ($olu > 0 && $simdi - $sonBayt > $olu)
+                    : $bosta > 0 && $simdi - $sonVeri > $bosta;
+
+                if ($asim) {
+                    $kesildi = true;
+
+                    return 1;
+                }
+
+                return 0;
+            },
         ]);
+
+        if ($akis) {
+            // Gövde parça parça: veri satırı ("data: {…}") boşta sayacını sıfırlar; ":" keep-alive saymaz.
+            curl_setopt($curl, CURLOPT_WRITEFUNCTION, static function ($handle, string $parca) use (&$govde, &$tampon, &$sonVeri, &$sonBayt, &$ilk, &$keep, $bas): int {
+                $govde  .= $parca;
+                $tampon .= $parca;
+                $sonBayt = microtime(true);
+
+                while (($i = strpos($tampon, "\n")) !== false) {
+                    $satir  = rtrim(substr($tampon, 0, $i), "\r");
+                    $tampon = (string) substr($tampon, $i + 1);
+
+                    if ($satir !== '' && $satir[0] === ':') {
+                        $keep++;
+                    } elseif (SseAkisi::veriSatiriMi($satir)) {
+                        $sonVeri = microtime(true);
+                        $ilk   ??= (int) (($sonVeri - $bas) * 1000);
+                    }
+                }
+
+                return strlen($parca);
+            });
+        }
 
         if (static::BAGLANTI_ZAMAN_ASIMI > 0) {
             curl_setopt($curl, CURLOPT_CONNECTTIMEOUT, static::BAGLANTI_ZAMAN_ASIMI);
@@ -320,7 +501,23 @@ abstract class HttpProvider implements Provider
 
         curl_close($curl);
 
-        return [$status, is_string($raw) ? $raw : '', $headers, $error, $errno];
+        $this->olcum = [
+            'akis'          => $akis,
+            'http'          => $status,
+            'toplam_ms'     => (int) ((microtime(true) - $bas) * 1000),
+            'ilk_token_ms'  => $ilk,
+            'keepalive'     => $keep,
+            'bosta_kesildi' => $kesildi,
+        ];
+
+        if ($kesildi) {
+            // Boşta kalma zaman aşımı: 28 (CURLE_OPERATION_TIMEDOUT) gibi "zaman_asimi" sayılır.
+            return [$status, $govde, $headers, $ilk === null
+                ? sprintf('Boşta kalma: ilk token %d sn içinde gelmedi (ya da bağlantı %d sn sessiz kaldı)', $ilkSinir, $olu)
+                : sprintf('Boşta kalma: %d sn boyunca yanıt verisi gelmedi', $bosta), 28];
+        }
+
+        return [$status, $akis ? $govde : (is_string($raw) ? $raw : ''), $headers, $error, $errno];
     }
 
     /** 429, 529 ve 5xx yeniden denenir; alt sınıf daraltabilir (ör. günlük kota). */
@@ -375,7 +572,7 @@ abstract class HttpProvider implements Provider
     protected function backoff(int $attempt, ?int $retryAfter): void
     {
         if ($retryAfter !== null) {
-            sleep(min(60, $retryAfter));
+            self::uyu(min(60, $retryAfter));
 
             return;
         }
@@ -383,7 +580,7 @@ abstract class HttpProvider implements Provider
         // 1s, 2s, 4s … + 0-500 ms sapma
         $seconds = min(30, 2 ** ($attempt - 1));
 
-        usleep($seconds * 1000000 + random_int(0, 500000));
+        self::uyu($seconds + random_int(0, 500000) / 1_000_000);
     }
 
     /* =================================================================

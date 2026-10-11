@@ -3,6 +3,140 @@
 Starter'ın sürüm geçmişi kökteki `CHANGELOG.md`'dedir; bu dosya yalnız
 `modules/Transkript/` içindir. Biçim [Keep a Changelog](https://keepachangelog.com/tr/1.1.0/).
 
+## 0.10.0 (2026-10-11): EVREN geliştirme + cowork 3. test turu
+
+Kullanıcı isteği (bilgisayar başında değil, "tüm onaylar sende"): cowork 3.
+tur (kuyruk işçisi durdu, EVREN "auto" yavaş, log süreleri, zaman damgası,
+sessiz gönderim) ve EVREN entegrasyonu ölç–analiz et–geliştir görevi.
+Ayrıntı ve rakamlar: `docs/evren/01-kesif.md`, `02-olcum-raporu.md`,
+`03-gelistirme-raporu.md`; API: `docs/EVREN_LLM_API_Rehberi.md`.
+
+### EVREN istemcisi
+- **Varsayılan model `qwen3.8-flash-next`** (önce `glm-5.3`): ölçümde kısa
+  videoda uçtan uca medyan 37 sn (glm-5.3 168, deepseek-v4.1-flash 115,
+  "auto" önce 128), 18/18 çağrı başarılı, JSON %100, kalite aynı bantta.
+  Panelde kayıtlı "auto" boşaltıldı (kod varsayılanı geçerli). Model
+  listesindeki açıklamalar ölçüme göre.
+- Akış (SSE, `Ai\SseAkisi`), bağlantı 15 sn / ilk token'a kadar 120 sn
+  (keep-alive gelirken; hiç bayt yoksa 30 sn) / sonra boşta 60 sn / toplam
+  girişle ölçekli (120 sn + 40 tok/sn, ≤900); `EVREN_STREAM`,
+  `EVREN_ILK_TOKEN_SN`, `EVREN_BOSTA_SN`, `EVREN_TOPLAM_SN`. Ölçüm: glm-5.3
+  yoğunken ilk token'ı 52 sn bekledi.
+- Düşünme `EVREN_THINKING=off|low|default` (low); 400'de parametresiz bir
+  kez. Düşünme bütçesi yetmezse aynı modelde `max_tokens` ×2 bir kez.
+- `json_schema` (strict) — `json_object`'te modeller alan adlarını
+  değiştiriyordu ("point", "claim") ve `at` koymuyordu; reddeden model
+  `json_object`'e düşer (`EVREN_JSON_SCHEMA`).
+- 503: aynı modelde 3 kez 2 / 4 / 8 sn. Kullanım (kısmi dahil) ve ölçüm
+  (ilk token, keep-alive, bitiş nedeni, düşünme / önbellek token'ı, kalan
+  kota) her yanıtta.
+- Model bağlamı: `auto` 32K → giriş sınırı 16.384 (büyük birleştirme
+  `auto`'ya gitmez, kademeli olur).
+
+### Model seçimi
+- Aşama başına EVREN modeli (bölüm / rapor; boş: EVREN modeli).
+- `auto` analiz başına sabitlenir (`transkript_analizler.evren_model`;
+  görsel / kalkan model sabitlenmez).
+- EVREN içi hızlı yedek halka (`EVREN_YEDEK_MODEL`, gemma-4-31b): zaman
+  aşımı / düşünme bütçesi / 503'te başka sağlayıcıdan önce.
+- Dinamik model listesi (`Ai\EvrenModelleri`, `/v1/models` günde bir;
+  görsel / OCR / ses / kalkan model yok); kayıtlı `deepseek-v4-flash` →
+  `deepseek-v4.1-flash`. Ücretsiz dönem sonu ve CR fiyatı oradan.
+
+### Zincir ve günlük
+- Devre kesici: art arda 429'da 60 sn → 5 → 15 → 60 dk; başarı sıfırlar.
+- Zincir süre sınırı 900 sn (aşılırsa iş 1 dk sonra yeniden).
+- Çağrı günlüğü: kendi başlangıç saati ve süresi (eskiden zincirin), bitiş,
+  aşama, istenen → yanıttaki model, akış, bütçe, bitiş nedeni, düşünme /
+  önbellek token'ı, TTFT, HTTP, kalan kota (migration `…140000`). Kesilen
+  çağrının kullanımı tahmin edilir ve "tahmini" işaretlenir (`…150000`,
+  panelde "≈"): EVREN kesilen istekte de kotadan düşer.
+- Ekranda çalışan model: "… — EVREN · glm-5.3, 2. deneme".
+- Şart kapısı: 403'ün istediği sürüm saklanır, Durum "yeni şart sürümü
+  onay bekliyor" der (kod onaylamaz).
+
+### Kuyruk (cowork 3. tur 1)
+- Neden: Görev Zamanlayıcı'da işçi kayıtlı değildi; tarayıcıdan işleme
+  sayfanın analizi bitince / sekme gizlenince duruyordu.
+- İş nabzı (`Jobs\IsNabzi`): kuyruk satırı, aşama ve parça kilidi 30 sn'de
+  bir (yalnız ALINMIŞ kilit); nabzı 5 dk kesilen "transkript" işi görev ve
+  tik başında kuyruğa geri döner (`KuyrukDurumu::bayatlariBirak`; .env
+  `QUEUE_TIMEOUT` 900 olsa da), biten parça AI'a gitmez. Sahipsiz parça
+  (işi kuyrukta olmayan, kilidi bayat) bir sonraki parça bitince yeniden
+  kuyruğa girer. Canlı denemede (analiz 4928) bulunan hata: dönen iş, kilidi
+  almadan attığı nabızla bayat kilidi taze gösterip parçayı sahipsiz
+  bırakıyordu.
+- Tik döngüsü bütün Transkript sayfalarında, kuyruk boşalana kadar.
+- `kuyruk-isci-kur.ps1`: 5 dk'da bir tetik → ölen işçi yeniden başlar.
+- Durum: işçi son görülme, bekleyen / çalışan / takılı, kopyalanabilir
+  komutlar; EVREN kota %10 uyarısı, ücretsiz dönem sonu, 7 günlük token,
+  EVREN model sağlığı tablosu.
+- Rapor sayfası çelişkili cümleyi göstermez; gönderim hatası kutuda kalır
+  (419'da bağlantı kutuya yeniden yazılır).
+
+### Zaman damgaları (cowork 3. tur 4)
+- Doğrulayıcı alternatif alan adlarını ("point", "claim", "idea", "time")
+  ve "[00:01:25]" biçimini okur.
+- Bölüm analizinde boş `at`: transcript satırından, yoksa bölüm başından.
+
+### Araçlar ve testler
+- `bin/evren-olcum.php` (smoke, models, budget, stream, context,
+  consistency, json, fallback; bütçe / kota korumalı, eşzamanlı, kalite
+  puanı), `tests/evren-canli.php` (`EVREN_LIVE_TESTS=1`).
+- Testler: `tests/transkript.php` 466.
+
+## 0.9.2 (2026-10-11): cowork 2. test turu — zaman damgaları, 413, rapordaki modeller
+
+Kullanıcı isteği: cowork'ün 2. test turunda kalan beş küçük sorunu düzelt.
+Biten raporlara dokunulmadı; değişiklikler yeni analizlere uygulanır.
+
+### Kademeli birleştirmede zaman damgaları
+- Analiz 3910'da (1:17:08) 11 önemli noktanın 5'i, 25 teknik bilginin 10'u
+  zamansızdı. Birleştirme modeli maddeyi derlerken `at` alanını boş bırakıyordu.
+- Ara özet istemi `ara_birlestirme.v2`: her maddede `at` zorunlu, kaynak
+  maddenin zamanı aynen kopyalanır, yoksa bölümün başlangıcı yazılır.
+- `Services\ZamanYedegi`: ara ve son birleştirmede `at` boş, okunamaz ya da
+  aralık dışıysa madde metni girdideki maddelerle eşleştirilir (Türkçe
+  harf katlanmış sözcük kökleri). Önce en çok örtüşen kaynak maddenin
+  zamanı alınır, o da yoksa maddenin geldiği bölümün başlangıcı. Hiçbiri
+  tutmazsa zaman uydurulmaz. Önemli noktalar, teknik bilgiler, iddialar,
+  fikirler ve zaman çizelgesi için geçerli.
+
+### 413 sonrası aynı istek
+- 413'te isteğin %80'i o sağlayıcı + modelin sınırı olur
+  (`GirisSiniri::GUVENLIK_PAYI`). Aynı boyut o sağlayıcıya yeniden
+  gitmez; birleştirme önce küçük gruplara böler.
+- Groq dakikalık (TPM) 413: sınır yine %80 ama 1 saatlik, sağlayıcı da 60 sn
+  dinlenir. Eski "dakika dolu → aynı isteği 60 sn sonra yeniden gönder"
+  kuralı kaldırıldı; #3910'da üç 413 bu kural yüzünden art arda gitmişti.
+- Hata metnindeki Groq kuruluş kimliği (`org_…`) maskelenir.
+
+### Rapordaki modeller
+- "Bu rapor" kutusu ve Markdown künyesi bütün modelleri gösterir, örneğin
+  "Bölümler: EVREN · qwen3.8-flash-next — Birleştirme: EVREN · gemma-4-31b".
+  Ara özetler de varsa ayrı satırda görünür. Hepsi aynı modelse tek satır
+  yazılır (`Services\ModelOzeti`).
+- Migration `…120000`: `transkript_parcalar.saglayici`, `.model` ve
+  `transkript_analizler.modeller` (JSON). Eski raporlarda yalnız `model`
+  görünür.
+- API rapor yanıtına `analiz.modeller` alanı eklendi; ekrandaki satırlar
+  `{etiket, deger}` biçiminde.
+
+### EVREN şart sayfası
+- Metin `Services\GuvenliMarkdown` ile biçimlenir. Bağımlılık eklenmedi;
+  CommonMark'ın bu metinde geçen alt kümesi destekleniyor: başlık, alıntı,
+  liste, kalın, eğik, kod, çizgi, bağlantı. Ham HTML kapalı. Bağlantılar
+  yalnız http(s) ve mailto, `rel="noopener nofollow noreferrer"` ile.
+  Dış resimler (shields.io rozetleri) yüklenmez; yerlerine alt metinleri
+  yazılır.
+
+### Durum tablosu
+- Model sütunu tek satır: `auto` seçiliyse son yanıtı veren model
+  (`auto → google/gemma-4-31b`).
+- Son başarılı çağrıdan eski "Son hata" soluk renkte ve "(çözüldü)" etiketiyle.
+
+- Testler: `tests/transkript.php` 453.
+
 ## 0.9.1 (2026-10-11): cowork test bulguları — EVREN şartları, uzun videoda birleştirme
 
 Kullanıcı isteği: cowork'ün test bulgularını düzelt (EVREN 403, 1:17'lik

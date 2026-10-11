@@ -201,7 +201,27 @@ a.tk-zaman.is-oynuyor { background: var(--cy-brand); color: #fff; }
 .tk-ayar-rozet { display: inline-block; margin-left: .35rem; font-size: .6875rem; vertical-align: .1em; }
 /* EVREN kullanım şartları: uzun metin kendi kutusunda kayar; telefonda tam genişlik */
 .tk-sart-metni { max-height: 60vh; overflow: auto; padding: .9rem 1rem; border: 1px solid var(--cy-border); border-radius: var(--cy-radius, .5rem);
-    background: var(--cy-surface-soft); white-space: pre-wrap; overflow-wrap: anywhere; font-size: .875rem; line-height: 1.55; }
+    background: var(--cy-surface-soft); overflow-wrap: anywhere; font-size: .875rem; line-height: 1.55; }
+/* Güvenli Markdown (GuvenliMarkdown): şart metni */
+.tk-md > :first-child { margin-top: 0; }
+.tk-md > :last-child { margin-bottom: 0; }
+.tk-md h4, .tk-md h5, .tk-md h6 { margin: 1.1rem 0 .5rem; font-weight: 600; line-height: 1.3; }
+.tk-md h4 { font-size: 1.05rem; }
+.tk-md h5 { font-size: .95rem; }
+.tk-md h6 { font-size: .875rem; }
+.tk-md p, .tk-md ul, .tk-md ol, .tk-md pre { margin: 0 0 .65rem; }
+.tk-md ul, .tk-md ol { padding-left: 1.3rem; }
+.tk-md li + li { margin-top: .25rem; }
+.tk-md blockquote { margin: 0 0 .75rem; padding: .5rem .8rem; border-left: 3px solid var(--cy-border); color: var(--cy-text-muted); }
+.tk-md blockquote > :last-child { margin-bottom: 0; }
+.tk-md hr { margin: 1rem 0; border: 0; border-top: 1px solid var(--cy-border); opacity: 1; }
+.tk-md code { padding: .05rem .3rem; border-radius: .25rem; background: var(--cy-surface); font-size: .8125rem; overflow-wrap: anywhere; }
+.tk-md pre { padding: .6rem .8rem; border-radius: .35rem; background: var(--cy-surface); overflow: auto; }
+.tk-md pre code { padding: 0; background: none; }
+/* Dış resim (rozet) yüklenmez; alt metni küçük bir etiket olarak */
+.tk-md-resim { display: inline-block; padding: .05rem .45rem; border: 1px solid var(--cy-border); border-radius: 999px; font-size: .75rem; color: var(--cy-text-muted); }
+/* Rapor kutusu: aşama başına model */
+.tk-bilgi__modeller span + span { margin-top: .15rem; }
 .tk-sart-durum { display: block; margin-top: .3rem; }
 /* Durum: zincirdeki her sağlayıcının anahtarı (yalnız tanımlı mı) */
 .tk-anahtarlar { list-style: none; margin: 0; padding: 0; }
@@ -209,6 +229,13 @@ a.tk-zaman.is-oynuyor { background: var(--cy-brand); color: #fff; }
 /* Başarısız analizde yöneticiye zincirin özeti (liste ve rapor) */
 .tk-zincir-ozeti { display: block; margin-top: .25rem; font-size: .8rem; color: var(--cy-text-muted); overflow-wrap: anywhere; }
 .tk-saglayici-tablo td, .tk-gunluk td { vertical-align: top; }
+/* Durum: kuyruk işçisi komutları (kopyalanabilir) */
+.tk-komutlar { display: grid; gap: .35rem; }
+.tk-komut { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; }
+.tk-komut > span { min-width: 9.5rem; }
+.tk-komut code { flex: 1 1 14rem; padding: .2rem .45rem; border-radius: .3rem; background: var(--cy-surface-soft); overflow-wrap: anywhere; }
+/* Son hata, sonrasında başarılı çağrı olduysa: eskidi, soluk */
+.tk-saglayici-tablo td.tk-hata-cozuldu { opacity: .55; }
 
 /* Yeni analiz: bugünkü hak ("3 / 10 · saatlik 1 / 20"); dolunca uyarı rengi */
 .tk-hak { display: inline-flex; align-items: center; gap: .35rem; margin: 0; padding: .2rem .6rem; border-radius: 999px;

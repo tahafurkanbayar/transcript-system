@@ -56,8 +56,11 @@ declare(strict_types=1);
 
 namespace Modules\Transkript\Ai;
 
+use App\Core\Cache\Cache;
 use App\Core\Env;
+use App\Core\Log\Logger;
 use Modules\Transkript\Ayarlar;
+use Throwable;
 
 final class Ai
 {
@@ -346,8 +349,50 @@ final class Ai
     public static function varsayilanModel(string $ad): string
     {
         $panel = trim((string) Ayarlar::get('ai.modeller.' . $ad, ''));
+        $model = $panel !== '' ? $panel : self::ortamModeli($ad);
 
-        return $panel !== '' ? $panel : self::ortamModeli($ad);
+        return $ad === 'evren' ? self::evrenTasi($model) : $model;
+    }
+
+    /**
+     * Aşamanın EVREN modeli: ayardaki aşama modeli (bölüm: map, rapor:
+     * reduce ve ara birleştirme), boşsa EVREN modeli (varsayilanModel).
+     */
+    public static function evrenModeli(string $asama): string
+    {
+        $alan  = $asama === 'map' ? 'ai.evren.bolum_modeli' : 'ai.evren.rapor_modeli';
+        $panel = trim((string) Ayarlar::get($alan, ''));
+
+        return $panel !== '' ? self::evrenTasi($panel) : self::varsayilanModel('evren');
+    }
+
+    /** EVREN'in hızlı yedek modeli (.env EVREN_YEDEK_MODEL > config); '' = kapalı. */
+    public static function evrenYedekModeli(): string
+    {
+        $model = Env::has('EVREN_YEDEK_MODEL') ? trim(Env::get('EVREN_YEDEK_MODEL')) : trim((string) Ayarlar::get('ai.evren.yedek_model', ''));
+
+        return in_array(strtolower($model), ['', 'yok', 'kapali', 'off', 'false', '0'], true) ? '' : self::evrenTasi($model);
+    }
+
+    /**
+     * 1 Kasım 2026'da kalkan deepseek-v4-flash kayıtlıysa yerine
+     * deepseek-v4.1-flash kullanılır (günlüğe bir kez yazılır).
+     */
+    private static function evrenTasi(string $model): string
+    {
+        if (strtolower(trim($model)) !== 'deepseek-v4-flash') {
+            return $model;
+        }
+
+        try {
+            if (!Cache::get('transkript:evren_tasima_yazildi')) {
+                Cache::put('transkript:evren_tasima_yazildi', 1, 86400);
+                Logger::warning('EVREN modeli deepseek-v4-flash 1 Kasım 2026 tarihinde kalkıyor; deepseek-v4.1-flash kullanılıyor', [], 'transkript');
+            }
+        } catch (Throwable) {
+        }
+
+        return 'deepseek-v4.1-flash';
     }
 
     /**
@@ -491,8 +536,9 @@ final class Ai
         }
 
         return (string) preg_replace(
-            ['/evren_llm_[A-Za-z0-9_\-]{4,}/', '/AIza[0-9A-Za-z_\-]{20,}/', '/sk-(?:or-v1-|ant-)?[A-Za-z0-9_\-]{16,}/', '/gsk_[A-Za-z0-9]{16,}/'],
-            ['evren_llm_****', 'AIza****', 'sk-****', 'gsk_****'],
+            // Sonuncusu gizli değil ama gereksiz: Groq hata metnindeki kuruluş kimliği.
+            ['/evren_llm_[A-Za-z0-9_\-]{4,}/', '/AIza[0-9A-Za-z_\-]{20,}/', '/sk-(?:or-v1-|ant-)?[A-Za-z0-9_\-]{16,}/', '/gsk_[A-Za-z0-9]{16,}/', '/\borg_[A-Za-z0-9]{12,}/'],
+            ['evren_llm_****', 'AIza****', 'sk-****', 'gsk_****', 'org_****'],
             $metin
         );
     }
