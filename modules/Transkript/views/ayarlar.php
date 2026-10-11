@@ -541,7 +541,7 @@ $sayi     = static fn (int $n): string => number_format($n, 0, ',', '.');
                                 <small<?= ($c['ilk_token_ms'] ?? null) !== null ? ' title="İlk token ' . e(number_format(((int) $c['ilk_token_ms']) / 1000, 1, ',', '.')) . ' sn' . (!empty($c['akis']) ? ' · akış' : '') . '"' : '' ?>><?= e(number_format(((int) $c['sure_ms']) / 1000, 1, ',', '.')) ?> sn</small>
                             </td>
                             <td>
-                                <small title="<?= e($tokenAyrinti) ?>"><?= e($sayi((int) $c['giris_token'] + (int) $c['cikis_token'])) ?></small>
+                                <small title="<?= e(!empty($c['tahmini']) ? 'Tahmini (kesilen çağrı; EVREN kotadan düşer) · ' . $tokenAyrinti : $tokenAyrinti) ?>"><?= !empty($c['tahmini']) ? '≈ ' : '' ?><?= e($sayi((int) $c['giris_token'] + (int) $c['cikis_token'])) ?></small>
                                 <?php if ($onbellek > 0 && (int) $c['giris_token'] > 0): ?>
                                     <small class="d-block cy-muted">önbellek %<?= (int) round(100 * $onbellek / (int) $c['giris_token']) ?></small>
                                 <?php endif; ?>

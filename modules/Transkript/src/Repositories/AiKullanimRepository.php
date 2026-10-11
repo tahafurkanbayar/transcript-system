@@ -49,10 +49,10 @@ final class AiKullanimRepository
         $this->db->prepare(
             'INSERT INTO ai_kullanim_kaydi
                 (modul, ref_tur, ref_id, saglayici, model, giris_token, cikis_token, maliyet_usd, sure_ms, durum, hata_kodu, hata_ayrinti,
-                 created_at, bitis_at, asama, istenen_model, akis, max_token, bitis_nedeni, dusunme_token, onbellek_token, ilk_token_ms, http_durum, kalan_kota)
+                 created_at, bitis_at, asama, istenen_model, akis, max_token, bitis_nedeni, dusunme_token, onbellek_token, ilk_token_ms, http_durum, kalan_kota, tahmini)
              VALUES (:modul, :ref_tur, :ref_id, :saglayici, :model, :giris, :cikis, :maliyet, :sure, :durum, :hata_kodu, :hata_ayrinti,
                  NOW() - INTERVAL :bas_once SECOND, NOW() - INTERVAL :bit_once SECOND, :asama, :istenen, :akis, :max_token, :bitis_nedeni,
-                 :dusunme, :onbellek, :ilk_token, :http, :kalan)'
+                 :dusunme, :onbellek, :ilk_token, :http, :kalan, :tahmini)'
         )->execute([
             ':hata_kodu' => $hataKodu !== null && $hataKodu !== '' ? mb_substr($hataKodu, 0, 40) : null,
             ':hata_ayrinti' => $ayrinti !== '' ? $ayrinti : null,
@@ -78,6 +78,8 @@ final class AiKullanimRepository
             ':ilk_token' => $tamsayi($o['ilk_token_ms'] ?? null),
             ':http'      => $tamsayi($o['http'] ?? null) ?: null,
             ':kalan'     => $tamsayi($o['kalan_kota'] ?? null),
+            // Kesilen çağrı: token sağlayıcının değil, tahmin (EvrenProvider::kismiKullanim).
+            ':tahmini'   => !empty($o['tahmini']) ? 1 : 0,
         ]);
     }
 
@@ -164,7 +166,7 @@ final class AiKullanimRepository
     {
         $statement = $this->db->prepare(
             "SELECT u.id, u.created_at, u.bitis_at, u.saglayici, u.model, u.istenen_model, u.asama, u.ref_tur, u.ref_id, u.giris_token, u.cikis_token,
-                    u.dusunme_token, u.onbellek_token, u.ilk_token_ms, u.akis, u.bitis_nedeni, u.kalan_kota,
+                    u.dusunme_token, u.onbellek_token, u.ilk_token_ms, u.akis, u.bitis_nedeni, u.kalan_kota, u.tahmini,
                     u.sure_ms, u.durum, u.hata_kodu, u.hata_ayrinti, a.kaynak_id
                FROM ai_kullanim_kaydi u
                LEFT JOIN transkript_analizler a ON u.ref_tur = 'analiz' AND a.id = u.ref_id

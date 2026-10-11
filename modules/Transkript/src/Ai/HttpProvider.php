@@ -173,6 +173,18 @@ abstract class HttpProvider implements Provider
     }
 
     /**
+     * Kesilen (zaman aşımı / boşta) istekte harcanan token TAHMİNİ:
+     * ['giris_token', 'cikis_token', 'tahmini' => true]; bilinmiyorsa [].
+     * Varsayılan: tahmin yok.
+     *
+     * @return array<string,mixed>
+     */
+    protected function kismiKullanim(string $istek, string $kismiYanit): array
+    {
+        return [];
+    }
+
+    /**
      * 2xx akış gövdesini tek yanıt dizisine çevirir; null → gövde düz JSON
      * sayılır (sunucu akışı yok saydıysa).
      *
@@ -333,9 +345,12 @@ abstract class HttpProvider implements Provider
                 }
 
                 // 28 = CURLE_OPERATION_TIMEDOUT: zaman aşımı ayrı koddur (9. adım).
+                // Ölçüm + sağlayıcının tahmin edebildiği kısmi kullanım (kesilen akış).
                 throw new AiHatasi(
                     'Bağlantı hatası: ' . $curlError,
-                    $curlErrno === 28 ? 'zaman_asimi' : 'baglanti'
+                    $curlErrno === 28 ? 'zaman_asimi' : 'baglanti',
+                    0, null, null, null,
+                    $this->olcum + $this->kismiKullanim($body, $raw)
                 );
             }
 

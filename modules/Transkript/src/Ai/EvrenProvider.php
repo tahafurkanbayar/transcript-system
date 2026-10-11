@@ -379,6 +379,32 @@ final class EvrenProvider extends OpenAiCompatibleProvider
         return min(self::TOPLAM_EN_COK_SN, max($enAz, self::TOPLAM_TABAN_SN + intdiv(max(0, $girisToken), self::TOPLAM_TOKEN_HIZ)));
     }
 
+    /**
+     * Kesilen istek EVREN'de kotadan düşer (sunucu istem işledi, belki
+     * yanıt da üretti). Giriş: isteğin metni (karakter / 3,5); çıkış: gelen
+     * akış parçaları (yanıt + düşünme karakteri / 3,5). "tahmini" işaretli.
+     *
+     * @return array<string,mixed>
+     */
+    protected function kismiKullanim(string $istek, string $kismiYanit): array
+    {
+        $govde   = json_decode($istek, true);
+        $mesajlar = is_array($govde['messages'] ?? null) ? $govde['messages'] : [];
+        $giris   = GirisSiniri::tahmin('', array_map(static fn ($m): array => ['content' => is_string($m['content'] ?? null) ? $m['content'] : ''], $mesajlar));
+        $cikis   = 0;
+
+        if ($this->akis() && $kismiYanit !== '') {
+            try {
+                $akis = SseAkisi::coz($kismiYanit);
+                $cikis = GirisSiniri::metinBoyutu(mb_strlen((string) ($akis['yanit']['choices'][0]['message']['content'] ?? '')) + $akis['dusunme_karakter']);
+            } catch (\Throwable) {
+                $cikis = 0;
+            }
+        }
+
+        return ['giris_token' => $giris, 'cikis_token' => $cikis, 'tahmini' => true, 'istenen_model' => $this->modelName];
+    }
+
     /** @return array<string,mixed>|null */
     protected function akisiCoz(string $raw): ?array
     {

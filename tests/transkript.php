@@ -2442,6 +2442,18 @@ try {
 } catch (AiHatasi $e) {
     $bostaHatasi = $e;
 }
+$kesik = "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"" . str_repeat('d', 350) . "\"}}]}\n\n";
+$kesikHata = null;
+try {
+    (new EvrenProvider('k', 'glm-5.3'))->tasiyici(static fn (string $g): array => [200, $kesik, [], 'Boşta kalma: 60 sn boyunca yanıt verisi gelmedi', 28])
+        ->yenidenDenemeSiniri(0)->send([['role' => 'user', 'content' => str_repeat('a', 700)]]);
+} catch (AiHatasi $e) {
+    $kesikHata = $e;
+}
+dogrula('Kesilen akışlı çağrı: harcanan token TAHMİN edilir (giriş isteğin, çıkış gelen parçaların boyutundan) ve "tahmini" işaretlenir (S8)',
+    $kesikHata?->kod === 'zaman_asimi' && ($kesikHata->olcum['tahmini'] ?? false) === true
+    && ($kesikHata->olcum['giris_token'] ?? 0) === 200 && ($kesikHata->olcum['cikis_token'] ?? 0) === 100);
+
 dogrula('Öteki sağlayıcılar değişmedi (akış ve düşünme parametresi yok, akış kapalı); boşta kalma kesintisi "zaman_asimi"',
     !isset($groqGovde[0]['stream']) && !isset($groqGovde[0]['reasoning_effort']) && !korumali(new OpenAiCompatibleProvider('k', 'm'), 'akis')
     && korumali(new OpenAiCompatibleProvider('k', 'm'), 'bostaSiniri') === 0 && $bostaHatasi?->kod === 'zaman_asimi'
